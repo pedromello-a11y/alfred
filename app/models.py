@@ -19,7 +19,7 @@ class Task(Base):
     description: Mapped[str | None] = mapped_column(TEXT)
     origin: Mapped[str | None] = mapped_column(VARCHAR(20))  # 'manual', 'jira', 'gchat'
     origin_ref: Mapped[str | None] = mapped_column(VARCHAR(100))
-    status: Mapped[str] = mapped_column(VARCHAR(20), default="pending")  # pending/in_progress/done/cancelled
+    status: Mapped[str] = mapped_column(VARCHAR(20), default="pending")  # pending/in_progress/done/cancelled/delegated/dropped
     priority: Mapped[int | None] = mapped_column(INTEGER)  # 1 (urgente) a 5 (baixa)
     category: Mapped[str | None] = mapped_column(VARCHAR(20))  # 'work', 'personal'
     deadline: Mapped[datetime | None] = mapped_column(TIMESTAMP)
@@ -30,6 +30,9 @@ class Task(Base):
     notes: Mapped[str | None] = mapped_column(TEXT)
     times_planned: Mapped[int] = mapped_column(INTEGER, default=0)
     last_planned: Mapped[date | None] = mapped_column(DATE)
+    is_boss_fight: Mapped[bool] = mapped_column(BOOLEAN, default=False)
+    importance: Mapped[int | None] = mapped_column(INTEGER)  # 1-5, impacto na vida/carreira
+    effort_type: Mapped[str | None] = mapped_column(VARCHAR(20))  # 'quick', 'logistics', 'project'
 
     __table_args__ = (
         Index("idx_tasks_status_priority", "status", "priority"),
@@ -142,4 +145,33 @@ class Settings(Base):
 
     __table_args__ = (
         UniqueConstraint("key", name="uq_settings_key"),
+    )
+
+
+class PlayerStat(Base):
+    __tablename__ = "player_stats"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    attribute: Mapped[str] = mapped_column(VARCHAR(20), unique=True, nullable=False)
+    xp: Mapped[int] = mapped_column(INTEGER, default=0)
+    level: Mapped[int] = mapped_column(INTEGER, default=1)
+    prestige: Mapped[int] = mapped_column(INTEGER, default=0)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("attribute", name="uq_player_stats_attribute"),
+    )
+
+
+class Achievement(Base):
+    __tablename__ = "achievements"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    code: Mapped[str] = mapped_column(VARCHAR(50), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(VARCHAR(100), nullable=False)
+    description: Mapped[str | None] = mapped_column(TEXT)
+    unlocked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, default=None)
+
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_achievements_code"),
     )

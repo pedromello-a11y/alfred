@@ -2,7 +2,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 
-from app.cron import morning_briefing, midday_checkin, nightly_closing
+from app.cron import morning_briefing, midday_checkin, nightly_closing, jira_sync
 
 scheduler = AsyncIOScheduler(timezone="America/Sao_Paulo")
 
@@ -38,6 +38,14 @@ def setup_jobs() -> None:
         CronTrigger(day_of_week="mon-fri", hour=21, minute=0),
         id="nightly_closing",
         name="Nightly closing 21:00",
+        misfire_grace_time=300,
+    )
+    # Jira sync — a cada 2h seg-sex (09:00, 11:00, 13:00, 15:00, 17:00)
+    scheduler.add_job(
+        jira_sync.run,
+        CronTrigger(day_of_week="mon-fri", hour="9,11,13,15,17", minute=0),
+        id="jira_sync",
+        name="Jira sync 2h",
         misfire_grace_time=300,
     )
     logger.info("Cron jobs registered: {}", [j.id for j in scheduler.get_jobs()])
