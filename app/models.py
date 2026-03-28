@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, date
 
 from sqlalchemy import (
-    UUID, VARCHAR, TEXT, BOOLEAN, INTEGER, TIMESTAMP, DATE, Index, UniqueConstraint
+    UUID, VARCHAR, TEXT, BOOLEAN, INTEGER, FLOAT, TIMESTAMP, DATE, Index, UniqueConstraint
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -28,6 +28,8 @@ class Task(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP)
     notes: Mapped[str | None] = mapped_column(TEXT)
+    times_planned: Mapped[int] = mapped_column(INTEGER, default=0)
+    last_planned: Mapped[date | None] = mapped_column(DATE)
 
     __table_args__ = (
         Index("idx_tasks_status_priority", "status", "priority"),
@@ -78,6 +80,7 @@ class DailyPlan(Base):
     tasks_planned: Mapped[dict | None] = mapped_column(JSONB)
     tasks_completed: Mapped[dict | None] = mapped_column(JSONB)
     score: Mapped[int | None] = mapped_column(INTEGER)
+    consolidated: Mapped[bool] = mapped_column(BOOLEAN, default=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (
@@ -111,3 +114,32 @@ class Streak(Base):
     tasks_completed: Mapped[int] = mapped_column(INTEGER, default=0)
     points: Mapped[int] = mapped_column(INTEGER, default=0)
     streak_count: Mapped[int] = mapped_column(INTEGER, default=0)
+
+
+class ApiUsage(Base):
+    __tablename__ = "api_usage"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    model: Mapped[str] = mapped_column(VARCHAR(50), nullable=False)
+    input_tokens: Mapped[int] = mapped_column(INTEGER, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(INTEGER, nullable=False)
+    estimated_cost_usd: Mapped[float] = mapped_column(FLOAT, nullable=False)
+    call_type: Mapped[str | None] = mapped_column(VARCHAR(30))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_api_usage_created_at", "created_at"),
+    )
+
+
+class Settings(Base):
+    __tablename__ = "settings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(VARCHAR(100), unique=True, nullable=False)
+    value: Mapped[str] = mapped_column(TEXT, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("key", name="uq_settings_key"),
+    )

@@ -36,7 +36,7 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
             continue
 
         # Normalizar para InboundItem e obter classificação + resposta
-        item, response_text, classification = await message_handler.handle(text_body, origin="whatsapp")
+        item, response_text, classification = await message_handler.handle(text_body, origin="whatsapp", db=db)
 
         # Persistir mensagem inbound com classificação
         inbound = Message(

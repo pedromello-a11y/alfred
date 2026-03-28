@@ -3,6 +3,10 @@ from datetime import date, datetime
 from typing import Optional
 
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services import brain, task_manager
+
 
 # ---------------------------------------------------------------------------
 # InboundItem — formato padrão de entrada para todos os canais
@@ -22,83 +26,80 @@ class InboundItem:
     created_at: datetime = field(default_factory=datetime.utcnow)
 
 
-# ---------------------------------------------------------------------------
-# classify — stub heurístico por palavras-chave (sem chamada externa)
-# Sessão 3 substituirá por chamada real ao Claude Haiku.
-# ---------------------------------------------------------------------------
-
-_NEW_TASK_HINTS = ("preciso", "lembrar", "adicionar", "criar tarefa", "anotar", "fazer")
-_UPDATE_HINTS   = ("terminei", "fiz", "concluí", "feito", "pronto", "acabei")
-_QUESTION_HINTS = ("o que tenho", "próxima tarefa", "agenda", "tarefas de hoje", "o que fazer")
-_COMMAND_HINTS  = ("reagendar", "cancelar", "priorizar", "remover tarefa", "adiar")
-
-
-def _stub_classify(text: str) -> dict:
-    """Classificação heurística local — placeholder até Sessão 3."""
-    lower = text.lower()
-    if any(h in lower for h in _NEW_TASK_HINTS):
-        classification = "new_task"
-    elif any(h in lower for h in _UPDATE_HINTS):
-        classification = "update"
-    elif any(h in lower for h in _QUESTION_HINTS):
-        classification = "question"
-    elif any(h in lower for h in _COMMAND_HINTS):
-        classification = "command"
-    else:
-        classification = "chat"
-    return {
-        "classification": classification,
-        "extracted_title": text[:80],
-        "extracted_deadline": None,
-        "priority_hint": None,
-    }
+_ITEM_TYPE_MAP = {
+    "new_task": "task",
+    "update":   "update",
+    "question": "task",
+    "command":  "task",
+    "chat":     "idea",
+}
 
 
 # ---------------------------------------------------------------------------
-# handle — normaliza para InboundItem e roteia (stubs)
-# Retorna (InboundItem, response_text) para que o webhook possa
-# persistir a classification no banco.
+# handle — classifica via brain, normaliza para InboundItem, roteia
+# Retorna (item, response_text, classification)
 # ---------------------------------------------------------------------------
 
-async def handle(raw_text: str, origin: str = "whatsapp") -> tuple[InboundItem, str, str]:
-    """Retorna (item, response_text, classification) para que o webhook persista a classification."""
-    data = _stub_classify(raw_text)
-    classification = data["classification"]
-    logger.info("Classification (stub): {}", classification)
+async def handle(
+    raw_text: str, origin: str = "whatsapp", db: AsyncSession | None = None
+) -> tuple["InboundItem", str, str]:
+    """Classifica via Claude Haiku, roteia e retorna (item, response, classification)."""
+    data = await brain.classify(raw_text, db=db)
+    classification = data.get("classification", "chat")
+    logger.info("Classification: {}", classification)
+
+    deadline_raw = data.get("extracted_deadline")
+    deadline: Optional[date] = None
+    if deadline_raw:
+        try:
+            deadline = date.fromisoformat(str(deadline_raw))
+        except ValueError:
+            pass
 
     item = InboundItem(
-        item_type=_classification_to_item_type(classification),
+        item_type=_ITEM_TYPE_MAP.get(classification, "idea"),
         origin=origin,
         raw_text=raw_text,
-        extracted_title=data["extracted_title"],
-        priority_hint=data["priority_hint"],
+        extracted_title=data.get("extracted_title") or raw_text[:80],
+        deadline=deadline,
+        priority_hint=data.get("priority_hint"),
     )
 
-    response_text = _route(item, classification)
+    response_text = await _route(item, classification, db)
     return item, response_text, classification
 
 
-def _classification_to_item_type(classification: str) -> str:
-    mapping = {
-        "new_task": "task",
-        "update":   "update",
-        "question": "task",
-        "command":  "task",
-        "chat":     "idea",
-    }
-    return mapping.get(classification, "idea")
-
-
-def _route(item: InboundItem, classification: str) -> str:
+async def _route(item: InboundItem, classification: str, db: AsyncSession | None) -> str:
     if classification == "new_task":
-        # Stub — task_manager.create() será implementado na Sessão 3
-        logger.info("STUB task_manager.create: title={}", item.extracted_title)
-        return f"Anotado: {item.extracted_title}. Prioridade: {item.priority_hint or 'normal'}."
+        if db is not None:
+            task = await task_manager.create(item, db)
+            return f"Anotado: *{task.title}*. Prioridade: {item.priority_hint or 'normal'}."
+        return f"Anotado: *{item.extracted_title}*."
+
     elif classification == "update":
-        # Stub — task_manager.update_status() será implementado na Sessão 3
-        logger.info("STUB task_manager.update_status: title={}", item.extracted_title)
+        if db is not None:
+            task = await task_manager.mark_done(item.extracted_title, db)
+            if task:
+                return f"Show! ✅ *{task.title}* concluída."
         return f"Show! Tarefa '{item.extracted_title}' marcada como concluída."
+
+    elif classification == "question":
+        context = await _build_context(db)
+        return await brain.answer_question(item.raw_text, context, db=db)
+
+    elif classification == "command":
+        context = await _build_context(db)
+        return await brain.execute_command(item.raw_text, context, db=db)
+
     else:
-        # Stub — brain.py será implementado na Sessão 3
-        logger.info("STUB brain.{}: msg={}", classification, item.raw_text[:50])
-        return "Entendido! (funcionalidade em desenvolvimento)"
+        return await brain.casual_response(item.raw_text, db=db)
+
+
+async def _build_context(db: AsyncSession | None) -> str:
+    if db is None:
+        return "(sem contexto disponível)"
+    tasks = await task_manager.get_pending(db)
+    if not tasks:
+        return "Nenhuma tarefa pendente."
+    lines = [f"- {t.title} (prioridade {t.priority or '-'}, prazo {t.deadline or 'sem prazo'})" for t in tasks[:10]]
+    return "Tarefas pendentes:\n" + "\n".join(lines)
