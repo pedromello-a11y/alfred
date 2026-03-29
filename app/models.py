@@ -50,11 +50,13 @@ class Message(Base):
     message_type: Mapped[str] = mapped_column(VARCHAR(20))  # 'text', 'audio', 'image'
     processed: Mapped[bool] = mapped_column(BOOLEAN, default=False)
     classification: Mapped[str | None] = mapped_column(VARCHAR(30))  # 'new_task', 'update', 'question', 'command', 'chat'
+    whapi_id: Mapped[str | None] = mapped_column(VARCHAR(100), unique=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (
         Index("idx_messages_created_at", "created_at"),
         Index("idx_messages_classification", "classification"),
+        UniqueConstraint("whapi_id", name="uq_messages_whapi_id"),
     )
 
 
@@ -128,6 +130,7 @@ class ApiUsage(Base):
     output_tokens: Mapped[int] = mapped_column(INTEGER, nullable=False)
     estimated_cost_usd: Mapped[float] = mapped_column(FLOAT, nullable=False)
     call_type: Mapped[str | None] = mapped_column(VARCHAR(30))
+    context_sent: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (

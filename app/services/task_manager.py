@@ -72,9 +72,16 @@ async def create(item: InboundItem, db: AsyncSession) -> Task:
     if item.deadline:
         deadline = datetime.combine(item.deadline, datetime.min.time())
 
-    # Determinar effort_type por estimated_minutes (se disponível)
-    effort_type = None
-    # (será classificado depois se estimativa for adicionada)
+    # F13 — Auto-classificar effort_type por estimated_minutes
+    minutes = item.metadata.get("estimated_minutes") if item.metadata else None
+    if minutes is None:
+        effort_type = "quick"  # default conservador
+    elif minutes < 15:
+        effort_type = "quick"
+    elif minutes <= 60:
+        effort_type = "logistics"
+    else:
+        effort_type = "project"
 
     task = Task(
         title=item.extracted_title,
@@ -141,6 +148,13 @@ async def mark_done(title_fragment: str, db: AsyncSession) -> tuple[Task | None,
     # XP base
     base_xp = calculate_points(task)
 
+    # xp_boost loot ativo: dobrar XP desta tarefa e consumir
+    xp_boost = await get_setting("active_loot_xp_boost", "false", db=db)
+    if xp_boost == "true":
+        base_xp *= 2
+        await set_setting("active_loot_xp_boost", "false", db)
+        logger.info("xp_boost loot consumed: base_xp doubled")
+
     # Multiplier de combo
     mult = await _update_multiplier(db)
     if task.is_boss_fight:
@@ -150,6 +164,11 @@ async def mark_done(title_fragment: str, db: AsyncSession) -> tuple[Task | None,
     final_xp = int(base_xp * mult)
     attribute = get_attribute(task)
     stat = await grant_xp(attribute, final_xp, db)
+
+    # Limpar day_off_bonus após primeira tarefa do dia de retorno
+    day_off_bonus = await get_setting("day_off_bonus_active", "false", db=db)
+    if day_off_bonus == "true":
+        await set_setting("day_off_bonus_active", "false", db)
 
     mult_str = f" (x{mult:.1f} multiplier)" if mult > 1.0 else ""
     xp_msg = f"+{final_xp} XP de {attribute}{mult_str} (nível {stat.level})"
@@ -230,7 +249,7 @@ def get_attribute(task: Task) -> str:
 
 
 async def grant_xp(attribute: str, xp_amount: int, db: AsyncSession) -> PlayerStat:
-    """Concede XP ao atributo. Atualiza level (floor(xp / 100))."""
+    """Concede XP ao atributo. Aplica prestige multiplier e day_off_bonus. Atualiza level."""
     result = await db.execute(
         select(PlayerStat).where(PlayerStat.attribute == attribute)
     )
@@ -240,10 +259,19 @@ async def grant_xp(attribute: str, xp_amount: int, db: AsyncSession) -> PlayerSt
         db.add(stat)
         await db.flush()
 
-    stat.xp += xp_amount
+    # Prestige permanent multiplier: 1 + (prestige * 0.1)
+    prestige_mult = 1.0 + (stat.prestige * 0.1) if stat.prestige else 1.0
+
+    # Dia de respiro bonus: 1.5x no dia de retorno
+    day_off_bonus = await get_setting("day_off_bonus_active", "false", db=db)
+    day_off_mult = 1.5 if day_off_bonus == "true" else 1.0
+
+    final_xp = int(xp_amount * prestige_mult * day_off_mult)
+    stat.xp += final_xp
     stat.level = max(1, stat.xp // 100)
     await db.commit()
-    logger.info("XP granted: {} +{} XP → total {} (nível {})", attribute, xp_amount, stat.xp, stat.level)
+    logger.info("XP granted: {} +{} XP (prestige x{:.1f}, day_off x{:.1f}) → total {} (nível {})",
+                attribute, final_xp, prestige_mult, day_off_mult, stat.xp, stat.level)
     return stat
 
 
@@ -288,6 +316,34 @@ async def set_setting(key: str, value: str, db: AsyncSession) -> None:
 # Multiplier de combo
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Budget de interrupções proativas
+# ---------------------------------------------------------------------------
+
+_PROACTIVE_BUDGET_KEY = "proactive_messages_today"
+_PROACTIVE_LIMIT_KEY = "proactive_budget_limit"
+
+
+async def can_send_proactive(db: AsyncSession) -> bool:
+    """Retorna True se ainda há budget para mensagem proativa hoje. Limite padrão: 3."""
+    limit = int(await get_setting(_PROACTIVE_LIMIT_KEY, "3", db=db) or "3")
+    current = int(await get_setting(_PROACTIVE_BUDGET_KEY, "0", db=db) or "0")
+    return current < limit
+
+
+async def increment_proactive_count(db: AsyncSession) -> int:
+    """Incrementa contador de mensagens proativas e retorna novo valor."""
+    current = int(await get_setting(_PROACTIVE_BUDGET_KEY, "0", db=db) or "0")
+    new_val = current + 1
+    await set_setting(_PROACTIVE_BUDGET_KEY, str(new_val), db)
+    return new_val
+
+
+async def reset_proactive_count(db: AsyncSession) -> None:
+    """Reseta contador diário de interrupções proativas (chamar no morning_briefing)."""
+    await set_setting(_PROACTIVE_BUDGET_KEY, "0", db)
+
+
 async def _update_multiplier(db: AsyncSession) -> float:
     """Atualiza multiplier de combo. <10min entre tarefas = +0.5x (cap 3.0)."""
     from dateutil.parser import parse as parse_dt
@@ -304,11 +360,13 @@ async def _update_multiplier(db: AsyncSession) -> float:
             else:
                 elapsed = (now - last_dt).total_seconds()
 
-            if elapsed < 600:
+            if elapsed < 600:  # <10min → incrementar combo
                 mult = float(await get_setting("current_multiplier", "1.0", db=db))
                 mult = min(mult + 0.5, 3.0)
-            else:
+            elif elapsed > 1800:  # >30min → resetar
                 mult = 1.0
+            else:  # 10-30min → manter atual
+                mult = float(await get_setting("current_multiplier", "1.0", db=db))
         except Exception:
             mult = 1.0
     else:

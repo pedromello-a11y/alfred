@@ -1,6 +1,7 @@
 """
 gcal_client.py — Google Calendar API (OAuth2 com refresh token)
-Funções: get_today_events(), get_available_hours()
+Funções: get_today_events(), get_available_hours(), create_event()
+Requer scopes: calendar.readonly + calendar.events (escrita)
 """
 from datetime import datetime, timezone
 
@@ -80,3 +81,36 @@ async def get_available_hours() -> float:
     meeting_minutes = sum(e["duration_minutes"] for e in events)
     available = max(0.0, 8 * 60 - meeting_minutes)
     return round(available / 60, 1)
+
+
+async def create_event(
+    title: str,
+    start_dt: datetime,
+    end_dt: datetime,
+    description: str | None = None,
+) -> dict:
+    """
+    Cria evento no Google Calendar (primary).
+    Requer scope: https://www.googleapis.com/auth/calendar.events
+    Retorna {'status': 'ok', 'event_id': ..., 'html_link': ...} ou {'status': 'failed', 'error': ...}
+    """
+    try:
+        import asyncio
+
+        def _create():
+            service = _build_service()
+            body = {
+                "summary": title,
+                "start": {"dateTime": start_dt.isoformat(), "timeZone": "America/Sao_Paulo"},
+                "end": {"dateTime": end_dt.isoformat(), "timeZone": "America/Sao_Paulo"},
+            }
+            if description:
+                body["description"] = description
+            return service.events().insert(calendarId="primary", body=body).execute()
+
+        event = await asyncio.get_event_loop().run_in_executor(None, _create)
+        logger.info("GCal event created: {} ({} → {})", title, start_dt, end_dt)
+        return {"status": "ok", "event_id": event.get("id"), "html_link": event.get("htmlLink")}
+    except Exception as exc:
+        logger.error("create_event failed: {}", exc)
+        return {"status": "failed", "error": str(exc)}
