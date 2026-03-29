@@ -3,7 +3,7 @@ from datetime import date, datetime
 from typing import Sequence
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import PlayerStat, Settings, Task
@@ -64,6 +64,7 @@ def calculate_priority_score(
 # ---------------------------------------------------------------------------
 
 _PRIORITY_MAP = {"high": 1, "medium": 3, "low": 5}
+_OPEN_STATUSES = ("pending", "in_progress")
 
 
 async def create(item: InboundItem, db: AsyncSession) -> Task:
@@ -72,10 +73,9 @@ async def create(item: InboundItem, db: AsyncSession) -> Task:
     if item.deadline:
         deadline = datetime.combine(item.deadline, datetime.min.time())
 
-    # F13 — Auto-classificar effort_type por estimated_minutes
     minutes = item.metadata.get("estimated_minutes") if item.metadata else None
     if minutes is None:
-        effort_type = "quick"  # default conservador
+        effort_type = "quick"
     elif minutes < 15:
         effort_type = "quick"
     elif minutes <= 60:
@@ -108,6 +108,25 @@ async def get_pending(db: AsyncSession) -> Sequence[Task]:
     return result.scalars().all()
 
 
+async def get_active_tasks(db: AsyncSession) -> Sequence[Task]:
+    result = await db.execute(
+        select(Task)
+        .where(Task.status.in_(_OPEN_STATUSES))
+        .order_by(Task.priority.nulls_last(), Task.deadline.nulls_last(), Task.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+async def get_recently_done(db: AsyncSession, limit: int = 5) -> Sequence[Task]:
+    result = await db.execute(
+        select(Task)
+        .where(Task.status == "done")
+        .order_by(Task.completed_at.desc().nullslast(), Task.created_at.desc())
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
 def calculate_points(task: Task) -> int:
     """Pontuação ponderada por esforço (spec: melhorias.md item 8)."""
     minutes = task.estimated_minutes or 30
@@ -124,15 +143,65 @@ def calculate_points(task: Task) -> int:
     return base
 
 
+async def find_task_by_fragment(
+    title_fragment: str,
+    db: AsyncSession,
+    open_only: bool = True,
+) -> Task | None:
+    query = select(Task)
+    if open_only:
+        query = query.where(Task.status.in_(_OPEN_STATUSES))
+    query = (
+        query.where(Task.title.ilike(f"%{title_fragment}%"))
+        .order_by(Task.priority.nulls_last(), Task.deadline.nulls_last(), Task.created_at.desc())
+        .limit(1)
+    )
+    result = await db.execute(query)
+    return result.scalar_one_or_none()
+
+
+async def search_tasks_by_keywords(
+    keywords: list[str],
+    db: AsyncSession,
+    open_only: bool = True,
+    limit: int = 10,
+) -> Sequence[Task]:
+    cleaned = [k.strip() for k in keywords if len(k.strip()) >= 3]
+    if not cleaned:
+        return []
+
+    clauses = [Task.title.ilike(f"%{kw}%") for kw in cleaned]
+    query = select(Task)
+    if open_only:
+        query = query.where(Task.status.in_(_OPEN_STATUSES))
+    query = query.where(or_(*clauses)).limit(limit)
+    result = await db.execute(query)
+    return result.scalars().all()
+
+
+async def update_task_status(
+    task: Task,
+    new_status: str,
+    db: AsyncSession,
+    note: str | None = None,
+) -> Task:
+    task.status = new_status
+    if new_status == "done":
+        task.completed_at = datetime.utcnow()
+    if note:
+        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+        extra = f"[{timestamp}] {note.strip()}"
+        task.notes = f"{task.notes}\n{extra}" if task.notes else extra
+    await db.commit()
+    await db.refresh(task)
+    logger.info("Task status updated: {} -> {}", task.title, new_status)
+    return task
+
+
 async def mark_done(title_fragment: str, db: AsyncSession) -> tuple[Task | None, str]:
-    """
-    Marca tarefa como concluída.
-    Retorna (task, loot_message) onde loot_message é '' se sem loot.
-    Após concluir: concede XP, checa multiplier, rola loot (15%).
-    """
     result = await db.execute(
         select(Task)
-        .where(Task.status == "pending")
+        .where(Task.status.in_(_OPEN_STATUSES))
         .where(Task.title.ilike(f"%{title_fragment}%"))
         .limit(1)
     )
@@ -145,27 +214,23 @@ async def mark_done(title_fragment: str, db: AsyncSession) -> tuple[Task | None,
     await db.commit()
     logger.info("Task done: {} (id={})", task.title, task.id)
 
-    # XP base
     base_xp = calculate_points(task)
 
-    # xp_boost loot ativo: dobrar XP desta tarefa e consumir
     xp_boost = await get_setting("active_loot_xp_boost", "false", db=db)
     if xp_boost == "true":
         base_xp *= 2
         await set_setting("active_loot_xp_boost", "false", db)
         logger.info("xp_boost loot consumed: base_xp doubled")
 
-    # Multiplier de combo
     mult = await _update_multiplier(db)
     if task.is_boss_fight:
-        mult = max(mult, 3.0)  # boss fight = mínimo 3x
+        mult = max(mult, 3.0)
         logger.info("Boss fight concluído! XP x3: {}", task.title)
 
     final_xp = int(base_xp * mult)
     attribute = get_attribute(task)
     stat = await grant_xp(attribute, final_xp, db)
 
-    # Limpar day_off_bonus após primeira tarefa do dia de retorno
     day_off_bonus = await get_setting("day_off_bonus_active", "false", db=db)
     if day_off_bonus == "true":
         await set_setting("day_off_bonus_active", "false", db)
@@ -187,10 +252,9 @@ async def mark_done(title_fragment: str, db: AsyncSession) -> tuple[Task | None,
 
 
 async def delegate_task(title_fragment: str, delegated_to: str, db: AsyncSession) -> Task | None:
-    """Marca tarefa como delegada."""
     result = await db.execute(
         select(Task)
-        .where(Task.status == "pending")
+        .where(Task.status.in_(_OPEN_STATUSES))
         .where(Task.title.ilike(f"%{title_fragment}%"))
         .limit(1)
     )
@@ -204,10 +268,9 @@ async def delegate_task(title_fragment: str, delegated_to: str, db: AsyncSession
 
 
 async def drop_task(title_fragment: str, db: AsyncSession) -> Task | None:
-    """Marca tarefa como dropped (não importa mais)."""
     result = await db.execute(
         select(Task)
-        .where(Task.status == "pending")
+        .where(Task.status.in_(_OPEN_STATUSES))
         .where(Task.title.ilike(f"%{title_fragment}%"))
         .limit(1)
     )
@@ -224,32 +287,25 @@ async def drop_task(title_fragment: str, db: AsyncSession) -> Task | None:
 # ---------------------------------------------------------------------------
 
 def get_attribute(task: Task) -> str:
-    """Mapeia tarefa para atributo RPG."""
     title = (task.title or "").lower()
     cat = (task.category or "").lower()
 
-    # Willpower: tarefas adiadas 3+ vezes
     if (task.times_planned or 0) >= 3:
         return "willpower"
 
-    # Craft: produção criativa
     if any(w in title for w in ("vídeo", "video", "edição", "edicao", "render", "motion", "animação", "animacao")):
         return "craft"
 
-    # Knowledge: aprendizado
     if any(w in title for w in ("curso", "estudar", "pesquisa", "aprender", "ler")):
         return "knowledge"
 
-    # Life: pessoal
     if cat == "personal":
         return "life"
 
-    # Strategy: trabalho genérico
     return "strategy"
 
 
 async def grant_xp(attribute: str, xp_amount: int, db: AsyncSession) -> PlayerStat:
-    """Concede XP ao atributo. Aplica prestige multiplier e day_off_bonus. Atualiza level."""
     result = await db.execute(
         select(PlayerStat).where(PlayerStat.attribute == attribute)
     )
@@ -259,10 +315,8 @@ async def grant_xp(attribute: str, xp_amount: int, db: AsyncSession) -> PlayerSt
         db.add(stat)
         await db.flush()
 
-    # Prestige permanent multiplier: 1 + (prestige * 0.1)
     prestige_mult = 1.0 + (stat.prestige * 0.1) if stat.prestige else 1.0
 
-    # Dia de respiro bonus: 1.5x no dia de retorno
     day_off_bonus = await get_setting("day_off_bonus_active", "false", db=db)
     day_off_mult = 1.5 if day_off_bonus == "true" else 1.0
 
@@ -284,7 +338,6 @@ LOOT_TABLE = [
 
 
 def roll_loot() -> tuple[str, str] | None:
-    """15% de chance de loot drop."""
     if random.random() < 0.15:
         return random.choice(LOOT_TABLE)
     return None
@@ -325,14 +378,12 @@ _PROACTIVE_LIMIT_KEY = "proactive_budget_limit"
 
 
 async def can_send_proactive(db: AsyncSession) -> bool:
-    """Retorna True se ainda há budget para mensagem proativa hoje. Limite padrão: 3."""
     limit = int(await get_setting(_PROACTIVE_LIMIT_KEY, "3", db=db) or "3")
     current = int(await get_setting(_PROACTIVE_BUDGET_KEY, "0", db=db) or "0")
     return current < limit
 
 
 async def increment_proactive_count(db: AsyncSession) -> int:
-    """Incrementa contador de mensagens proativas e retorna novo valor."""
     current = int(await get_setting(_PROACTIVE_BUDGET_KEY, "0", db=db) or "0")
     new_val = current + 1
     await set_setting(_PROACTIVE_BUDGET_KEY, str(new_val), db)
@@ -340,12 +391,10 @@ async def increment_proactive_count(db: AsyncSession) -> int:
 
 
 async def reset_proactive_count(db: AsyncSession) -> None:
-    """Reseta contador diário de interrupções proativas (chamar no morning_briefing)."""
     await set_setting(_PROACTIVE_BUDGET_KEY, "0", db)
 
 
 async def _update_multiplier(db: AsyncSession) -> float:
-    """Atualiza multiplier de combo. <10min entre tarefas = +0.5x (cap 3.0)."""
     from dateutil.parser import parse as parse_dt
     now = datetime.utcnow()
 
@@ -360,12 +409,12 @@ async def _update_multiplier(db: AsyncSession) -> float:
             else:
                 elapsed = (now - last_dt).total_seconds()
 
-            if elapsed < 600:  # <10min → incrementar combo
+            if elapsed < 600:
                 mult = float(await get_setting("current_multiplier", "1.0", db=db))
                 mult = min(mult + 0.5, 3.0)
-            elif elapsed > 1800:  # >30min → resetar
+            elif elapsed > 1800:
                 mult = 1.0
-            else:  # 10-30min → manter atual
+            else:
                 mult = float(await get_setting("current_multiplier", "1.0", db=db))
         except Exception:
             mult = 1.0
