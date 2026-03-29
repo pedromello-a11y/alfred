@@ -12,10 +12,6 @@ from app.models import PlayerStat, Settings, Task
 from app.services.message_handler import InboundItem
 
 
-# ---------------------------------------------------------------------------
-# Priority score (spec: normalization-priority.md)
-# ---------------------------------------------------------------------------
-
 def calculate_priority_score(
     task: Task,
     available_hours: float = 8.0,
@@ -61,22 +57,31 @@ def calculate_priority_score(
     return score
 
 
-# ---------------------------------------------------------------------------
-# CRUD
-# ---------------------------------------------------------------------------
-
 _PRIORITY_MAP = {"high": 1, "medium": 3, "low": 5}
 _OPEN_STATUSES = ("pending", "in_progress")
+_SYSTEM_HINTS = (
+    "audio nao funciona",
+    "audio do sistema",
+    "bug do audio",
+    "ajustes do sistema",
+    "sistema alfred",
+    "bug audio alfred",
+)
 
 
 def normalize_task_title(value: str) -> str:
     text = unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode("ascii")
     text = text.lower()
-    text = re.sub(r"\b(video)\b", "video", text)
-    text = re.sub(r"\bfire\b", "fire", text)
     text = re.sub(r"[^a-z0-9]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def is_system_task_title(value: str) -> bool:
+    normalized = normalize_task_title(value)
+    if not normalized:
+        return False
+    return any(hint in normalized for hint in _SYSTEM_HINTS)
 
 
 def titles_look_similar(a: str, b: str) -> bool:
@@ -84,16 +89,11 @@ def titles_look_similar(a: str, b: str) -> bool:
     nb = normalize_task_title(b)
     if not na or not nb:
         return False
-    if na == nb:
-        return True
-    if na in nb or nb in na:
+    if na == nb or na in nb or nb in na:
         return True
     wa = set(na.split())
     wb = set(nb.split())
-    overlap = len(wa & wb)
-    if overlap >= 2:
-        return True
-    return False
+    return len(wa & wb) >= 2
 
 
 async def create(item: InboundItem, db: AsyncSession) -> Task:
@@ -138,32 +138,41 @@ async def get_pending(db: AsyncSession) -> Sequence[Task]:
     return result.scalars().all()
 
 
-async def get_active_tasks(db: AsyncSession) -> Sequence[Task]:
+async def get_active_tasks(db: AsyncSession, include_system: bool = False) -> Sequence[Task]:
     result = await db.execute(
         select(Task)
         .where(Task.status.in_(_OPEN_STATUSES))
         .order_by(Task.priority.nulls_last(), Task.deadline.nulls_last(), Task.created_at.desc())
     )
-    return result.scalars().all()
+    tasks = result.scalars().all()
+    if include_system:
+        return tasks
+    return [t for t in tasks if t.category not in ("backlog", "system") and not is_system_task_title(t.title or "")]
 
 
-async def get_recent_tasks(db: AsyncSession, limit: int = 50) -> Sequence[Task]:
+async def get_recent_tasks(db: AsyncSession, limit: int = 50, include_system: bool = False) -> Sequence[Task]:
     result = await db.execute(
         select(Task)
         .order_by(Task.completed_at.desc().nullslast(), Task.created_at.desc())
         .limit(limit)
     )
-    return result.scalars().all()
+    tasks = result.scalars().all()
+    if include_system:
+        return tasks
+    return [t for t in tasks if t.category not in ("backlog", "system") and not is_system_task_title(t.title or "")]
 
 
-async def get_recently_done(db: AsyncSession, limit: int = 5) -> Sequence[Task]:
+async def get_recently_done(db: AsyncSession, limit: int = 5, include_system: bool = False) -> Sequence[Task]:
     result = await db.execute(
         select(Task)
         .where(Task.status == "done")
         .order_by(Task.completed_at.desc().nullslast(), Task.created_at.desc())
         .limit(limit)
     )
-    return result.scalars().all()
+    tasks = result.scalars().all()
+    if include_system:
+        return tasks
+    return [t for t in tasks if t.category not in ("backlog", "system") and not is_system_task_title(t.title or "")]
 
 
 def calculate_points(task: Task) -> int:
@@ -181,11 +190,7 @@ def calculate_points(task: Task) -> int:
     return base
 
 
-async def find_task_by_fragment(
-    title_fragment: str,
-    db: AsyncSession,
-    open_only: bool = True,
-) -> Task | None:
+async def find_task_by_fragment(title_fragment: str, db: AsyncSession, open_only: bool = True) -> Task | None:
     query = select(Task)
     if open_only:
         query = query.where(Task.status.in_(_OPEN_STATUSES))
@@ -198,16 +203,12 @@ async def find_task_by_fragment(
     return result.scalar_one_or_none()
 
 
-async def find_task_by_title_like(
-    title: str,
-    db: AsyncSession,
-    include_closed: bool = True,
-) -> Task | None:
-    recent = await get_recent_tasks(db, limit=80)
+async def find_task_by_title_like(title: str, db: AsyncSession, include_closed: bool = True, include_system: bool = False) -> Task | None:
+    recent = await get_recent_tasks(db, limit=80, include_system=include_system)
     for task in recent:
         if not include_closed and task.status not in _OPEN_STATUSES:
             continue
-        if titles_look_similar(task.title, title):
+        if titles_look_similar(task.title or "", title):
             return task
     return None
 
@@ -221,7 +222,7 @@ async def upsert_task_from_context(
     note: str | None = None,
     estimated_minutes: int | None = None,
 ) -> Task:
-    existing = await find_task_by_title_like(title, db, include_closed=True)
+    existing = await find_task_by_title_like(title, db, include_closed=True, include_system=(category == "system"))
     if existing:
         if note:
             timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
@@ -229,10 +230,12 @@ async def upsert_task_from_context(
             existing.notes = f"{existing.notes}\n{extra}" if existing.notes else extra
         if estimated_minutes and not existing.estimated_minutes:
             existing.estimated_minutes = estimated_minutes
-        if category and not existing.category:
+        if category:
             existing.category = category
-        if status in _OPEN_STATUSES and existing.status not in _OPEN_STATUSES:
+        if status in _OPEN_STATUSES:
             existing.completed_at = None
+        elif status == "done":
+            existing.completed_at = datetime.utcnow()
         existing.status = status
         await db.commit()
         await db.refresh(existing)
@@ -259,16 +262,10 @@ async def upsert_task_from_context(
     return task
 
 
-async def search_tasks_by_keywords(
-    keywords: list[str],
-    db: AsyncSession,
-    open_only: bool = True,
-    limit: int = 10,
-) -> Sequence[Task]:
+async def search_tasks_by_keywords(keywords: list[str], db: AsyncSession, open_only: bool = True, limit: int = 10) -> Sequence[Task]:
     cleaned = [k.strip() for k in keywords if len(k.strip()) >= 3]
     if not cleaned:
         return []
-
     clauses = [Task.title.ilike(f"%{kw}%") for kw in cleaned]
     query = select(Task)
     if open_only:
@@ -278,13 +275,10 @@ async def search_tasks_by_keywords(
     return result.scalars().all()
 
 
-async def update_task_status(
-    task: Task,
-    new_status: str,
-    db: AsyncSession,
-    note: str | None = None,
-) -> Task:
+async def update_task_status(task: Task, new_status: str, db: AsyncSession, note: str | None = None, category: str | None = None) -> Task:
     task.status = new_status
+    if category:
+        task.category = category
     if new_status == "done":
         task.completed_at = datetime.utcnow()
     elif new_status in _OPEN_STATUSES:
@@ -316,7 +310,6 @@ async def mark_done(title_fragment: str, db: AsyncSession) -> tuple[Task | None,
     logger.info("Task done: {} (id={})", task.title, task.id)
 
     base_xp = calculate_points(task)
-
     xp_boost = await get_setting("active_loot_xp_boost", "false", db=db)
     if xp_boost == "true":
         base_xp *= 2
@@ -383,33 +376,22 @@ async def drop_task(title_fragment: str, db: AsyncSession) -> Task | None:
     return task
 
 
-# ---------------------------------------------------------------------------
-# Gamificação RPG
-# ---------------------------------------------------------------------------
-
 def get_attribute(task: Task) -> str:
     title = (task.title or "").lower()
     cat = (task.category or "").lower()
-
     if (task.times_planned or 0) >= 3:
         return "willpower"
-
     if any(w in title for w in ("vídeo", "video", "edição", "edicao", "render", "motion", "animação", "animacao")):
         return "craft"
-
     if any(w in title for w in ("curso", "estudar", "pesquisa", "aprender", "ler")):
         return "knowledge"
-
     if cat == "personal":
         return "life"
-
     return "strategy"
 
 
 async def grant_xp(attribute: str, xp_amount: int, db: AsyncSession) -> PlayerStat:
-    result = await db.execute(
-        select(PlayerStat).where(PlayerStat.attribute == attribute)
-    )
+    result = await db.execute(select(PlayerStat).where(PlayerStat.attribute == attribute))
     stat = result.scalar_one_or_none()
     if stat is None:
         stat = PlayerStat(attribute=attribute, xp=0, level=1, prestige=0)
@@ -417,7 +399,6 @@ async def grant_xp(attribute: str, xp_amount: int, db: AsyncSession) -> PlayerSt
         await db.flush()
 
     prestige_mult = 1.0 + (stat.prestige * 0.1) if stat.prestige else 1.0
-
     day_off_bonus = await get_setting("day_off_bonus_active", "false", db=db)
     day_off_mult = 1.5 if day_off_bonus == "true" else 1.0
 
@@ -425,8 +406,7 @@ async def grant_xp(attribute: str, xp_amount: int, db: AsyncSession) -> PlayerSt
     stat.xp += final_xp
     stat.level = max(1, stat.xp // 100)
     await db.commit()
-    logger.info("XP granted: {} +{} XP (prestige x{:.1f}, day_off x{:.1f}) → total {} (nível {})",
-                attribute, final_xp, prestige_mult, day_off_mult, stat.xp, stat.level)
+    logger.info("XP granted: {} +{} XP (prestige x{:.1f}, day_off x{:.1f}) → total {} (nível {})", attribute, final_xp, prestige_mult, day_off_mult, stat.xp, stat.level)
     return stat
 
 
@@ -443,10 +423,6 @@ def roll_loot() -> tuple[str, str] | None:
         return random.choice(LOOT_TABLE)
     return None
 
-
-# ---------------------------------------------------------------------------
-# Settings helpers
-# ---------------------------------------------------------------------------
 
 async def get_setting(key: str, default: str | None = None, db: AsyncSession | None = None) -> str | None:
     if db is None:
@@ -465,14 +441,6 @@ async def set_setting(key: str, value: str, db: AsyncSession) -> None:
         setting.value = value
     await db.commit()
 
-
-# ---------------------------------------------------------------------------
-# Multiplier de combo
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Budget de interrupções proativas
-# ---------------------------------------------------------------------------
 
 _PROACTIVE_BUDGET_KEY = "proactive_messages_today"
 _PROACTIVE_LIMIT_KEY = "proactive_budget_limit"

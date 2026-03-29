@@ -50,21 +50,31 @@ _CONTEXT_QUERY = re.compile(r"(?i)^contexto\s+(.+)$")
 _TECHNICAL_DETAIL = re.compile(r"(?i)(erro|error|bug|cliente|client|decisão|decisao|decidimos|aprovado|reprovado|feedback|reunião|reuniao|bloqueado|depende de|aguardando)")
 _ACTIVE_TASKS_QUERY = re.compile(r"(?i)^(quais (são|sao) )?(minhas )?(tarefas|demandas) (ativas|em aberto)\??$|^(o )?que (tenho|está|esta) (em aberto|aberto agora|ativo agora)\??$")
 _CONTEXT_UPDATE_HINTS = re.compile(r"(?i)(resumo de demandas|demandas ativas|itens já resolvidos|itens ja resolvidos|detalhe[, ]|contexto de trabalho|status:|estimativa:|prioridade:|já foi feito|ja foi feito|já terminei|ja terminei|já entregou|ja entregou|já startei|ja startei|já comecei|ja comecei|combinei de)")
-_EXPLICIT_DONE = re.compile(r"(?i)(terminei|finalizei|concluí|conclui|entreguei|já foi|ja foi|aprovado|resolvido|resolvida|feito|feita)")
+_EXPLICIT_DONE = re.compile(r"(?i)\b(terminei|finalizei|concluí|conclui|entreguei|foi entregue|foi aprovado|resolvido|resolvida|concluído|concluída|concluida)\b")
+_NEGATED_DONE = re.compile(r"(?i)(ainda não terminei|ainda nao terminei|não terminei|nao terminei|não conclu[ií]|nao conclu[ií]|não entreguei|nao entreguei|ainda falta)")
+_NEGATED_NOT_STARTED = re.compile(r"(?i)(ainda não comecei|ainda nao comecei|não comecei|nao comecei)")
+_NEGATED_PENDING_TO_DONE = re.compile(r"(?i)(não está pendente|nao esta pendente|não está mais ativo|nao esta mais ativo|não está ativo|nao esta ativo)")
+_NOTE_ONLY_HINTS = re.compile(r"(?i)(briefing|keyframes?|reuni[aã]o|3k|alinhar|alinhamento|assets prontos|assets chegaram)")
+_SYSTEM_HINTS = re.compile(r"(?i)(áudio|audio|bug do áudio|bug do audio|ajustes do sistema|sistema alfred|alfred continua quebrado)")
 
 _STATUS_PATTERNS = {
-    "done": re.compile(r"(?i)(já terminei|ja terminei|terminei|finalizei|concluí|conclui|entreguei|resolvido|resolvida|aprovado|aprovada|já foi feito|ja foi feito|já foi|ja foi|ok / resolvido|ok\/resolvido|concluído|concluida|concluída)"),
+    "done": re.compile(r"(?i)(terminei|finalizei|concluí|conclui|entreguei|foi entregue|foi aprovado|resolvido|resolvida|concluído|concluída|concluida)"),
     "done_external": re.compile(r"(?i)(rig já fez|rig ja fez|rig já entregou|rig ja entregou|já entregou|ja entregou)"),
-    "in_progress": re.compile(r"(?i)(em andamento|ativo agora|ativa agora|frente estratégica ativa|frente estrategica ativa|startei|comecei|iniciei|mandei briefing|briefing enviado|assets prontos|assets chegaram|está andando|esta andando)"),
-    "pending": re.compile(r"(?i)(pendente|em aberto|aberto|registrado|registrada|próximo da fila|proximo da fila|secundário|secundario)"),
+    "in_progress": re.compile(r"(?i)(em andamento|ativo agora|ativa agora|ativo|frente estratégica ativa|frente estrategica ativa|startado|startei|comecei|iniciei|segue|continua|mandei briefing|briefing enviado|assets prontos|assets chegaram|está andando|esta andando|está rolando|esta rolando)"),
+    "pending": re.compile(r"(?i)(pendente|em aberto|aberto|registrado|registrada|próximo da fila|proximo da fila|secundário|secundario|travado|pausou|voltou para pendente)"),
 }
 
 _SKIP_UPDATE_CHUNKS = re.compile(r"(?i)^(demandas ativas agora|outras demandas novas|itens já resolvidos|itens de radar|galaxy|spark|cast|detalhe)$")
+_GENERIC_TITLE_CANDIDATES = {
+    "briefing", "keyframe", "keyframes", "reuniao", "reuniao com a 3k", "reunião", "reunião com a 3k",
+    "entregue", "quase", "isso", "mas ainda nao", "mas ainda não", "audio", "áudio"
+}
 _TITLE_STOPWORDS = {
     "status", "ativa", "ativo", "agora", "demanda", "demandas", "aberto", "aberta", "pendente", "prioridade", "estimativa",
-    "agendamento", "reunião", "reuniao", "feito", "feita", "terminei", "entregou", "entreguei", "já", "ja", "foi", "está", "esta",
+    "agendamento", "reuniao", "reunião", "feito", "feita", "terminei", "entregou", "entreguei", "ja", "já", "foi", "esta", "está",
     "com", "para", "sobre", "detalhe", "falta", "hoje", "rig", "mandei", "combinei", "andamento", "ativo", "resolvido",
-    "resolvida", "concluido", "concluida", "enviado", "enviados", "assets", "prontos", "chegaram"
+    "resolvida", "concluido", "concluida", "concluído", "concluída", "enviado", "enviados", "assets", "prontos", "chegaram",
+    "quase", "mas", "ainda", "nao", "não", "continua", "segue", "rolando", "voltou", "travado", "pausou"
 }
 
 
@@ -210,6 +220,8 @@ def _looks_like_context_update(raw_text: str) -> bool:
 
 
 def _looks_like_explicit_done_update(raw_text: str) -> bool:
+    if _NEGATED_DONE.search(raw_text) or _NEGATED_NOT_STARTED.search(raw_text):
+        return False
     return bool(_EXPLICIT_DONE.search(raw_text)) and len(raw_text) < 220
 
 
@@ -267,6 +279,7 @@ async def _handle_context_update(raw_text: str, db: AsyncSession) -> str:
         status = upd["status"]
         note = upd.get("note")
         estimated_minutes = upd.get("estimated_minutes")
+        category = upd.get("category", "work")
 
         if not task and title:
             mapped_status = _map_status_to_task_status(status)
@@ -274,12 +287,12 @@ async def _handle_context_update(raw_text: str, db: AsyncSession) -> str:
                 title,
                 db,
                 status=mapped_status,
-                category="work",
+                category=category,
                 note=note,
                 estimated_minutes=estimated_minutes,
             )
-            label = _status_label(mapped_status)
-            applied_lines.append(f"- {task.title} → {label}")
+            if category != "system":
+                applied_lines.append(f"- {task.title} → {_status_label(mapped_status)}")
             continue
 
         if not task:
@@ -287,8 +300,9 @@ async def _handle_context_update(raw_text: str, db: AsyncSession) -> str:
             continue
 
         mapped_status = _map_status_to_task_status(status)
-        updated_task = await task_manager.update_task_status(task, mapped_status, db, note=note)
-        applied_lines.append(f"- {updated_task.title} → {_status_label(mapped_status)}")
+        updated_task = await task_manager.update_task_status(task, mapped_status, db, note=note, category=category)
+        if category != "system":
+            applied_lines.append(f"- {updated_task.title} → {_status_label(mapped_status)}")
 
     if not applied_lines and unclear_lines:
         return "Entendi como atualização de contexto, mas não apliquei nada com segurança:\n" + "\n".join(unclear_lines[:5])
@@ -314,26 +328,30 @@ async def _handle_explicit_done_update(raw_text: str, db: AsyncSession) -> str:
         status = upd["status"]
         note = upd.get("note")
         estimated_minutes = upd.get("estimated_minutes")
+        category = upd.get("category", "work")
 
         if status == "done":
             if task:
                 done_task, _ = await task_manager.mark_done(task.title, db)
-                if done_task:
+                if done_task and category != "system":
                     lines.append(f"- {done_task.title} → concluída")
                     continue
             if title:
-                created = await task_manager.upsert_task_from_context(title, db, status="done", category="work", note=note, estimated_minutes=estimated_minutes)
-                lines.append(f"- {created.title} → concluída")
+                created = await task_manager.upsert_task_from_context(title, db, status="done", category=category, note=note, estimated_minutes=estimated_minutes)
+                if category != "system":
+                    lines.append(f"- {created.title} → concluída")
                 continue
         else:
             mapped_status = _map_status_to_task_status(status)
             if task:
-                updated_task = await task_manager.update_task_status(task, mapped_status, db, note=note)
-                lines.append(f"- {updated_task.title} → {_status_label(mapped_status)}")
+                updated_task = await task_manager.update_task_status(task, mapped_status, db, note=note, category=category)
+                if category != "system":
+                    lines.append(f"- {updated_task.title} → {_status_label(mapped_status)}")
                 continue
             if title:
-                created = await task_manager.upsert_task_from_context(title, db, status=mapped_status, category="work", note=note, estimated_minutes=estimated_minutes)
-                lines.append(f"- {created.title} → {_status_label(mapped_status)}")
+                created = await task_manager.upsert_task_from_context(title, db, status=mapped_status, category=category, note=note, estimated_minutes=estimated_minutes)
+                if category != "system":
+                    lines.append(f"- {created.title} → {_status_label(mapped_status)}")
                 continue
 
     if not lines:
@@ -343,7 +361,7 @@ async def _handle_explicit_done_update(raw_text: str, db: AsyncSession) -> str:
 
 async def _handle_active_tasks(db: AsyncSession) -> str:
     tasks = list(await task_manager.get_active_tasks(db))
-    recent_done = list(await task_manager.get_recently_done(db, limit=3))
+    recent_done = list(await task_manager.get_recently_done(db))
 
     if not tasks:
         jira_lines = await _build_jira_active_lines(db)
@@ -400,24 +418,51 @@ async def _build_jira_active_lines(db: AsyncSession) -> list[str]:
 
 async def _extract_status_updates(raw_text: str, db: AsyncSession) -> list[dict]:
     chunks = _split_update_chunks(raw_text)
-    active_tasks = list(await task_manager.get_active_tasks(db))
-    recent_tasks = list(await task_manager.get_recent_tasks(db, limit=80))
+    active_tasks = list(await task_manager.get_active_tasks(db, include_system=True))
+    recent_tasks = list(await task_manager.get_recent_tasks(db, limit=80, include_system=True))
     all_tasks = active_tasks + [t for t in recent_tasks if t not in active_tasks]
     updates: list[dict] = []
     seen_keys: set[str] = set()
+    anchor_title: str | None = None
+    anchor_task = None
+    anchor_category = "work"
 
     for chunk in chunks:
         stripped = chunk.strip()
         if not stripped or _SKIP_UPDATE_CHUNKS.match(stripped):
             continue
+
+        category = _infer_category(stripped)
         status = _detect_status(stripped)
-        if not status:
-            continue
         title = _extract_title_candidate(stripped)
-        task = _match_task_for_chunk(stripped, title, all_tasks)
         note = _extract_note(stripped)
         estimated_minutes = _extract_estimated_minutes(stripped)
-        dedupe = f"{task.title if task else title}:{status}"
+        task = _match_task_for_chunk(stripped, title, all_tasks, include_system=(category == "system"))
+
+        if _is_note_only_candidate(title) and (anchor_task or anchor_title):
+            task = anchor_task
+            title = anchor_title
+            note = note or stripped
+            if status is None:
+                status = "in_progress"
+            category = anchor_category
+
+        if status is None:
+            continue
+
+        if task is None and title is None and (anchor_task or anchor_title):
+            task = anchor_task
+            title = anchor_title
+            note = note or stripped
+            category = anchor_category
+
+        if task or title:
+            if category != "system":
+                anchor_task = task
+                anchor_title = task.title if task else title
+                anchor_category = category
+
+        dedupe = f"{(task.title if task else title) or stripped}:{status}:{category}"
         if dedupe in seen_keys:
             continue
         seen_keys.add(dedupe)
@@ -427,6 +472,7 @@ async def _extract_status_updates(raw_text: str, db: AsyncSession) -> list[dict]
             "status": status,
             "note": note,
             "estimated_minutes": estimated_minutes,
+            "category": category,
             "source": stripped,
         })
     return updates
@@ -434,7 +480,7 @@ async def _extract_status_updates(raw_text: str, db: AsyncSession) -> list[dict]
 
 def _split_update_chunks(raw_text: str) -> list[str]:
     normalized = raw_text.replace("\t", " ")
-    raw_parts = re.split(r"\n+|•|;", normalized)
+    raw_parts = re.split(r"\n+|•|\*|;", normalized)
     parts: list[str] = []
     for part in raw_parts:
         subparts = re.split(r",\s+(?=[a-zA-ZÀ-ÿ0-9])", part)
@@ -446,11 +492,23 @@ def _split_update_chunks(raw_text: str) -> list[str]:
 
 
 def _detect_status(chunk: str) -> str | None:
+    normalized = task_manager.normalize_task_title(chunk)
+    if _NEGATED_NOT_STARTED.search(chunk):
+        return "pending"
+    if _NEGATED_DONE.search(chunk):
+        return "in_progress"
+    if _NEGATED_PENDING_TO_DONE.search(chunk) and ("entreg" in normalized or "resolve" in normalized or "conclu" in normalized):
+        return "done"
+    if "nao esta mais ativo" in normalized or "não está mais ativo" in chunk.lower():
+        return "done"
+    if _STATUS_PATTERNS["in_progress"].search(chunk):
+        return "in_progress"
     if _STATUS_PATTERNS["done_external"].search(chunk):
         return "done"
-    for status in ("done", "in_progress", "pending"):
-        if _STATUS_PATTERNS[status].search(chunk):
-            return status
+    if _STATUS_PATTERNS["done"].search(chunk):
+        return "done"
+    if _STATUS_PATTERNS["pending"].search(chunk):
+        return "pending"
     return None
 
 
@@ -461,6 +519,8 @@ def _extract_note(chunk: str) -> str | None:
         notes.append("Reunião com a 3K marcada para segunda às 11h")
     if "briefing" in lowered and ("keyframe" in lowered or "keyframes" in lowered):
         notes.append("Briefing e keyframes enviados")
+    elif "briefing" in lowered or "keyframe" in lowered or "keyframes" in lowered:
+        notes.append(chunk)
     if "rig" in lowered:
         notes.append(chunk)
     return " | ".join(notes) if notes else None
@@ -485,49 +545,62 @@ def _extract_title_candidate(chunk: str) -> str | None:
             left = text.split(sep, 1)[0].strip()
             if len(left) >= 3:
                 return left
-    lowered = text.lower()
-    patterns = [
-        r"(?i)^(.*?)(?:\s+já terminei|\s+terminei|\s+finalizei|\s+já entregou|\s+está em andamento|\s+esta em andamento|\s+está andando|\s+esta andando|\s+pendente).*$",
+
+    original = text
+    cleaned = task_manager.normalize_task_title(text)
+    phrase_noise = [
+        "ainda nao terminei", "nao terminei", "nao conclui", "nao entreguei", "ainda falta", "nao comecei",
+        "esta em andamento", "esta andando", "esta rolando", "segue em andamento", "segue", "continua",
+        "terminei", "finalizei", "conclui", "entreguei", "foi entregue", "foi aprovado", "resolvido", "concluido",
+        "pendente", "ativo", "em andamento", "startado", "startei", "comecei", "iniciei", "ja foi startado",
+        "ja foi", "voltou para pendente", "assets prontos", "assets chegaram"
     ]
-    for pattern in patterns:
-        m = re.match(pattern, text)
-        if m:
-            candidate = m.group(1).strip(" ,.-")
-            if len(candidate) >= 3:
-                return candidate
-    words = [w for w in re.findall(r"[A-Za-zÀ-ÿ0-9|/]+", text) if w.lower() not in _TITLE_STOPWORDS]
-    if not words:
+    for phrase in phrase_noise:
+        cleaned = cleaned.replace(phrase, " ")
+    tokens = [w for w in cleaned.split() if w and w not in _TITLE_STOPWORDS]
+    if not tokens:
         return None
-    return " ".join(words[:6]).strip()
+    candidate = " ".join(tokens[:8]).strip()
+    if candidate in _GENERIC_TITLE_CANDIDATES:
+        return candidate
+
+    original_tokens = re.findall(r"[A-Za-zÀ-ÿ0-9|/]+", original)
+    filtered_original = [w for w in original_tokens if task_manager.normalize_task_title(w) not in _TITLE_STOPWORDS]
+    if filtered_original:
+        rebuilt = " ".join(filtered_original[:8]).strip()
+        if rebuilt:
+            return rebuilt
+    return candidate or None
 
 
-def _match_task_for_chunk(chunk: str, title_candidate: str | None, tasks: list) -> object | None:
+def _match_task_for_chunk(chunk: str, title_candidate: str | None, tasks: list, include_system: bool = False):
     if not tasks:
         return None
-
-    lowered_chunk = chunk.lower()
+    lowered_chunk = task_manager.normalize_task_title(chunk)
     best_task = None
     best_score = 0.0
 
     for task in tasks:
-        title = (task.title or "")
+        if not include_system and (task.category in ("backlog", "system") or task_manager.is_system_task_title(task.title or "")):
+            continue
+        title = task.title or ""
         normalized_title = task_manager.normalize_task_title(title)
         score = 0.0
         if title_candidate and task_manager.titles_look_similar(title, title_candidate):
-            score += 20
-        ratio = SequenceMatcher(None, task_manager.normalize_task_title(lowered_chunk[:160]), normalized_title).ratio()
+            score += 22
+        ratio = SequenceMatcher(None, lowered_chunk[:160], normalized_title).ratio()
         score += ratio * 10
-        keywords = [w for w in task_manager.normalize_task_title(chunk).split() if w and w not in _TITLE_STOPWORDS]
+        keywords = [w for w in lowered_chunk.split() if w and w not in _TITLE_STOPWORDS]
         overlap = sum(1 for kw in keywords if kw in normalized_title)
         score += overlap * 3
         if "countdown" in lowered_chunk and "countdown" in normalized_title:
             score += 8
         if "screensaver" in lowered_chunk and "screensaver" in normalized_title:
             score += 8
-        if "motion avisos" in task_manager.normalize_task_title(chunk) and "motion avisos" in normalized_title:
+        if "motion avisos" in lowered_chunk and "motion avisos" in normalized_title:
             score += 12
-        if "video abertura" in task_manager.normalize_task_title(chunk) and "video abertura" in normalized_title:
-            score += 12
+        if ("video de abertura" in lowered_chunk or "abertura fire" in lowered_chunk or "projeto da 3k" in lowered_chunk) and ("video de abertura" in normalized_title or "abertura" in normalized_title or "3k" in normalized_title):
+            score += 14
         if score > best_score:
             best_score = score
             best_task = task
@@ -535,6 +608,19 @@ def _match_task_for_chunk(chunk: str, title_candidate: str | None, tasks: list) 
     if best_score < 8:
         return None
     return best_task
+
+
+def _infer_category(chunk: str) -> str:
+    if _SYSTEM_HINTS.search(chunk):
+        return "system"
+    return "work"
+
+
+def _is_note_only_candidate(title: str | None) -> bool:
+    if not title:
+        return False
+    normalized = task_manager.normalize_task_title(title)
+    return normalized in {task_manager.normalize_task_title(x) for x in _GENERIC_TITLE_CANDIDATES}
 
 
 def _map_status_to_task_status(status: str) -> str:
