@@ -439,6 +439,14 @@ async def _extract_status_updates(raw_text: str, db: AsyncSession) -> list[dict]
         estimated_minutes = _extract_estimated_minutes(stripped)
         task = _match_task_for_chunk(stripped, title, all_tasks, include_system=(category == "system"))
 
+        if _NOTE_ONLY_HINTS.search(stripped) and (anchor_task or anchor_title):
+            task = anchor_task
+            title = anchor_title
+            note = note or stripped
+            if status is None:
+                status = "in_progress"
+            category = anchor_category
+
         if _is_note_only_candidate(title) and (anchor_task or anchor_title):
             task = anchor_task
             title = anchor_title
@@ -501,10 +509,10 @@ def _detect_status(chunk: str) -> str | None:
         return "done"
     if "nao esta mais ativo" in normalized or "não está mais ativo" in chunk.lower():
         return "done"
-    if _STATUS_PATTERNS["in_progress"].search(chunk):
-        return "in_progress"
     if _STATUS_PATTERNS["done_external"].search(chunk):
         return "done"
+    if _STATUS_PATTERNS["in_progress"].search(chunk):
+        return "in_progress"
     if _STATUS_PATTERNS["done"].search(chunk):
         return "done"
     if _STATUS_PATTERNS["pending"].search(chunk):
@@ -553,7 +561,7 @@ def _extract_title_candidate(chunk: str) -> str | None:
         "esta em andamento", "esta andando", "esta rolando", "segue em andamento", "segue", "continua",
         "terminei", "finalizei", "conclui", "entreguei", "foi entregue", "foi aprovado", "resolvido", "concluido",
         "pendente", "ativo", "em andamento", "startado", "startei", "comecei", "iniciei", "ja foi startado",
-        "ja foi", "voltou para pendente", "assets prontos", "assets chegaram"
+        "ja foi", "voltou para pendente", "assets prontos", "assets chegaram", "enviado", "enviados"
     ]
     for phrase in phrase_noise:
         cleaned = cleaned.replace(phrase, " ")
@@ -620,7 +628,8 @@ def _is_note_only_candidate(title: str | None) -> bool:
     if not title:
         return False
     normalized = task_manager.normalize_task_title(title)
-    return normalized in {task_manager.normalize_task_title(x) for x in _GENERIC_TITLE_CANDIDATES}
+    generic = {task_manager.normalize_task_title(x) for x in _GENERIC_TITLE_CANDIDATES}
+    return normalized in generic
 
 
 def _map_status_to_task_status(status: str) -> str:
