@@ -1,4 +1,6 @@
 import random
+import re
+import unicodedata
 from datetime import date, datetime
 from typing import Sequence
 
@@ -67,6 +69,33 @@ _PRIORITY_MAP = {"high": 1, "medium": 3, "low": 5}
 _OPEN_STATUSES = ("pending", "in_progress")
 
 
+def normalize_task_title(value: str) -> str:
+    text = unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode("ascii")
+    text = text.lower()
+    text = re.sub(r"\b(video)\b", "video", text)
+    text = re.sub(r"\bfire\b", "fire", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def titles_look_similar(a: str, b: str) -> bool:
+    na = normalize_task_title(a)
+    nb = normalize_task_title(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    if na in nb or nb in na:
+        return True
+    wa = set(na.split())
+    wb = set(nb.split())
+    overlap = len(wa & wb)
+    if overlap >= 2:
+        return True
+    return False
+
+
 async def create(item: InboundItem, db: AsyncSession) -> Task:
     priority = _PRIORITY_MAP.get(item.priority_hint or "", None)
     deadline = None
@@ -91,6 +120,7 @@ async def create(item: InboundItem, db: AsyncSession) -> Task:
         deadline=deadline,
         category=item.category,
         effort_type=effort_type,
+        estimated_minutes=minutes,
     )
     db.add(task)
     await db.commit()
@@ -117,6 +147,15 @@ async def get_active_tasks(db: AsyncSession) -> Sequence[Task]:
     return result.scalars().all()
 
 
+async def get_recent_tasks(db: AsyncSession, limit: int = 50) -> Sequence[Task]:
+    result = await db.execute(
+        select(Task)
+        .order_by(Task.completed_at.desc().nullslast(), Task.created_at.desc())
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
 async def get_recently_done(db: AsyncSession, limit: int = 5) -> Sequence[Task]:
     result = await db.execute(
         select(Task)
@@ -128,7 +167,6 @@ async def get_recently_done(db: AsyncSession, limit: int = 5) -> Sequence[Task]:
 
 
 def calculate_points(task: Task) -> int:
-    """Pontuação ponderada por esforço (spec: melhorias.md item 8)."""
     minutes = task.estimated_minutes or 30
     if minutes < 30:
         base = 5
@@ -160,6 +198,67 @@ async def find_task_by_fragment(
     return result.scalar_one_or_none()
 
 
+async def find_task_by_title_like(
+    title: str,
+    db: AsyncSession,
+    include_closed: bool = True,
+) -> Task | None:
+    recent = await get_recent_tasks(db, limit=80)
+    for task in recent:
+        if not include_closed and task.status not in _OPEN_STATUSES:
+            continue
+        if titles_look_similar(task.title, title):
+            return task
+    return None
+
+
+async def upsert_task_from_context(
+    title: str,
+    db: AsyncSession,
+    *,
+    status: str = "pending",
+    category: str = "work",
+    note: str | None = None,
+    estimated_minutes: int | None = None,
+) -> Task:
+    existing = await find_task_by_title_like(title, db, include_closed=True)
+    if existing:
+        if note:
+            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+            extra = f"[{timestamp}] {note.strip()}"
+            existing.notes = f"{existing.notes}\n{extra}" if existing.notes else extra
+        if estimated_minutes and not existing.estimated_minutes:
+            existing.estimated_minutes = estimated_minutes
+        if category and not existing.category:
+            existing.category = category
+        if status in _OPEN_STATUSES and existing.status not in _OPEN_STATUSES:
+            existing.completed_at = None
+        existing.status = status
+        await db.commit()
+        await db.refresh(existing)
+        logger.info("Context task upsert matched existing: {} -> {}", existing.title, status)
+        return existing
+
+    task = Task(
+        title=title[:500],
+        origin="manual",
+        status=status,
+        category=category,
+        effort_type="project",
+        estimated_minutes=estimated_minutes,
+    )
+    if note:
+        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+        task.notes = f"[{timestamp}] {note.strip()}"
+    if status == "done":
+        task.completed_at = datetime.utcnow()
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    logger.info("Context task upsert created: {} -> {}", task.title, status)
+    return task
+
+
 async def search_tasks_by_keywords(
     keywords: list[str],
     db: AsyncSession,
@@ -188,6 +287,8 @@ async def update_task_status(
     task.status = new_status
     if new_status == "done":
         task.completed_at = datetime.utcnow()
+    elif new_status in _OPEN_STATUSES:
+        task.completed_at = None
     if note:
         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
         extra = f"[{timestamp}] {note.strip()}"

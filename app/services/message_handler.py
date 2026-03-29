@@ -7,7 +7,7 @@ from typing import Optional
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services import brain, task_manager
+from app.services import brain, jira_client, task_manager
 
 
 @dataclass
@@ -36,66 +36,39 @@ _UNSTUCK_PATTERNS = re.compile(
     r"(?i)(tô travado|to travado|travei|tô bloqueado|to bloqueado|bloqueado|não consigo|nao consigo|"
     r"tá difícil|ta difícil|não tô conseguindo|nao to conseguindo)"
 )
-
-_DELEGATE_PATTERNS = re.compile(
-    r"(?i)(não é comigo|nao é comigo|não é meu|isso não é pra mim|delegar|vou delegar)"
-)
-
-_DROP_PATTERNS = re.compile(
-    r"(?i)(não importa mais|nao importa mais|cancelar tarefa|desistir|deixa pra lá|deixa pra la|"
-    r"não precisa mais|nao precisa mais)"
-)
-
+_DELEGATE_PATTERNS = re.compile(r"(?i)(não é comigo|nao é comigo|não é meu|isso não é pra mim|delegar|vou delegar)")
+_DROP_PATTERNS = re.compile(r"(?i)(não importa mais|nao importa mais|cancelar tarefa|desistir|deixa pra lá|deixa pra la|não precisa mais|nao precisa mais)")
 _DUMP_PREFIX = re.compile(r"(?i)^dump:\s*")
-
-_CRISIS_PATTERNS = re.compile(
-    r"(?i)(não dou conta|nao dou conta|tô mal|to mal|muita coisa|ansiedade|"
-    r"esgotado|esgotada|não aguento|nao aguento|tô esgotado|to esgotado|"
-    r"não consigo mais|nao consigo mais|burnout|queimado|desisto|não aguento mais|nao aguento mais)"
-)
-
-_CRISIS_RECOVERY_PATTERNS = re.compile(
-    r"(?i)(melhorei|tô melhor|to melhor|me sinto melhor|voltei|pronto pra trabalhar|"
-    r"pode voltar ao normal|cancela modo crise|sai do modo crise)"
-)
-
+_CRISIS_PATTERNS = re.compile(r"(?i)(não dou conta|nao dou conta|tô mal|to mal|muita coisa|ansiedade|esgotado|esgotada|não aguento|nao aguento|tô esgotado|to esgotado|não consigo mais|nao consigo mais|burnout|queimado|desisto|não aguento mais|nao aguento mais)")
+_CRISIS_RECOVERY_PATTERNS = re.compile(r"(?i)(melhorei|tô melhor|to melhor|me sinto melhor|voltei|pronto pra trabalhar|pode voltar ao normal|cancela modo crise|sai do modo crise)")
 _PRESTIGE_ACCEPT = re.compile(r"(?i)^sim$")
 _DAY_OFF_ACCEPT = re.compile(r"(?i)^respiro$")
 _REST_ACCEPT = re.compile(r"(?i)^(ok|bora|pode ser|tá|ta|valeu|beleza)$")
-_SCHEDULE_INTENT = re.compile(
-    r"(?i)(reservar|agendar|bloquear na agenda|colocar na agenda|bloco pra|bloco para)"
-)
+_SCHEDULE_INTENT = re.compile(r"(?i)(reservar|agendar|bloquear na agenda|colocar na agenda|bloco pra|bloco para)")
 _SCHEDULE_CONFIRM = re.compile(r"(?i)^(sim|cria|pode criar|confirma|ok cria)$")
 _CONTEXT_QUERY = re.compile(r"(?i)^contexto\s+(.+)$")
-_TECHNICAL_DETAIL = re.compile(
-    r"(?i)(erro|error|bug|cliente|client|decisão|decisao|decidimos|aprovado|"
-    r"reprovado|feedback|reunião|reuniao|bloqueado|depende de|aguardando)"
-)
-_ACTIVE_TASKS_QUERY = re.compile(
-    r"(?i)^(quais (são|sao) )?(minhas )?(tarefas|demandas) (ativas|em aberto)\??$|^(o )?que (tenho|está|esta) (em aberto|aberto agora|ativo agora)\??$"
-)
-_CONTEXT_UPDATE_HINTS = re.compile(
-    r"(?i)(resumo de demandas|demandas ativas|itens já resolvidos|itens ja resolvidos|"
-    r"detalhe[, ]|contexto de trabalho|status:|estimativa:|prioridade:|já foi feito|ja foi feito|"
-    r"já terminei|ja terminei|já entregou|ja entregou|já startei|ja startei|já comecei|ja comecei|combinei de)"
-)
-_EXPLICIT_DONE = re.compile(
-    r"(?i)(terminei|finalizei|concluí|conclui|entreguei|já foi|ja foi|aprovado|resolvido|resolvida|feito|feita)"
-)
+_TECHNICAL_DETAIL = re.compile(r"(?i)(erro|error|bug|cliente|client|decisão|decisao|decidimos|aprovado|reprovado|feedback|reunião|reuniao|bloqueado|depende de|aguardando)")
+_ACTIVE_TASKS_QUERY = re.compile(r"(?i)^(quais (são|sao) )?(minhas )?(tarefas|demandas) (ativas|em aberto)\??$|^(o )?que (tenho|está|esta) (em aberto|aberto agora|ativo agora)\??$")
+_CONTEXT_UPDATE_HINTS = re.compile(r"(?i)(resumo de demandas|demandas ativas|itens já resolvidos|itens ja resolvidos|detalhe[, ]|contexto de trabalho|status:|estimativa:|prioridade:|já foi feito|ja foi feito|já terminei|ja terminei|já entregou|ja entregou|já startei|ja startei|já comecei|ja comecei|combinei de)")
+_EXPLICIT_DONE = re.compile(r"(?i)(terminei|finalizei|concluí|conclui|entreguei|já foi|ja foi|aprovado|resolvido|resolvida|feito|feita)")
 
 _STATUS_PATTERNS = {
     "done": re.compile(r"(?i)(já terminei|ja terminei|terminei|finalizei|concluí|conclui|entreguei|resolvido|resolvida|aprovado|aprovada|já foi feito|ja foi feito|já foi|ja foi|ok / resolvido|ok\/resolvido|concluído|concluida|concluída)"),
     "done_external": re.compile(r"(?i)(rig já fez|rig ja fez|rig já entregou|rig ja entregou|já entregou|ja entregou)"),
-    "in_progress": re.compile(r"(?i)(em andamento|ativo agora|ativa agora|frente estratégica ativa|frente estrategica ativa|startei|startei|comecei|iniciei|mandei briefing|briefing enviado|assets prontos|assets chegaram)"),
+    "in_progress": re.compile(r"(?i)(em andamento|ativo agora|ativa agora|frente estratégica ativa|frente estrategica ativa|startei|comecei|iniciei|mandei briefing|briefing enviado|assets prontos|assets chegaram|está andando|esta andando)"),
     "pending": re.compile(r"(?i)(pendente|em aberto|aberto|registrado|registrada|próximo da fila|proximo da fila|secundário|secundario)"),
 }
 
 _SKIP_UPDATE_CHUNKS = re.compile(r"(?i)^(demandas ativas agora|outras demandas novas|itens já resolvidos|itens de radar|galaxy|spark|cast|detalhe)$")
+_TITLE_STOPWORDS = {
+    "status", "ativa", "ativo", "agora", "demanda", "demandas", "aberto", "aberta", "pendente", "prioridade", "estimativa",
+    "agendamento", "reunião", "reuniao", "feito", "feita", "terminei", "entregou", "entreguei", "já", "ja", "foi", "está", "esta",
+    "com", "para", "sobre", "detalhe", "falta", "hoje", "rig", "mandei", "combinei", "andamento", "ativo", "resolvido",
+    "resolvida", "concluido", "concluida", "enviado", "enviados", "assets", "prontos", "chegaram"
+}
 
 
-async def handle(
-    raw_text: str, origin: str = "whatsapp", db: AsyncSession | None = None
-) -> tuple[InboundItem, str, str]:
+async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | None = None) -> tuple[InboundItem, str, str]:
     raw_stripped = raw_text.strip()
 
     if db is not None:
@@ -177,11 +150,7 @@ async def handle(
         if db is not None:
             await task_manager.set_setting("crisis_mode", "true", db)
             await task_manager.set_setting("crisis_since", date.today().isoformat(), db)
-        response = (
-            "Entendido. Vamos simplificar ao máximo.\n"
-            "Hoje só uma coisa. Sem pressão, sem backlog.\n"
-            "Fica à vontade pra me contar mais se quiser."
-        )
+        response = "Entendido. Vamos simplificar ao máximo.\nHoje só uma coisa. Sem pressão, sem backlog.\nFica à vontade pra me contar mais se quiser."
         item = InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title="crisis")
         return item, response, "crisis"
 
@@ -237,11 +206,7 @@ async def handle(
 
 
 def _looks_like_context_update(raw_text: str) -> bool:
-    if len(raw_text) >= 240:
-        return True
-    if _CONTEXT_UPDATE_HINTS.search(raw_text):
-        return True
-    return False
+    return len(raw_text) >= 240 or bool(_CONTEXT_UPDATE_HINTS.search(raw_text))
 
 
 def _looks_like_explicit_done_update(raw_text: str) -> bool:
@@ -252,9 +217,7 @@ async def _route(item: InboundItem, classification: str, db: AsyncSession | None
     if classification == "new_task":
         if db is not None:
             task = await task_manager.create(item, db)
-            boss_msg = ""
-            if task.is_boss_fight:
-                boss_msg = "\n⚔️ Boss fight detectado! XP triplo se vencer. Quer enfrentar hoje?"
+            boss_msg = "\n⚔️ Boss fight detectado! XP triplo se vencer. Quer enfrentar hoje?" if task.is_boss_fight else ""
             return f"Anotado: *{task.title}*. Prioridade: {item.priority_hint or 'normal'}.{boss_msg}"
         return f"Anotado: *{item.extracted_title}*."
 
@@ -280,45 +243,52 @@ async def _build_context(db: AsyncSession | None) -> str:
     if db is None:
         return "(sem contexto disponível)"
     tasks = await task_manager.get_active_tasks(db)
-    if not tasks:
-        return "Nenhuma tarefa ativa."
-    lines = [f"- {t.title} (status {t.status}, prioridade {t.priority or '-'}, prazo {t.deadline or 'sem prazo'})" for t in tasks[:10]]
-    return "Tarefas ativas:\n" + "\n".join(lines)
+    if tasks:
+        lines = [f"- {t.title} (status {t.status}, prioridade {t.priority or '-'}, prazo {t.deadline or 'sem prazo'})" for t in tasks[:10]]
+        return "Tarefas ativas:\n" + "\n".join(lines)
+    jira_lines = await _build_jira_active_lines(db)
+    if jira_lines:
+        return "Demandas ativas do Jira/cache:\n" + "\n".join(jira_lines)
+    return "Nenhuma tarefa ativa."
 
 
 async def _handle_context_update(raw_text: str, db: AsyncSession) -> str:
     updates = await _extract_status_updates(raw_text, db)
     if not updates:
         await _capture_context_note(raw_text, db)
-        return (
-            "Entendi como atualização de contexto. Registrei isso sem marcar nenhuma tarefa como concluída.\n"
-            "Se quiser, me pede depois: *minhas tarefas ativas*."
-        )
+        return "Entendi como atualização de contexto. Registrei isso sem marcar nenhuma tarefa como concluída.\nSe quiser, me pede depois: *minhas tarefas ativas*."
 
     applied_lines: list[str] = []
     unclear_lines: list[str] = []
 
     for upd in updates:
         task = upd.get("task")
+        title = upd.get("title")
+        status = upd["status"]
+        note = upd.get("note")
+        estimated_minutes = upd.get("estimated_minutes")
+
+        if not task and title:
+            mapped_status = _map_status_to_task_status(status)
+            task = await task_manager.upsert_task_from_context(
+                title,
+                db,
+                status=mapped_status,
+                category="work",
+                note=note,
+                estimated_minutes=estimated_minutes,
+            )
+            label = _status_label(mapped_status)
+            applied_lines.append(f"- {task.title} → {label}")
+            continue
+
         if not task:
             unclear_lines.append(f"- não consegui ligar com segurança: {upd['source'][:90]}")
             continue
 
-        status = upd["status"]
-        note = upd.get("note")
-
-        if status == "done":
-            done_task, _ = await task_manager.mark_done(task.title, db)
-            if done_task:
-                applied_lines.append(f"- {done_task.title} → concluída")
-            else:
-                unclear_lines.append(f"- não consegui concluir: {task.title}")
-            continue
-
-        mapped_status = "in_progress" if status == "in_progress" else "pending"
+        mapped_status = _map_status_to_task_status(status)
         updated_task = await task_manager.update_task_status(task, mapped_status, db, note=note)
-        label = "em andamento" if mapped_status == "in_progress" else "pendente"
-        applied_lines.append(f"- {updated_task.title} → {label}")
+        applied_lines.append(f"- {updated_task.title} → {_status_label(mapped_status)}")
 
     if not applied_lines and unclear_lines:
         return "Entendi como atualização de contexto, mas não apliquei nada com segurança:\n" + "\n".join(unclear_lines[:5])
@@ -334,42 +304,62 @@ async def _handle_context_update(raw_text: str, db: AsyncSession) -> str:
 
 async def _handle_explicit_done_update(raw_text: str, db: AsyncSession) -> str:
     updates = await _extract_status_updates(raw_text, db)
-    done_updates = [u for u in updates if u.get("task") and u["status"] == "done"]
-    non_done = [u for u in updates if u.get("task") and u["status"] != "done"]
-
-    if not done_updates and not non_done:
+    if not updates:
         return "Entendi como atualização, mas não consegui ligar isso com segurança a uma tarefa ativa."
 
     lines = []
-    for upd in done_updates:
-        task = upd["task"]
-        done_task, _ = await task_manager.mark_done(task.title, db)
-        if done_task:
-            lines.append(f"- {done_task.title} → concluída")
+    for upd in updates:
+        task = upd.get("task")
+        title = upd.get("title")
+        status = upd["status"]
+        note = upd.get("note")
+        estimated_minutes = upd.get("estimated_minutes")
 
-    for upd in non_done:
-        task = upd["task"]
-        mapped_status = "in_progress" if upd["status"] == "in_progress" else "pending"
-        label = "em andamento" if mapped_status == "in_progress" else "pendente"
-        updated_task = await task_manager.update_task_status(task, mapped_status, db, note=upd.get("note"))
-        lines.append(f"- {updated_task.title} → {label}")
+        if status == "done":
+            if task:
+                done_task, _ = await task_manager.mark_done(task.title, db)
+                if done_task:
+                    lines.append(f"- {done_task.title} → concluída")
+                    continue
+            if title:
+                created = await task_manager.upsert_task_from_context(title, db, status="done", category="work", note=note, estimated_minutes=estimated_minutes)
+                lines.append(f"- {created.title} → concluída")
+                continue
+        else:
+            mapped_status = _map_status_to_task_status(status)
+            if task:
+                updated_task = await task_manager.update_task_status(task, mapped_status, db, note=note)
+                lines.append(f"- {updated_task.title} → {_status_label(mapped_status)}")
+                continue
+            if title:
+                created = await task_manager.upsert_task_from_context(title, db, status=mapped_status, category="work", note=note, estimated_minutes=estimated_minutes)
+                lines.append(f"- {created.title} → {_status_label(mapped_status)}")
+                continue
 
     if not lines:
         return "Entendi a intenção, mas não consegui aplicar nada com segurança."
-
     return "Atualização aplicada:\n" + "\n".join(lines)
 
 
 async def _handle_active_tasks(db: AsyncSession) -> str:
     tasks = list(await task_manager.get_active_tasks(db))
     recent_done = list(await task_manager.get_recently_done(db, limit=3))
+
     if not tasks:
+        jira_lines = await _build_jira_active_lines(db)
+        if jira_lines:
+            response = ["Ativas agora (Jira/cache):"]
+            response.extend(jira_lines[:5])
+            if recent_done:
+                response.append("\nResolvidas por último:")
+                response.extend([f"- {t.title}" for t in recent_done[:3]])
+            response.append("\nSe você me mandar um resumo de status, eu materializo isso na sua lista ativa.")
+            return "\n".join(response)
         return "Você não tem tarefas ativas agora."
 
     top_now = tasks[:3]
     lines = ["Ativas agora:"]
     for i, task in enumerate(top_now, 1):
-        status_label = "em andamento" if task.status == "in_progress" else "pendente"
         extra = []
         if task.estimated_minutes:
             extra.append(f"~{task.estimated_minutes}min")
@@ -378,13 +368,12 @@ async def _handle_active_tasks(db: AsyncSession) -> str:
         if task.deadline:
             extra.append(f"prazo {task.deadline.strftime('%d/%m')}")
         suffix = f" ({', '.join(extra)})" if extra else ""
-        lines.append(f"{i}. {task.title} — {status_label}{suffix}")
+        lines.append(f"{i}. {task.title} — {_status_label(task.status)}{suffix}")
 
     if len(tasks) > 3:
         lines.append("\nEm acompanhamento:")
         for task in tasks[3:7]:
-            status_label = "em andamento" if task.status == "in_progress" else "pendente"
-            lines.append(f"- {task.title} — {status_label}")
+            lines.append(f"- {task.title} — {_status_label(task.status)}")
 
     if recent_done:
         lines.append("\nResolvidas por último:")
@@ -395,25 +384,51 @@ async def _handle_active_tasks(db: AsyncSession) -> str:
     return "\n".join(lines)
 
 
+async def _build_jira_active_lines(db: AsyncSession) -> list[str]:
+    cached = await jira_client.get_cached_issues(db)
+    lines = []
+    for issue in cached[:5]:
+        title = issue.summary if hasattr(issue, "summary") else issue.get("summary")
+        key = issue.jira_key if hasattr(issue, "jira_key") else issue.get("key")
+        status = issue.status if hasattr(issue, "status") else issue.get("status")
+        if title:
+            prefix = f"[{key}] " if key else ""
+            suffix = f" — {status}" if status else ""
+            lines.append(f"- {prefix}{title}{suffix}")
+    return lines
+
+
 async def _extract_status_updates(raw_text: str, db: AsyncSession) -> list[dict]:
     chunks = _split_update_chunks(raw_text)
-    tasks = list(await task_manager.get_active_tasks(db))
+    active_tasks = list(await task_manager.get_active_tasks(db))
+    recent_tasks = list(await task_manager.get_recent_tasks(db, limit=80))
+    all_tasks = active_tasks + [t for t in recent_tasks if t not in active_tasks]
     updates: list[dict] = []
-    seen_ids: set[str] = set()
+    seen_keys: set[str] = set()
 
     for chunk in chunks:
-        if not chunk or _SKIP_UPDATE_CHUNKS.match(chunk.strip()):
+        stripped = chunk.strip()
+        if not stripped or _SKIP_UPDATE_CHUNKS.match(stripped):
             continue
-        status = _detect_status(chunk)
+        status = _detect_status(stripped)
         if not status:
             continue
-        task = _match_task_for_chunk(chunk, tasks)
-        note = _extract_note(chunk)
-        key = f"{getattr(task, 'id', None)}:{status}:{chunk[:40]}"
-        if key in seen_ids:
+        title = _extract_title_candidate(stripped)
+        task = _match_task_for_chunk(stripped, title, all_tasks)
+        note = _extract_note(stripped)
+        estimated_minutes = _extract_estimated_minutes(stripped)
+        dedupe = f"{task.title if task else title}:{status}"
+        if dedupe in seen_keys:
             continue
-        seen_ids.add(key)
-        updates.append({"task": task, "status": status, "note": note, "source": chunk})
+        seen_keys.add(dedupe)
+        updates.append({
+            "task": task,
+            "title": title,
+            "status": status,
+            "note": note,
+            "estimated_minutes": estimated_minutes,
+            "source": stripped,
+        })
     return updates
 
 
@@ -441,47 +456,77 @@ def _detect_status(chunk: str) -> str | None:
 
 def _extract_note(chunk: str) -> str | None:
     lowered = chunk.lower()
+    notes = []
     if "3k" in lowered and ("11h" in lowered or "11 h" in lowered):
-        return "Reunião com a 3K marcada para segunda às 11h"
-    if "mandei briefing" in lowered or "briefing" in lowered and "keyframe" in lowered:
-        return "Briefing e keyframes enviados"
+        notes.append("Reunião com a 3K marcada para segunda às 11h")
+    if "briefing" in lowered and ("keyframe" in lowered or "keyframes" in lowered):
+        notes.append("Briefing e keyframes enviados")
     if "rig" in lowered:
-        return chunk
+        notes.append(chunk)
+    return " | ".join(notes) if notes else None
+
+
+def _extract_estimated_minutes(chunk: str) -> int | None:
+    match = re.search(r"~?\s*(\d+)h(?:\s*(\d+))?", chunk, re.IGNORECASE)
+    if match:
+        hours = int(match.group(1))
+        extra = int(match.group(2)) if match.group(2) else 0
+        return hours * 60 + extra
+    match_min = re.search(r"~?\s*(\d+)\s*min", chunk, re.IGNORECASE)
+    if match_min:
+        return int(match_min.group(1))
     return None
 
 
-def _chunk_keywords(chunk: str) -> list[str]:
-    words = re.findall(r"[a-zA-ZÀ-ÿ0-9]{3,}", chunk.lower())
-    stopwords = {
-        "status", "ativa", "ativo", "agora", "demanda", "demandas", "aberto", "aberta",
-        "pendente", "prioridade", "estimativa", "agendamento", "reunião", "reuniao",
-        "feito", "feita", "terminei", "entregou", "entreguei", "já", "ja", "foi", "está", "esta",
-        "com", "para", "sobre", "detalhe", "falta", "hoje", "agora", "rig", "mandei", "combinei",
-    }
-    return [w for w in words if w not in stopwords]
+def _extract_title_candidate(chunk: str) -> str | None:
+    text = re.sub(r"(?i)^detalhe:\s*", "", chunk).strip()
+    for sep in (" — ", " - ", " – ", ":"):
+        if sep in text:
+            left = text.split(sep, 1)[0].strip()
+            if len(left) >= 3:
+                return left
+    lowered = text.lower()
+    patterns = [
+        r"(?i)^(.*?)(?:\s+já terminei|\s+terminei|\s+finalizei|\s+já entregou|\s+está em andamento|\s+esta em andamento|\s+está andando|\s+esta andando|\s+pendente).*$",
+    ]
+    for pattern in patterns:
+        m = re.match(pattern, text)
+        if m:
+            candidate = m.group(1).strip(" ,.-")
+            if len(candidate) >= 3:
+                return candidate
+    words = [w for w in re.findall(r"[A-Za-zÀ-ÿ0-9|/]+", text) if w.lower() not in _TITLE_STOPWORDS]
+    if not words:
+        return None
+    return " ".join(words[:6]).strip()
 
 
-def _match_task_for_chunk(chunk: str, tasks: list) -> object | None:
-    keywords = _chunk_keywords(chunk)
-    if not keywords:
+def _match_task_for_chunk(chunk: str, title_candidate: str | None, tasks: list) -> object | None:
+    if not tasks:
         return None
 
+    lowered_chunk = chunk.lower()
     best_task = None
     best_score = 0.0
-    lowered_chunk = chunk.lower()
 
     for task in tasks:
-        title = (task.title or "").lower()
-        overlap = sum(1 for kw in keywords if kw in title)
-        ratio = SequenceMatcher(None, lowered_chunk[:160], title).ratio()
-        score = overlap * 10 + ratio * 5
-        if "fire" in lowered_chunk and "abertura" in lowered_chunk and ("fire" in title or "abertura" in title):
+        title = (task.title or "")
+        normalized_title = task_manager.normalize_task_title(title)
+        score = 0.0
+        if title_candidate and task_manager.titles_look_similar(title, title_candidate):
+            score += 20
+        ratio = SequenceMatcher(None, task_manager.normalize_task_title(lowered_chunk[:160]), normalized_title).ratio()
+        score += ratio * 10
+        keywords = [w for w in task_manager.normalize_task_title(chunk).split() if w and w not in _TITLE_STOPWORDS]
+        overlap = sum(1 for kw in keywords if kw in normalized_title)
+        score += overlap * 3
+        if "countdown" in lowered_chunk and "countdown" in normalized_title:
+            score += 8
+        if "screensaver" in lowered_chunk and "screensaver" in normalized_title:
+            score += 8
+        if "motion avisos" in task_manager.normalize_task_title(chunk) and "motion avisos" in normalized_title:
             score += 12
-        if "countdown" in lowered_chunk and "countdown" in title:
-            score += 12
-        if "screensaver" in lowered_chunk and "screensaver" in title:
-            score += 12
-        if "motion" in lowered_chunk and "avisos" in lowered_chunk and "motion" in title:
+        if "video abertura" in task_manager.normalize_task_title(chunk) and "video abertura" in normalized_title:
             score += 12
         if score > best_score:
             best_score = score
@@ -492,9 +537,26 @@ def _match_task_for_chunk(chunk: str, tasks: list) -> object | None:
     return best_task
 
 
+def _map_status_to_task_status(status: str) -> str:
+    if status == "done":
+        return "done"
+    if status == "in_progress":
+        return "in_progress"
+    return "pending"
+
+
+def _status_label(status: str) -> str:
+    return {
+        "done": "concluída",
+        "in_progress": "em andamento",
+        "pending": "pendente",
+        "delegated": "delegada",
+        "dropped": "removida",
+    }.get(status, status)
+
+
 async def _handle_unstuck_flow(raw_text: str, db: AsyncSession) -> str:
     step = int(await task_manager.get_setting("unstuck_step", "1", db=db) or "1")
-
     if step == 1:
         await task_manager.set_setting("unstuck_task", raw_text[:100], db)
         await task_manager.set_setting("unstuck_step", "2", db)
@@ -506,7 +568,6 @@ async def _handle_unstuck_flow(raw_text: str, db: AsyncSession) -> str:
     if step == 3:
         await task_manager.set_setting("unstuck_step", "4", db)
         return "Show! ✅ Quer fazer mais 5 minutos ou parar aqui?"
-
     await task_manager.set_setting("unstuck_mode", "false", db)
     await task_manager.set_setting("unstuck_step", "1", db)
     if any(w in raw_text.lower() for w in ("mais", "continuar", "seguir", "sim")):
@@ -519,12 +580,7 @@ async def _handle_crisis_message(raw_text: str, db: AsyncSession) -> str:
         await task_manager.set_setting("crisis_mode", "false", db)
         await task_manager.set_setting("crisis_since", "", db)
         return "Fico feliz! 🙌 Voltamos ao ritmo normal. Quando quiser ver suas tarefas, é só pedir."
-
-    prompt = (
-        "Pedro está passando por um período difícil (modo crise ativo). "
-        "Responda de forma empática e gentil, sem mencionar tarefas, backlog ou produtividade. "
-        f"Mensagem dele: {raw_text}"
-    )
+    prompt = "Pedro está passando por um período difícil (modo crise ativo). Responda de forma empática e gentil, sem mencionar tarefas, backlog ou produtividade. Mensagem dele: " + raw_text
     return await brain.casual_response(prompt, db=db)
 
 
@@ -535,23 +591,15 @@ async def _handle_prestige_accept(db: AsyncSession) -> str:
     attrs = ["craft", "strategy", "life", "willpower", "knowledge"]
     result = await db.execute(select(PlayerStat).where(PlayerStat.attribute.in_(attrs)))
     stats = result.scalars().all()
-
     prestige_num = (stats[0].prestige + 1) if stats else 1
     for stat in stats:
         stat.prestige = prestige_num
         stat.xp = 0
         stat.level = 1
-
     await task_manager.set_setting("prestige_offered", "false", db)
     await db.commit()
-
     multiplier = 1 + (prestige_num * 0.1)
-    return (
-        f"🌟 *PRESTIGE {prestige_num} ATIVADO!*\n"
-        f"Todos os atributos resetados para nível 1.\n"
-        f"Multiplicador permanente: {multiplier:.1f}x XP.\n"
-        f"Nova jornada começa agora. 💪"
-    )
+    return f"🌟 *PRESTIGE {prestige_num} ATIVADO!*\nTodos os atributos resetados para nível 1.\nMultiplicador permanente: {multiplier:.1f}x XP.\nNova jornada começa agora. 💪"
 
 
 async def _handle_delegate(raw_text: str, db: AsyncSession | None) -> str:
@@ -573,28 +621,16 @@ async def _handle_dump(raw_stripped: str, origin: str, db: AsyncSession | None) 
     dump_text = _DUMP_PREFIX.sub("", raw_stripped).strip()
     if not dump_text:
         return "Dump vazio — manda o que quer registrar depois de 'dump:'"
-
     if db is not None:
         from app.models import Task
         task = Task(title=dump_text[:500], origin=origin, status="dump", category="backlog")
         db.add(task)
         await db.commit()
-
     foco = "sua tarefa atual"
     if db is not None:
-        victory_id = await task_manager.get_setting("daily_victory_task_id", db=db)
-        if victory_id:
-            from sqlalchemy import select as _select
-            from app.models import Task as _Task
-            result = await db.execute(_select(_Task).where(_Task.id == victory_id))
-            victory = result.scalar_one_or_none()
-            if victory:
-                foco = victory.title
-        else:
-            pending = await task_manager.get_active_tasks(db)
-            if pending:
-                foco = pending[0].title
-
+        pending = await task_manager.get_active_tasks(db)
+        if pending:
+            foco = pending[0].title
     return f"Registrado. Isso não vai se perder.\nVolta pra *{foco}*."
 
 
@@ -606,7 +642,6 @@ async def _handle_ritual_choice(choice: str, db: AsyncSession) -> str:
     today = date.today()
     result = await db.execute(_select(DailyPlan).where(DailyPlan.plan_date == today))
     plan = result.scalar_one_or_none()
-
     if plan and plan.tasks_planned and "ids" in plan.tasks_planned:
         idx = int(choice) - 1
         task_ids = plan.tasks_planned["ids"]
@@ -625,15 +660,10 @@ async def _maybe_grant_rest_xp(raw_text: str, db: AsyncSession) -> None:
     from app.models import Message as _Message
 
     pause_keywords = ("pausa", "descanso", "coffee break", "descanse", "respira", "break")
-    last_out = await db.execute(
-        _select(_Message).where(_Message.direction == "outbound").order_by(_Message.created_at.desc()).limit(1)
-    )
+    last_out = await db.execute(_select(_Message).where(_Message.direction == "outbound").order_by(_Message.created_at.desc()).limit(1))
     last_outbound = last_out.scalar_one_or_none()
-    if not last_outbound:
+    if not last_outbound or not any(kw in last_outbound.content.lower() for kw in pause_keywords):
         return
-    if not any(kw in last_outbound.content.lower() for kw in pause_keywords):
-        return
-
     stat = await task_manager.grant_xp("recovery", 10, db)
     await task_manager.set_setting("rest_xp_granted_today", "true", db)
     logger.info("Rest XP granted mid-conversation: +10 recovery (nível {})", stat.level)
@@ -642,10 +672,7 @@ async def _maybe_grant_rest_xp(raw_text: str, db: AsyncSession) -> None:
 async def _handle_day_off_accept(db: AsyncSession) -> str:
     await task_manager.set_setting("day_off_tomorrow", "true", db)
     await task_manager.set_setting("day_off_offered", "false", db)
-    return (
-        "Combinado! 🌿 Amanhã é dia de respiro.\n"
-        "Sem plano, sem cobranças. E na volta: 1.5x XP em tudo. 💪"
-    )
+    return "Combinado! 🌿 Amanhã é dia de respiro.\nSem plano, sem cobranças. E na volta: 1.5x XP em tudo. 💪"
 
 
 async def _handle_schedule_intent(raw_text: str, db: AsyncSession) -> str:
@@ -659,18 +686,12 @@ async def _handle_schedule_intent(raw_text: str, db: AsyncSession) -> str:
         val = int(dur_match.group(1))
         unit = dur_match.group(2).lower()
         duration_min = val * 60 if unit.startswith("h") else val
-
-    task_name_match = re.sub(
-        r"(?i)(reservar|agendar|bloquear na agenda|colocar na agenda|bloco pra|bloco para)\s*",
-        "", raw_text,
-    ).strip()
+    task_name_match = re.sub(r"(?i)(reservar|agendar|bloquear na agenda|colocar na agenda|bloco pra|bloco para)\s*", "", raw_text).strip()
     task_name = task_name_match[:100] if task_name_match else "Foco"
-
     events = await gcal_client.get_today_events()
     now = datetime.now(timezone.utc)
     start_candidate = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
     end_work = now.replace(hour=21, minute=0, second=0, microsecond=0)
-
     occupied = []
     for e in events:
         try:
@@ -680,7 +701,6 @@ async def _handle_schedule_intent(raw_text: str, db: AsyncSession) -> str:
             occupied.append((es, ee))
         except Exception:
             pass
-
     slot_start = start_candidate
     slot_found = False
     for _ in range(8):
@@ -690,17 +710,13 @@ async def _handle_schedule_intent(raw_text: str, db: AsyncSession) -> str:
             slot_found = True
             break
         slot_start += timedelta(hours=1)
-
     if not slot_found:
         return "Não achei slot livre hoje. Quer agendar pra amanhã de manhã?"
-
     slot_brt_start = slot_start - timedelta(hours=3)
     slot_brt_end = (slot_start + timedelta(minutes=duration_min)) - timedelta(hours=3)
     time_str = f"{slot_brt_start.strftime('%H:%M')} → {slot_brt_end.strftime('%H:%M')}"
-
     proposal = {"title": task_name, "start": slot_start.isoformat(), "end": (slot_start + timedelta(minutes=duration_min)).isoformat()}
     await task_manager.set_setting("pending_gcal_event", json.dumps(proposal), db)
-
     return f"Sugiro *{time_str}* pra '{task_name}' ({duration_min}min).\nCrio na agenda? Responde *sim* pra confirmar."
 
 
@@ -712,10 +728,8 @@ async def _handle_gcal_confirm(db: AsyncSession) -> str:
     raw = await task_manager.get_setting("pending_gcal_event", db=db)
     if not raw:
         return "Não encontrei nenhum evento pendente de confirmação."
-
     proposal = json.loads(raw)
     await task_manager.set_setting("pending_gcal_event", "", db)
-
     start_dt = datetime.fromisoformat(proposal["start"])
     end_dt = datetime.fromisoformat(proposal["end"])
     result = await gcal_client.create_event(proposal["title"], start_dt, end_dt)
@@ -744,39 +758,26 @@ async def _capture_context_note(raw_text: str, db: AsyncSession) -> None:
         if title_words and any(w in raw_lower for w in title_words):
             matched_task = t
             break
-    if not matched_task:
-        return
-    await _append_task_note(matched_task, raw_text, db)
+    if matched_task:
+        await _append_task_note(matched_task, raw_text, db)
 
 
 async def _handle_context_query(project_name: str, db: AsyncSession) -> str:
     from sqlalchemy import select as _select
     from app.models import Memory as _Memory, Task as _Task
 
-    tasks_result = await db.execute(
-        _select(_Task).where(_Task.title.ilike(f"%{project_name}%")).order_by(_Task.created_at.desc()).limit(10)
-    )
+    tasks_result = await db.execute(_select(_Task).where(_Task.title.ilike(f"%{project_name}%")).order_by(_Task.created_at.desc()).limit(10))
     tasks = tasks_result.scalars().all()
-
-    mem_result = await db.execute(
-        _select(_Memory)
-        .where(_Memory.content.ilike(f"%{project_name}%"))
-        .where(_Memory.superseded == False)
-        .order_by(_Memory.period_start.desc())
-        .limit(3)
-    )
+    mem_result = await db.execute(_select(_Memory).where(_Memory.content.ilike(f"%{project_name}%")).where(_Memory.superseded == False).order_by(_Memory.period_start.desc()).limit(3))
     memories = mem_result.scalars().all()
-
     if not tasks and not memories:
         return f"Não encontrei contexto para '{project_name}'. Tenta com outra palavra-chave."
-
     lines = [f"Contexto do projeto/tarefa '{project_name}':"]
     for t in tasks:
         status_icon = "✅" if t.status == "done" else "⏳"
         lines.append(f"{status_icon} {t.title} ({t.status})")
         if t.notes:
             lines.append(f"   📝 {t.notes[:200]}")
-
     if memories:
         lines.append("\nNo histórico:")
         for m in memories[:2]:
