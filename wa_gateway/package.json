@@ -1,0 +1,18 @@
+{
+  "name": "alfred-wa-gateway",
+  "version": "1.0.0",
+  "description": "Gateway whatsapp-web.js para o Alfred",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "type": "commonjs",
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "express": "^4.21.2",
+    "pg": "^8.13.3",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.1-alpha.3"
+  }
+}
