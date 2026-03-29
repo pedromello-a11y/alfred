@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 # Env mínimo para importar o app em modo teste
-os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./test_bootstrap.db")
+os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/alfred_test")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
 os.environ.setdefault("JIRA_BASE_URL", "https://example.atlassian.net")
 os.environ.setdefault("JIRA_EMAIL", "test@example.com")
@@ -17,6 +17,14 @@ os.environ.setdefault("GOOGLE_CLIENT_SECRET", "test-client-secret")
 from app import database as app_database
 from app.database import Base
 from app.services import brain, jira_client, message_handler
+
+
+def _to_async_db_url(url: str) -> str:
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return url
 
 
 @pytest.fixture(autouse=True)
@@ -49,15 +57,16 @@ def stub_external_calls(monkeypatch):
 
 
 @pytest.fixture
-async def db_session(tmp_path: Path, monkeypatch):
-    db_path = tmp_path / "alfred_eval.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", echo=False)
+async def db_session(monkeypatch):
+    database_url = _to_async_db_url(os.environ["DATABASE_URL"])
+    engine = create_async_engine(database_url, echo=False)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     monkeypatch.setattr(app_database, "engine", engine)
     monkeypatch.setattr(app_database, "AsyncSessionLocal", session_factory)
 
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
     async with session_factory() as session:
