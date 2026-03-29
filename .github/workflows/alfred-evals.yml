@@ -47,6 +47,34 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Alfred regression evals
+        id: pytest
+        continue-on-error: true
         env:
           PYTHONPATH: .
-        run: pytest tests/alfred_eval -q
+        run: |
+          pytest tests/alfred_eval -q --junitxml=pytest-report.xml 2>&1 | tee pytest-output.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Build failure report
+        if: always()
+        run: |
+          python scripts/collect_failures.py \
+            --junitxml pytest-report.xml \
+            --output failure_report.json \
+            --stdout pytest-output.txt \
+            --repo "$GITHUB_REPOSITORY"
+
+      - name: Upload eval artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alfred-eval-report
+          path: |
+            failure_report.json
+            pytest-report.xml
+            pytest-output.txt
+          retention-days: 7
+
+      - name: Fail job if tests failed
+        if: steps.pytest.outcome != 'success'
+        run: exit 1
