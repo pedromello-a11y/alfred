@@ -11,10 +11,37 @@ const pool = new Pool({
 });
 
 const TABLE_NAME = process.env.WA_SESSION_TABLE || 'whatsapp_sessions';
+const VALID_TABLE_NAME = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+if (!VALID_TABLE_NAME.test(TABLE_NAME)) {
+  throw new Error(`Invalid WA_SESSION_TABLE: ${TABLE_NAME}`);
+}
+
+let tableReadyPromise = null;
+
+async function ensureTable() {
+  if (!tableReadyPromise) {
+    tableReadyPromise = pool.query(`
+      CREATE TABLE IF NOT EXISTS ${TABLE_NAME} (
+        id TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).then(() => {
+      console.log(`[session] tabela pronta: ${TABLE_NAME}`);
+    }).catch((err) => {
+      tableReadyPromise = null;
+      throw err;
+    });
+  }
+
+  return tableReadyPromise;
+}
 
 class PostgresSessionStore {
   async sessionExists({ session }) {
     try {
+      await ensureTable();
       const { rows } = await pool.query(
         `SELECT id FROM ${TABLE_NAME} WHERE id = $1`,
         [session],
@@ -37,6 +64,7 @@ class PostgresSessionStore {
     const sessionKey = path.basename(session);
 
     try {
+      await ensureTable();
       await pool.query(
         `INSERT INTO ${TABLE_NAME} (id, data, updated_at)
          VALUES ($1, $2, NOW())
@@ -51,6 +79,7 @@ class PostgresSessionStore {
 
   async extract({ session, path: zipPath }) {
     try {
+      await ensureTable();
       const { rows } = await pool.query(
         `SELECT data FROM ${TABLE_NAME} WHERE id = $1`,
         [session],
@@ -68,8 +97,13 @@ class PostgresSessionStore {
   }
 
   async delete({ session }) {
-    await pool.query(`DELETE FROM ${TABLE_NAME} WHERE id = $1`, [session]);
-    console.log('[session] Sessão deletada');
+    try {
+      await ensureTable();
+      await pool.query(`DELETE FROM ${TABLE_NAME} WHERE id = $1`, [session]);
+      console.log('[session] Sessão deletada');
+    } catch (err) {
+      console.error('[session] Erro ao deletar sessão:', err.message);
+    }
   }
 }
 
