@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends, Request
 from loguru import logger
 from sqlalchemy import select
@@ -11,22 +13,48 @@ from app.services import message_handler, whapi_client
 router = APIRouter()
 
 
+def _should_accept_self_authored_message(msg: dict) -> bool:
+    """
+    Permite testar o Alfred sem segundo número, mas só em cenário controlado:
+    - mensagem authored pelo próprio usuário
+    - enviada via WhatsApp Web/mobile
+    - em grupo
+    """
+    source = (msg.get("source") or "").lower()
+    chat_id = str(msg.get("chat_id") or "")
+    return source in {"web", "mobile"} and chat_id.endswith("@g.us")
+
+
+async def _is_recent_outbound_echo(
+    text_body: str,
+    db: AsyncSession,
+    window_seconds: int = 120,
+) -> bool:
+    """
+    Evita loop:
+    se chegou uma mensagem self-authored com o mesmo texto de uma outbound recente,
+    tratamos como eco da própria resposta do bot e ignoramos.
+    """
+    cutoff = datetime.utcnow() - timedelta(seconds=window_seconds)
+    result = await db.execute(
+        select(Message)
+        .where(Message.direction == "outbound")
+        .where(Message.content == text_body)
+        .where(Message.created_at >= cutoff)
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
 @router.post("/webhook")
 async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
     payload = await request.json()
+
     messages = payload.get("messages", [])
+    if not messages and isinstance(payload.get("message"), dict):
+        messages = [payload["message"]]
 
     for msg in messages:
-        # Ignorar mensagens próprias (evitar loop)
-        if msg.get("from_me"):
-            continue
-
-        # Ignorar mensagens de outros números (segurança)
-        sender = msg.get("from", "").split("@")[0]
-        if sender != settings.pedro_phone:
-            logger.warning("Ignored message from unknown sender: {}", sender)
-            continue
-
         msg_type = msg.get("type", "")
         if msg_type != "text":
             logger.info("Ignored non-text message type: {}", msg_type)
@@ -34,9 +62,9 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
         text_body = (msg.get("text") or {}).get("body", "").strip()
         if not text_body:
+            logger.info("Ignored empty text body.")
             continue
 
-        # C2 — Deduplicação: checar whapi_id antes de processar
         whapi_id = msg.get("id")
         if whapi_id:
             existing = await db.execute(
@@ -46,7 +74,35 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
                 logger.info("Duplicate message skipped: whapi_id={}", whapi_id)
                 continue
 
-        # Persistir mensagem inbound imediatamente (antes do processamento)
+        is_from_me = bool(msg.get("from_me"))
+
+        if is_from_me:
+            if not _should_accept_self_authored_message(msg):
+                logger.info(
+                    "Ignored self-authored message: source={} chat_id={}",
+                    msg.get("source"),
+                    msg.get("chat_id"),
+                )
+                continue
+
+            if await _is_recent_outbound_echo(text_body, db):
+                logger.info(
+                    "Ignored self-authored echo of recent outbound message: {}",
+                    text_body[:80],
+                )
+                continue
+
+            logger.info(
+                "Accepted self-authored test message: source={} chat_id={}",
+                msg.get("source"),
+                msg.get("chat_id"),
+            )
+        else:
+            sender = msg.get("from", "").split("@")[0]
+            if sender != settings.pedro_phone:
+                logger.warning("Ignored message from unknown sender: {}", sender)
+                continue
+
         inbound = Message(
             direction="inbound",
             content=text_body,
@@ -55,9 +111,8 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
             whapi_id=whapi_id,
         )
         db.add(inbound)
-        await db.flush()  # garante que whapi_id foi persistido antes de processar
+        await db.flush()
 
-        # C3 — Wrap em try/except: erro não perde a mensagem
         try:
             item, response_text, classification = await message_handler.handle(
                 text_body, origin="whatsapp", db=db
