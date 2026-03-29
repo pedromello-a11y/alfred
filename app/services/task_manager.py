@@ -2,14 +2,16 @@ import random
 import re
 import unicodedata
 from datetime import date, datetime
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 from loguru import logger
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import PlayerStat, Settings, Task
-from app.services.message_handler import InboundItem
+
+if TYPE_CHECKING:
+    from app.services.message_handler import InboundItem
 
 
 def calculate_priority_score(
@@ -96,7 +98,7 @@ def titles_look_similar(a: str, b: str) -> bool:
     return len(wa & wb) >= 2
 
 
-async def create(item: InboundItem, db: AsyncSession) -> Task:
+async def create(item: "InboundItem", db: AsyncSession) -> Task:
     priority = _PRIORITY_MAP.get(item.priority_hint or "", None)
     deadline = None
     if item.deadline:
