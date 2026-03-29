@@ -1,8 +1,13 @@
 import os
+import sys
 from pathlib import Path
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 # Env mínimo para importar o app em modo teste
 os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/alfred_test")

@@ -1,89 +1,52 @@
-import os
-import sys
-from pathlib import Path
+name: Alfred evals
 
-import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+on:
+  push:
+    branches:
+      - master
+  pull_request:
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+jobs:
+  regressions:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: alfred_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d alfred_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/alfred_test
+      ANTHROPIC_API_KEY: test-key
+      JIRA_BASE_URL: https://example.atlassian.net
+      JIRA_EMAIL: test@example.com
+      JIRA_API_TOKEN: test-token
+      GOOGLE_REFRESH_TOKEN: test-refresh
+      GOOGLE_CLIENT_ID: test-client-id
+      GOOGLE_CLIENT_SECRET: test-client-secret
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-# Env mínimo para importar o app em modo teste
-os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/alfred_test")
-os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
-os.environ.setdefault("JIRA_BASE_URL", "https://example.atlassian.net")
-os.environ.setdefault("JIRA_EMAIL", "test@example.com")
-os.environ.setdefault("JIRA_API_TOKEN", "test-token")
-os.environ.setdefault("GOOGLE_REFRESH_TOKEN", "test-refresh")
-os.environ.setdefault("GOOGLE_CLIENT_ID", "test-client-id")
-os.environ.setdefault("GOOGLE_CLIENT_SECRET", "test-client-secret")
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-from app import database as app_database
-from app.database import Base
-from app.services import brain, jira_client, message_handler
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-
-def _to_async_db_url(url: str) -> str:
-    if url.startswith("postgresql://"):
-        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    if url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql+asyncpg://", 1)
-    return url
-
-
-@pytest.fixture(autouse=True)
-def stub_external_calls(monkeypatch):
-    async def fake_classify(text: str, db=None):
-        return {
-            "classification": "chat",
-            "extracted_title": text[:80],
-            "extracted_deadline": None,
-            "priority_hint": None,
-        }
-
-    async def fake_answer_question(question: str, context: str, db=None):
-        return f"[fake-answer] {question}"
-
-    async def fake_casual_response(message: str, db=None):
-        return f"[fake-casual] {message[:80]}"
-
-    async def fake_execute_command(command: str, context: str, db=None):
-        return f"[fake-command] {command[:80]}"
-
-    async def fake_get_cached_issues(db):
-        return []
-
-    monkeypatch.setattr(brain, "classify", fake_classify)
-    monkeypatch.setattr(brain, "answer_question", fake_answer_question)
-    monkeypatch.setattr(brain, "casual_response", fake_casual_response)
-    monkeypatch.setattr(brain, "execute_command", fake_execute_command)
-    monkeypatch.setattr(jira_client, "get_cached_issues", fake_get_cached_issues)
-
-
-@pytest.fixture
-async def db_session(monkeypatch):
-    database_url = _to_async_db_url(os.environ["DATABASE_URL"])
-    engine = create_async_engine(database_url, echo=False)
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
-
-    monkeypatch.setattr(app_database, "engine", engine)
-    monkeypatch.setattr(app_database, "AsyncSessionLocal", session_factory)
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
-
-    async with session_factory() as session:
-        yield session
-
-    await engine.dispose()
-
-
-@pytest.fixture
-async def send(db_session):
-    async def _send(text: str):
-        item, response, classification = await message_handler.handle(text, db=db_session)
-        return item, response, classification
-
-    return _send
+      - name: Run Alfred regression evals
+        env:
+          PYTHONPATH: .
+        run: pytest tests/alfred_eval -q
