@@ -4,7 +4,13 @@ from sqlalchemy.orm import DeclarativeBase
 from app.config import settings
 
 
-engine = create_async_engine(settings.database_url, echo=False)
+db_url = settings.database_url
+if db_url.startswith("postgresql://"):
+    db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+elif db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+
+engine = create_async_engine(db_url, echo=False)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
@@ -24,14 +30,14 @@ _PLAYER_STAT_ATTRIBUTES = [
 _ACHIEVEMENTS = [
     ("first_blood",   "Primeiro sangue",  "Primeira tarefa do dia concluída antes das 9h"),
     ("combo_x3",      "Combo x3",         "3 tarefas concluídas em sequência sem pausa >10min"),
-    ("slayer",        "Slayer",            "Boss fight derrotado na primeira tentativa"),
-    ("early_bird",    "Madrugador",        "5 dias seguidos começando antes das 9h"),
-    ("perfect_day",   "Zerou o dia",       "100% do plano diário concluído"),
-    ("phoenix",       "Fênix",             "Retomou produtividade após 3+ dias de inatividade"),
-    ("sniper",        "Sniper",            "Tarefa concluída em menos da metade do tempo estimado"),
-    ("balanced",      "Equilibrista",      "Tarefas work E personal no mesmo dia por 5 dias"),
-    ("archaeologist", "Arqueólogo",        "Concluiu tarefa do backlog com mais de 30 dias"),
-    ("ghost",         "Ghost",             "Dia inteiro produtivo sem pedir ajuda de destravamento"),
+    ("slayer",        "Slayer",           "Boss fight derrotado na primeira tentativa"),
+    ("early_bird",    "Madrugador",       "5 dias seguidos começando antes das 9h"),
+    ("perfect_day",   "Zerou o dia",      "100% do plano diário concluído"),
+    ("phoenix",       "Fênix",            "Retomou produtividade após 3+ dias de inatividade"),
+    ("sniper",        "Sniper",           "Tarefa concluída em menos da metade do tempo estimado"),
+    ("balanced",      "Equilibrista",     "Tarefas work E personal no mesmo dia por 5 dias"),
+    ("archaeologist", "Arqueólogo",       "Concluiu tarefa do backlog com mais de 30 dias"),
+    ("ghost",         "Ghost",            "Dia inteiro produtivo sem pedir ajuda de destravamento"),
 ]
 
 
@@ -48,7 +54,6 @@ async def _seed_data() -> None:
     from app.models import Achievement, PlayerStat
 
     async with AsyncSessionLocal() as db:
-        # Seed player_stats — um registro por atributo
         for attribute in _PLAYER_STAT_ATTRIBUTES:
             result = await db.execute(
                 select(PlayerStat).where(PlayerStat.attribute == attribute)
@@ -56,7 +61,6 @@ async def _seed_data() -> None:
             if result.scalar_one_or_none() is None:
                 db.add(PlayerStat(attribute=attribute, xp=0, level=1, prestige=0))
 
-        # Seed achievements
         for code, name, description in _ACHIEVEMENTS:
             result = await db.execute(
                 select(Achievement).where(Achievement.code == code)
