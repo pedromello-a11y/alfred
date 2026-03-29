@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS whatsapp_sessions (
+  id TEXT PRIMARY KEY,
+  data TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
