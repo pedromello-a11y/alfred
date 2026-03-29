@@ -70,6 +70,20 @@ _SYSTEM_HINTS = (
     "bug audio alfred",
 )
 
+_CANONICAL_TITLE_RULES = [
+    (["motion avisos"], "Spark | Motion Avisos"),
+    (["avisos do spark"], "Spark | Motion Avisos"),
+    (["spark motion avisos"], "Spark | Motion Avisos"),
+    (["countdown"], "Spark | Countdown"),
+    (["screensaver"], "Spark | Screensaver"),
+    (["legendas", "cavazza"], "Padrão de legendas para Cavazza"),
+    (["turntable", "cosmos", "2"], "Turntable do Cosmos 2"),
+    (["video de abertura"], "Vídeo de Abertura / FIRE"),
+    (["abertura fire"], "Vídeo de Abertura / FIRE"),
+    (["projeto da 3k"], "Vídeo de Abertura / FIRE"),
+    (["3k", "abertura"], "Vídeo de Abertura / FIRE"),
+]
+
 
 def normalize_task_title(value: str) -> str:
     text = unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode("ascii")
@@ -77,6 +91,16 @@ def normalize_task_title(value: str) -> str:
     text = re.sub(r"[^a-z0-9]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def canonicalize_task_title(value: str) -> str:
+    normalized = normalize_task_title(value)
+    if not normalized:
+        return value
+    for required_terms, canonical in _CANONICAL_TITLE_RULES:
+        if all(term in normalized for term in required_terms):
+            return canonical
+    return value.strip()
 
 
 def is_system_task_title(value: str) -> bool:
@@ -87,8 +111,8 @@ def is_system_task_title(value: str) -> bool:
 
 
 def titles_look_similar(a: str, b: str) -> bool:
-    na = normalize_task_title(a)
-    nb = normalize_task_title(b)
+    na = normalize_task_title(canonicalize_task_title(a))
+    nb = normalize_task_title(canonicalize_task_title(b))
     if not na or not nb:
         return False
     if na == nb or na in nb or nb in na:
@@ -115,7 +139,7 @@ async def create(item: "InboundItem", db: AsyncSession) -> Task:
         effort_type = "project"
 
     task = Task(
-        title=item.extracted_title,
+        title=canonicalize_task_title(item.extracted_title),
         origin=item.origin,
         status="pending",
         priority=priority,
@@ -193,11 +217,12 @@ def calculate_points(task: Task) -> int:
 
 
 async def find_task_by_fragment(title_fragment: str, db: AsyncSession, open_only: bool = True) -> Task | None:
+    canonical_fragment = canonicalize_task_title(title_fragment)
     query = select(Task)
     if open_only:
         query = query.where(Task.status.in_(_OPEN_STATUSES))
     query = (
-        query.where(Task.title.ilike(f"%{title_fragment}%"))
+        query.where(Task.title.ilike(f"%{canonical_fragment}%"))
         .order_by(Task.priority.nulls_last(), Task.deadline.nulls_last(), Task.created_at.desc())
         .limit(1)
     )
@@ -206,11 +231,12 @@ async def find_task_by_fragment(title_fragment: str, db: AsyncSession, open_only
 
 
 async def find_task_by_title_like(title: str, db: AsyncSession, include_closed: bool = True, include_system: bool = False) -> Task | None:
+    canonical_title = canonicalize_task_title(title)
     recent = await get_recent_tasks(db, limit=80, include_system=include_system)
     for task in recent:
         if not include_closed and task.status not in _OPEN_STATUSES:
             continue
-        if titles_look_similar(task.title or "", title):
+        if titles_look_similar(task.title or "", canonical_title):
             return task
     return None
 
@@ -224,6 +250,7 @@ async def upsert_task_from_context(
     note: str | None = None,
     estimated_minutes: int | None = None,
 ) -> Task:
+    title = canonicalize_task_title(title)
     existing = await find_task_by_title_like(title, db, include_closed=True, include_system=(category == "system"))
     if existing:
         if note:
@@ -265,7 +292,7 @@ async def upsert_task_from_context(
 
 
 async def search_tasks_by_keywords(keywords: list[str], db: AsyncSession, open_only: bool = True, limit: int = 10) -> Sequence[Task]:
-    cleaned = [k.strip() for k in keywords if len(k.strip()) >= 3]
+    cleaned = [canonicalize_task_title(k.strip()) for k in keywords if len(k.strip()) >= 3]
     if not cleaned:
         return []
     clauses = [Task.title.ilike(f"%{kw}%") for kw in cleaned]
@@ -296,10 +323,11 @@ async def update_task_status(task: Task, new_status: str, db: AsyncSession, note
 
 
 async def mark_done(title_fragment: str, db: AsyncSession) -> tuple[Task | None, str]:
+    canonical_fragment = canonicalize_task_title(title_fragment)
     result = await db.execute(
         select(Task)
         .where(Task.status.in_(_OPEN_STATUSES))
-        .where(Task.title.ilike(f"%{title_fragment}%"))
+        .where(Task.title.ilike(f"%{canonical_fragment}%"))
         .limit(1)
     )
     task = result.scalar_one_or_none()
@@ -348,10 +376,11 @@ async def mark_done(title_fragment: str, db: AsyncSession) -> tuple[Task | None,
 
 
 async def delegate_task(title_fragment: str, delegated_to: str, db: AsyncSession) -> Task | None:
+    canonical_fragment = canonicalize_task_title(title_fragment)
     result = await db.execute(
         select(Task)
         .where(Task.status.in_(_OPEN_STATUSES))
-        .where(Task.title.ilike(f"%{title_fragment}%"))
+        .where(Task.title.ilike(f"%{canonical_fragment}%"))
         .limit(1)
     )
     task = result.scalar_one_or_none()
@@ -364,10 +393,11 @@ async def delegate_task(title_fragment: str, delegated_to: str, db: AsyncSession
 
 
 async def drop_task(title_fragment: str, db: AsyncSession) -> Task | None:
+    canonical_fragment = canonicalize_task_title(title_fragment)
     result = await db.execute(
         select(Task)
         .where(Task.status.in_(_OPEN_STATUSES))
-        .where(Task.title.ilike(f"%{title_fragment}%"))
+        .where(Task.title.ilike(f"%{canonical_fragment}%"))
         .limit(1)
     )
     task = result.scalar_one_or_none()
