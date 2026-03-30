@@ -8,33 +8,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models import Message
-from app.services import message_handler, whapi_client
+from app.services import runtime_router, whapi_client
 
 router = APIRouter()
 
 
 def _should_accept_self_authored_message(msg: dict) -> bool:
-    """
-    Permite testar o Alfred sem segundo número, mas só em cenário controlado:
-    - mensagem authored pelo próprio usuário
-    - enviada via WhatsApp Web/mobile
-    - em grupo
-    """
     source = (msg.get("source") or "").lower()
     chat_id = str(msg.get("chat_id") or "")
     return source in {"web", "mobile"} and chat_id.endswith("@g.us")
 
 
-async def _is_recent_outbound_echo(
-    text_body: str,
-    db: AsyncSession,
-    window_seconds: int = 120,
-) -> bool:
-    """
-    Evita loop:
-    se chegou uma mensagem self-authored com o mesmo texto de uma outbound recente,
-    tratamos como eco da própria resposta do bot e ignoramos.
-    """
+async def _is_recent_outbound_echo(text_body: str, db: AsyncSession, window_seconds: int = 120) -> bool:
     cutoff = datetime.utcnow() - timedelta(seconds=window_seconds)
     result = await db.execute(
         select(Message)
@@ -67,9 +52,7 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
         whapi_id = msg.get("id")
         if whapi_id:
-            existing = await db.execute(
-                select(Message).where(Message.whapi_id == whapi_id)
-            )
+            existing = await db.execute(select(Message).where(Message.whapi_id == whapi_id))
             if existing.scalar_one_or_none():
                 logger.info("Duplicate message skipped: whapi_id={}", whapi_id)
                 continue
@@ -78,60 +61,31 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
         if is_from_me:
             if not _should_accept_self_authored_message(msg):
-                logger.info(
-                    "Ignored self-authored message: source={} chat_id={}",
-                    msg.get("source"),
-                    msg.get("chat_id"),
-                )
+                logger.info("Ignored self-authored message: source={} chat_id={}", msg.get("source"), msg.get("chat_id"))
                 continue
-
             if await _is_recent_outbound_echo(text_body, db):
-                logger.info(
-                    "Ignored self-authored echo of recent outbound message: {}",
-                    text_body[:80],
-                )
+                logger.info("Ignored self-authored echo of recent outbound message: {}", text_body[:80])
                 continue
-
-            logger.info(
-                "Accepted self-authored test message: source={} chat_id={}",
-                msg.get("source"),
-                msg.get("chat_id"),
-            )
+            logger.info("Accepted self-authored test message: source={} chat_id={}", msg.get("source"), msg.get("chat_id"))
         else:
             sender = msg.get("from", "").split("@")[0]
             if sender != settings.pedro_phone:
                 logger.warning("Ignored message from unknown sender: {}", sender)
                 continue
 
-        inbound = Message(
-            direction="inbound",
-            content=text_body,
-            message_type="text",
-            processed=False,
-            whapi_id=whapi_id,
-        )
+        inbound = Message(direction="inbound", content=text_body, message_type="text", processed=False, whapi_id=whapi_id)
         db.add(inbound)
         await db.flush()
 
         try:
-            item, response_text, classification = await message_handler.handle(
-                text_body, origin="whatsapp", db=db
-            )
-
+            item, response_text, classification = await runtime_router.handle(text_body, origin="whatsapp", db=db)
             inbound.processed = True
             inbound.classification = classification
 
-            outbound = Message(
-                direction="outbound",
-                content=response_text,
-                message_type="text",
-                processed=True,
-            )
+            outbound = Message(direction="outbound", content=response_text, message_type="text", processed=True)
             db.add(outbound)
             await db.commit()
-
             await whapi_client.send_message(settings.pedro_phone, response_text)
-
         except Exception as exc:
             logger.error("Webhook processing failed for msg '{}': {}", text_body[:80], exc)
             inbound.processed = False
@@ -141,10 +95,7 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
             except Exception:
                 await db.rollback()
             try:
-                await whapi_client.send_message(
-                    settings.pedro_phone,
-                    "Dificuldade técnica, tenta de novo em 5min."
-                )
+                await whapi_client.send_message(settings.pedro_phone, "Dificuldade técnica, tenta de novo em 5min.")
             except Exception:
                 pass
 

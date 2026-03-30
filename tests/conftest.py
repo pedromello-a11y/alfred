@@ -9,7 +9,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Env mínimo para importar o app em modo teste
 os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/alfred_test")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
 os.environ.setdefault("JIRA_BASE_URL", "https://example.atlassian.net")
@@ -21,7 +20,7 @@ os.environ.setdefault("GOOGLE_CLIENT_SECRET", "test-client-secret")
 
 from app import database as app_database
 from app.database import Base
-from app.services import brain, jira_client, message_handler
+from app.services import brain, interpreter, jira_client, runtime_router
 
 
 def _to_async_db_url(url: str) -> str:
@@ -35,12 +34,7 @@ def _to_async_db_url(url: str) -> str:
 @pytest.fixture(autouse=True)
 def stub_external_calls(monkeypatch):
     async def fake_classify(text: str, db=None):
-        return {
-            "classification": "chat",
-            "extracted_title": text[:80],
-            "extracted_deadline": None,
-            "priority_hint": None,
-        }
+        return {"classification": "chat", "extracted_title": text[:80], "extracted_deadline": None, "priority_hint": None}
 
     async def fake_answer_question(question: str, context: str, db=None):
         return f"[fake-answer] {question}"
@@ -54,11 +48,15 @@ def stub_external_calls(monkeypatch):
     async def fake_get_cached_issues(db):
         return []
 
+    async def fake_interpret_message(text: str, db=None):
+        return None
+
     monkeypatch.setattr(brain, "classify", fake_classify)
     monkeypatch.setattr(brain, "answer_question", fake_answer_question)
     monkeypatch.setattr(brain, "casual_response", fake_casual_response)
     monkeypatch.setattr(brain, "execute_command", fake_execute_command)
     monkeypatch.setattr(jira_client, "get_cached_issues", fake_get_cached_issues)
+    monkeypatch.setattr(interpreter, "interpret_message", fake_interpret_message)
 
 
 @pytest.fixture
@@ -83,7 +81,7 @@ async def db_session(monkeypatch):
 @pytest.fixture
 async def send(db_session):
     async def _send(text: str):
-        item, response, classification = await message_handler.handle(text, db=db_session)
+        item, response, classification = await runtime_router.handle(text, db=db_session)
         return item, response, classification
 
     return _send

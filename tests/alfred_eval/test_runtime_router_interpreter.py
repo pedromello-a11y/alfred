@@ -1,0 +1,84 @@
+from sqlalchemy import select
+
+from app.models import AgendaBlock, DumpItem, Task
+from app.services import interpreter, runtime_router, task_manager
+
+
+async def test_interpreter_new_task_creates_task_with_project(db_session, monkeypatch):
+    async def fake_interpret_message(text: str, db=None):
+        return {
+            "intent": "new_task",
+            "confidence": 0.95,
+            "task_title": "alinhar motion do FIRE 26 com a Barbara",
+            "project": "FIRE 26",
+            "deadline_iso": None,
+            "category": "work",
+            "raw_text": text,
+        }
+
+    monkeypatch.setattr(interpreter, "interpret_message", fake_interpret_message)
+
+    _, response, classification = await runtime_router.handle("preciso alinhar motion do FIRE 26 com a Barbara", db=db_session)
+    result = await db_session.execute(select(Task))
+    tasks = list(result.scalars().all())
+
+    assert classification == "new_task"
+    assert len(tasks) == 1
+    assert "FIRE 26" in tasks[0].title
+    assert "Anotado" in response
+
+
+async def test_interpreter_agenda_add_creates_structured_block(db_session, monkeypatch):
+    async def fake_interpret_message(text: str, db=None):
+        return {
+            "intent": "agenda_add",
+            "confidence": 0.93,
+            "raw_text": text,
+            "time_blocks": [
+                {
+                    "title": "Reunião com Bárbara",
+                    "start_at": "2026-03-30T15:00:00-03:00",
+                    "end_at": "2026-03-30T16:00:00-03:00",
+                    "block_type": "meeting",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(interpreter, "interpret_message", fake_interpret_message)
+
+    _, response, classification = await runtime_router.handle("amanhã 15h reunião com a Bárbara", db=db_session)
+    result = await db_session.execute(select(AgendaBlock))
+    blocks = list(result.scalars().all())
+
+    assert classification == "agenda_add"
+    assert len(blocks) == 1
+    assert blocks[0].block_type == "meeting"
+    assert "Agenda registrada" in response
+
+
+async def test_interpreter_correction_moves_last_task_to_dump(db_session, monkeypatch):
+    created = await task_manager.upsert_task_from_context("Pulp Fiction", db_session, status="pending", category="work")
+    await task_manager.set_setting("last_action_type", "task", db_session)
+    await task_manager.set_setting("last_action_id", str(created.id), db_session)
+
+    async def fake_interpret_message(text: str, db=None):
+        return {
+            "intent": "correction",
+            "confidence": 0.91,
+            "raw_text": text,
+            "correction_new_type": "dump",
+            "reference_title": "Pulp Fiction",
+        }
+
+    monkeypatch.setattr(interpreter, "interpret_message", fake_interpret_message)
+
+    _, response, classification = await runtime_router.handle("isso é dump", db=db_session)
+    task_result = await db_session.execute(select(Task))
+    dump_result = await db_session.execute(select(DumpItem))
+    tasks = list(task_result.scalars().all())
+    dumps = list(dump_result.scalars().all())
+
+    assert classification == "correction"
+    assert len(tasks) == 0
+    assert len(dumps) == 1
+    assert "Corrigido" in response
