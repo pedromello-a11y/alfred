@@ -78,7 +78,7 @@ async def test_open_activities_does_not_hallucinate_generic_projects(db_session,
     assert "outros projetos no jira" not in lowered
 
 
-async def test_system_adjustment_stays_out_of_active_work_view(db_session, send):
+async def test_system_adjustment_stays_OUT_OF_active_work_view(db_session, send):
     await task_manager.upsert_task_from_context(
         "áudio não funciona, adicionar na lista de ajustes do sistema",
         db_session,
@@ -189,3 +189,10 @@ async def test_priorities_view_should_not_offer_empty_slot(db_session, send):
     _, response, _ = await send("atividades abertas")
 
     assert "(vazio)" not in response.lower()
+
+
+async def test_me_diga_minhas_demandas_abertas_maps_to_active_view(db_session, send):
+    await send("entrou tarefa nova, preciso conversar com barbara pra alinhar identidade de motion do FIRE 26")
+    _, response, _ = await send("me diga minhas demandas abertas")
+
+    assert "barbara" in response.lower()

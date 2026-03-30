@@ -48,14 +48,22 @@ _SCHEDULE_INTENT = re.compile(r"(?i)(reservar|agendar|bloquear na agenda|colocar
 _SCHEDULE_CONFIRM = re.compile(r"(?i)^(sim|cria|pode criar|confirma|ok cria)$")
 _CONTEXT_QUERY = re.compile(r"(?i)^contexto\s+(.+)$")
 _TECHNICAL_DETAIL = re.compile(r"(?i)(erro|error|bug|cliente|client|decisão|decisao|decidimos|aprovado|reprovado|feedback|reunião|reuniao|bloqueado|depende de|aguardando)")
-_ACTIVE_TASKS_QUERY = re.compile(r"(?i)^(quais (são|sao) )?(minhas )?(tarefas|demandas) (ativas|em aberto)\??$|^(o )?que (tenho|está|esta) (em aberto|aberto agora|ativo agora)\??$")
+_ACTIVE_TASKS_QUERY = re.compile(
+    r"(?i)^(quais (são|sao) )?(minhas )?(tarefas|demandas|atividades) (ativas|em aberto|abertas)\??$|"
+    r"^(me diga )?(minhas )?(demandas|atividades) (abertas|ativas)\??$|"
+    r"^todas atividades que tem em aberto\??$|"
+    r"^(o )?que (tenho|está|esta) (em aberto|aberto agora|ativo agora)\??$"
+)
 _CONTEXT_UPDATE_HINTS = re.compile(r"(?i)(resumo de demandas|demandas ativas|itens já resolvidos|itens ja resolvidos|detalhe[, ]|contexto de trabalho|status:|estimativa:|prioridade:|já foi feito|ja foi feito|já terminei|ja terminei|já entregou|ja entregou|já startei|ja startei|já comecei|ja comecei|combinei de)")
 _EXPLICIT_DONE = re.compile(r"(?i)\b(terminei|finalizei|concluí|conclui|entreguei|foi entregue|foi aprovado|resolvido|resolvida|concluído|concluída|concluida)\b")
 _NEGATED_DONE = re.compile(r"(?i)(ainda não terminei|ainda nao terminei|não terminei|nao terminei|não conclu[ií]|nao conclu[ií]|não entreguei|nao entreguei|ainda falta)")
 _NEGATED_NOT_STARTED = re.compile(r"(?i)(ainda não comecei|ainda nao comecei|não comecei|nao comecei)")
 _NEGATED_PENDING_TO_DONE = re.compile(r"(?i)(não está pendente|nao esta pendente|não está mais ativo|nao esta mais ativo|não está ativo|nao esta ativo)")
-_NOTE_ONLY_HINTS = re.compile(r"(?i)(briefing|keyframes?|reuni[aã]o|3k|alinhar|alinhamento|assets prontos|assets chegaram)")
+_NOTE_ONLY_HINTS = re.compile(r"(?i)(briefing|keyframes?|reuni[aã]o|3k|alinhar|alinhamento|assets prontos|assets chegaram|storyboard)")
 _SYSTEM_HINTS = re.compile(r"(?i)(áudio|audio|bug do áudio|bug do audio|ajustes do sistema|sistema alfred|alfred continua quebrado)")
+_SYSTEM_FEEDBACK_HINTS = re.compile(r"(?i)(era pra implementar o sistema|nao adicionar como demand|não adicionar como demand|seria importante voce ser|seria importante você ser)")
+_REFERENCE_HINTS = re.compile(r"(?i)^(lembrar|salvar|guardar).*(filme|série|serie|video|vídeo|referencia|referência)\b|(?i)\bdump\b|(?i)\bn[aã]o e tarefa\b")
+_RENAME_HINTS = re.compile(r"(?i)^separe assim\s+(.+)$")
 
 _STATUS_PATTERNS = {
     "done": re.compile(r"(?i)(terminei|finalizei|concluí|conclui|entreguei|foi entregue|foi aprovado|resolvido|resolvida|concluído|concluída|concluida)"),
@@ -65,10 +73,11 @@ _STATUS_PATTERNS = {
 }
 
 _SKIP_UPDATE_CHUNKS = re.compile(r"(?i)^(demandas ativas agora|outras demandas novas|itens já resolvidos|itens de radar|galaxy|spark|cast|detalhe)$")
-_IGNORE_CONTEXT_CHUNKS = re.compile(r"(?i)^(esse é um resumo|esse e um resumo|demandas ativas agora|itens já resolvidos|itens ja resolvidos)$")
+_IGNORE_CONTEXT_CHUNKS = re.compile(r"(?i)^(esse é um resumo|esse e um resumo|demandas ativas agora|itens já resolvidos|itens ja resolvidos|outras demandas novas)$")
+_FIELD_LINE_PREFIXES = re.compile(r"(?i)^(status|estimativa|estimativa que você me passou|estimativa que voce me passou|prioridade|briefing|cronograma|falta|função|funcao|checar|assets|ideia atual|preocupação principal|preocupacao principal)\s*:")
 _GENERIC_TITLE_CANDIDATES = {
     "briefing", "keyframe", "keyframes", "reuniao", "reuniao com a 3k", "reunião", "reunião com a 3k",
-    "entregue", "quase", "isso", "mas ainda nao", "mas ainda não", "audio", "áudio"
+    "entregue", "quase", "isso", "mas ainda nao", "mas ainda não", "audio", "áudio", "storyboard"
 }
 _TITLE_STOPWORDS = {
     "status", "ativa", "ativo", "agora", "demanda", "demandas", "aberto", "aberta", "pendente", "prioridade", "estimativa",
@@ -84,6 +93,24 @@ async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | Non
 
     if db is not None:
         await task_manager.set_setting("ritual_answered", "true", db)
+
+    rename_match = _RENAME_HINTS.match(raw_stripped)
+    if db is not None and rename_match:
+        new_title = rename_match.group(1).strip()
+        renamed = await task_manager.rename_most_recent_active_task(new_title, db)
+        if renamed:
+            item = InboundItem(item_type="update", origin=origin, raw_text=raw_text, extracted_title=renamed.title)
+            return item, f"Ok. Vou tratar isso como: *{renamed.title}*.", "status_update"
+
+    if db is not None and _SYSTEM_FEEDBACK_HINTS.search(raw_stripped):
+        await _capture_context_note(raw_stripped, db)
+        item = InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title="system_feedback")
+        return item, "Entendi. Tratei isso como ajuste de comportamento do sistema, não como demanda operacional.", "context_update"
+
+    if db is not None and _REFERENCE_HINTS.search(raw_stripped):
+        response = await _handle_dump(f"dump: {raw_stripped}", origin, db)
+        item = InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title="reference_dump")
+        return item, response, "dump"
 
     if db is not None and _ACTIVE_TASKS_QUERY.match(raw_stripped):
         response = await _handle_active_tasks(db)
@@ -451,6 +478,7 @@ async def _extract_status_updates(raw_text: str, db: AsyncSession) -> list[dict]
     anchor_title: str | None = None
     anchor_task = None
     anchor_category = "work"
+    anchor_status = "pending"
 
     for chunk in chunks:
         stripped = chunk.strip()
@@ -463,21 +491,42 @@ async def _extract_status_updates(raw_text: str, db: AsyncSession) -> list[dict]
         note = _extract_note(stripped)
         estimated_minutes = _extract_estimated_minutes(stripped)
         task = _match_task_for_chunk(stripped, title, all_tasks, include_system=(category == "system"))
+        is_field_line = _looks_like_field_line(stripped)
+        is_section_header = _looks_like_section_header(stripped)
+
+        if is_section_header:
+            continue
+
+        if title and not status and not is_field_line:
+            if category != "system":
+                anchor_title = title
+                anchor_task = task
+                anchor_category = category
+                anchor_status = "pending"
+            continue
+
+        if is_field_line and (anchor_task or anchor_title):
+            task = anchor_task
+            title = anchor_title
+            field_note = _field_line_note(stripped)
+            note = f"{note} | {field_note}" if note and field_note and field_note not in note else (field_note or note)
+            status = status or anchor_status
+            category = anchor_category
 
         if _NOTE_ONLY_HINTS.search(stripped) and (anchor_task or anchor_title):
             task = anchor_task
             title = anchor_title
-            note = note or stripped
+            note = f"{note} | {stripped}" if note and stripped not in note else (note or stripped)
             if status is None:
-                status = "in_progress"
+                status = anchor_status or "in_progress"
             category = anchor_category
 
         if _is_note_only_candidate(title) and (anchor_task or anchor_title):
             task = anchor_task
             title = anchor_title
-            note = note or stripped
+            note = f"{note} | {stripped}" if note and stripped not in note else (note or stripped)
             if status is None:
-                status = "in_progress"
+                status = anchor_status or "in_progress"
             category = anchor_category
 
         if status is None:
@@ -486,7 +535,7 @@ async def _extract_status_updates(raw_text: str, db: AsyncSession) -> list[dict]
         if task is None and title is None and (anchor_task or anchor_title):
             task = anchor_task
             title = anchor_title
-            note = note or stripped
+            note = f"{note} | {stripped}" if note and stripped not in note else (note or stripped)
             category = anchor_category
 
         if task or title:
@@ -494,6 +543,7 @@ async def _extract_status_updates(raw_text: str, db: AsyncSession) -> list[dict]
                 anchor_task = task
                 anchor_title = task.title if task else task_manager.canonicalize_task_title(title)
                 anchor_category = category
+                anchor_status = status
 
         dedupe = f"{(task.title if task else title) or stripped}:{status}:{category}:{note or ''}"
         if dedupe in seen_keys:
@@ -516,12 +566,35 @@ def _split_update_chunks(raw_text: str) -> list[str]:
     raw_parts = re.split(r"\n+|•|\*|;", normalized)
     parts: list[str] = []
     for part in raw_parts:
-        subparts = re.split(r",\s+(?=[a-zA-ZÀ-ÿ0-9])", part)
-        for sub in subparts:
-            cleaned = sub.strip(" -–—:\n")
-            if cleaned:
-                parts.append(cleaned)
+        cleaned = part.strip(" -–—:\n")
+        if cleaned:
+            parts.append(cleaned)
     return parts
+
+
+def _looks_like_field_line(chunk: str) -> bool:
+    return bool(_FIELD_LINE_PREFIXES.match(chunk))
+
+
+def _looks_like_section_header(chunk: str) -> bool:
+    normalized = task_manager.normalize_task_title(chunk)
+    return normalized in {
+        "demandas ativas agora",
+        "outras demandas novas",
+        "itens ja resolvidos",
+        "itens resolvidos",
+        "galaxy fire abertura",
+        "spark",
+        "galaxy",
+        "cast",
+    }
+
+
+def _field_line_note(chunk: str) -> str | None:
+    match = _FIELD_LINE_PREFIXES.match(chunk)
+    if not match:
+        return None
+    return chunk.strip()
 
 
 def _detect_status(chunk: str) -> str | None:
@@ -550,13 +623,15 @@ def _extract_note(chunk: str) -> str | None:
     notes = []
     if "3k" in lowered and ("11h" in lowered or "11 h" in lowered):
         notes.append("Reunião com a 3K marcada para segunda às 11h")
+    if "storyboard" in lowered:
+        notes.append(chunk)
     if "briefing" in lowered and ("keyframe" in lowered or "keyframes" in lowered):
         notes.append("Briefing e keyframes enviados")
     elif "briefing" in lowered or "keyframe" in lowered or "keyframes" in lowered:
         notes.append(chunk)
     if "rig" in lowered:
         notes.append(chunk)
-    return " | ".join(notes) if notes else None
+    return " | ".join(dict.fromkeys(notes)) if notes else None
 
 
 def _extract_estimated_minutes(chunk: str) -> int | None:

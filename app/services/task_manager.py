@@ -72,16 +72,21 @@ _SYSTEM_HINTS = (
 
 _CANONICAL_TITLE_RULES = [
     (["motion avisos"], "Spark | Motion Avisos"),
+    (["motion aviso"], "Spark | Motion Avisos"),
     (["avisos do spark"], "Spark | Motion Avisos"),
     (["spark motion avisos"], "Spark | Motion Avisos"),
+    (["spark motion aviso"], "Spark | Motion Avisos"),
     (["countdown"], "Spark | Countdown"),
+    (["coutndown"], "Spark | Countdown"),
     (["screensaver"], "Spark | Screensaver"),
     (["legendas", "cavazza"], "Padrão de legendas para Cavazza"),
     (["turntable", "cosmos", "2"], "Turntable do Cosmos 2"),
     (["video de abertura"], "Vídeo de Abertura / FIRE"),
+    (["video abertura"], "Vídeo de Abertura / FIRE"),
     (["abertura fire"], "Vídeo de Abertura / FIRE"),
     (["projeto da 3k"], "Vídeo de Abertura / FIRE"),
     (["3k", "abertura"], "Vídeo de Abertura / FIRE"),
+    (["galaxy", "video", "abertura"], "Vídeo de Abertura / FIRE"),
 ]
 
 
@@ -93,14 +98,41 @@ def normalize_task_title(value: str) -> str:
     return text
 
 
+def _strip_title_prefixes(value: str) -> str:
+    text = (value or "").strip()
+    patterns = [
+        r"(?i)^outra\s+demanda\s+(e\s+do|do|da)?\s*",
+        r"(?i)^demanda\s+nova[:\-\s]*",
+        r"(?i)^e\s+demanda[,:\-\s]*",
+        r"(?i)^eh\s+demanda[,:\-\s]*",
+        r"(?i)^tenho\s+",
+        r"(?i)^preciso\s+",
+        r"(?i)^separe\s+assim\s+",
+        r"(?i)^consultar\s+viabilidade\s+de\s+fazer\s+(um|uma)\s+",
+        r"(?i)^consultar\s+viabilidade\s+de\s+",
+        r"(?i)^levantar\s+referencias\s+e\s+propostas\s+pra\s+reuniao\s+do\s+",
+        r"(?i)^me\s+diga\s+",
+    ]
+    changed = True
+    while changed:
+        changed = False
+        for pattern in patterns:
+            new_text = re.sub(pattern, "", text).strip(" :-–—")
+            if new_text != text:
+                text = new_text
+                changed = True
+    return text.strip()
+
+
 def canonicalize_task_title(value: str) -> str:
-    normalized = normalize_task_title(value)
+    cleaned = _strip_title_prefixes(value)
+    normalized = normalize_task_title(cleaned)
     if not normalized:
-        return value
+        return cleaned or value
     for required_terms, canonical in _CANONICAL_TITLE_RULES:
         if all(term in normalized for term in required_terms):
             return canonical
-    return value.strip()
+    return cleaned.strip()
 
 
 def is_system_task_title(value: str) -> bool:
@@ -120,6 +152,24 @@ def titles_look_similar(a: str, b: str) -> bool:
     wa = set(na.split())
     wb = set(nb.split())
     return len(wa & wb) >= 2
+
+
+def _dedupe_tasks_by_canonical_title(tasks: Sequence[Task]) -> list[Task]:
+    deduped: dict[str, Task] = {}
+    for task in tasks:
+        key = normalize_task_title(canonicalize_task_title(task.title or ""))
+        existing = deduped.get(key)
+        if existing is None:
+            deduped[key] = task
+            continue
+        current_rank = 1 if task.status == "in_progress" else 2 if task.status == "pending" else 3
+        existing_rank = 1 if existing.status == "in_progress" else 2 if existing.status == "pending" else 3
+        if current_rank < existing_rank:
+            deduped[key] = task
+            continue
+        if existing_rank == current_rank and (task.created_at or datetime.min) > (existing.created_at or datetime.min):
+            deduped[key] = task
+    return list(deduped.values())
 
 
 async def create(item: "InboundItem", db: AsyncSession) -> Task:
@@ -171,9 +221,9 @@ async def get_active_tasks(db: AsyncSession, include_system: bool = False) -> Se
         .order_by(Task.priority.nulls_last(), Task.deadline.nulls_last(), Task.created_at.desc())
     )
     tasks = result.scalars().all()
-    if include_system:
-        return tasks
-    return [t for t in tasks if t.category not in ("backlog", "system") and not is_system_task_title(t.title or "")]
+    if not include_system:
+        tasks = [t for t in tasks if t.category not in ("backlog", "system") and not is_system_task_title(t.title or "")]
+    return _dedupe_tasks_by_canonical_title(tasks)
 
 
 async def get_recent_tasks(db: AsyncSession, limit: int = 50, include_system: bool = False) -> Sequence[Task]:
@@ -183,9 +233,9 @@ async def get_recent_tasks(db: AsyncSession, limit: int = 50, include_system: bo
         .limit(limit)
     )
     tasks = result.scalars().all()
-    if include_system:
-        return tasks
-    return [t for t in tasks if t.category not in ("backlog", "system") and not is_system_task_title(t.title or "")]
+    if not include_system:
+        tasks = [t for t in tasks if t.category not in ("backlog", "system") and not is_system_task_title(t.title or "")]
+    return _dedupe_tasks_by_canonical_title(tasks)
 
 
 async def get_recently_done(db: AsyncSession, limit: int = 5, include_system: bool = False) -> Sequence[Task]:
@@ -196,9 +246,9 @@ async def get_recently_done(db: AsyncSession, limit: int = 5, include_system: bo
         .limit(limit)
     )
     tasks = result.scalars().all()
-    if include_system:
-        return tasks
-    return [t for t in tasks if t.category not in ("backlog", "system") and not is_system_task_title(t.title or "")]
+    if not include_system:
+        tasks = [t for t in tasks if t.category not in ("backlog", "system") and not is_system_task_title(t.title or "")]
+    return _dedupe_tasks_by_canonical_title(tasks)
 
 
 def calculate_points(task: Task) -> int:
@@ -319,6 +369,18 @@ async def update_task_status(task: Task, new_status: str, db: AsyncSession, note
     await db.commit()
     await db.refresh(task)
     logger.info("Task status updated: {} -> {}", task.title, new_status)
+    return task
+
+
+async def rename_most_recent_active_task(new_title: str, db: AsyncSession) -> Task | None:
+    tasks = list(await get_active_tasks(db, include_system=True))
+    if not tasks:
+        return None
+    task = tasks[0]
+    task.title = canonicalize_task_title(new_title)
+    await db.commit()
+    await db.refresh(task)
+    logger.info("Task renamed: {} (id={})", task.title, task.id)
     return task
 
 
