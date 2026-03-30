@@ -10,12 +10,16 @@ class Settings(BaseSettings):
     pedro_phone: str = ""
 
     anthropic_api_key: str
-    jira_base_url: str
-    jira_email: str
-    jira_api_token: str
-    google_refresh_token: str
-    google_client_id: str
-    google_client_secret: str
+
+    # Jira — opcional para rodar localmente sem sync
+    jira_base_url: str = ""
+    jira_email: str = ""
+    jira_api_token: str = ""
+
+    # Google Calendar — opcional para rodar localmente sem agenda
+    google_refresh_token: str = ""
+    google_client_id: str = ""
+    google_client_secret: str = ""
 
     # Gateway WhatsApp Web
     wa_bridge_shared_secret: str = ""

@@ -62,7 +62,7 @@ _NEGATED_PENDING_TO_DONE = re.compile(r"(?i)(não está pendente|nao esta penden
 _NOTE_ONLY_HINTS = re.compile(r"(?i)(briefing|keyframes?|reuni[aã]o|3k|alinhar|alinhamento|assets prontos|assets chegaram|storyboard)")
 _SYSTEM_HINTS = re.compile(r"(?i)(áudio|audio|bug do áudio|bug do audio|ajustes do sistema|sistema alfred|alfred continua quebrado)")
 _SYSTEM_FEEDBACK_HINTS = re.compile(r"(?i)(era pra implementar o sistema|nao adicionar como demand|não adicionar como demand|seria importante voce ser|seria importante você ser)")
-_REFERENCE_HINTS = re.compile(r"(?i)^(lembrar|salvar|guardar).*(filme|série|serie|video|vídeo|referencia|referência)\b|(?i)\bdump\b|(?i)\bn[aã]o e tarefa\b")
+_REFERENCE_HINTS = re.compile(r"^(lembrar|salvar|guardar).*(filme|série|serie|video|vídeo|referencia|referência)\b|\bdump\b|n[aã]o e tarefa\b", re.IGNORECASE)
 _RENAME_HINTS = re.compile(r"(?i)^separe assim\s+(.+)$")
 
 _STATUS_PATTERNS = {
