@@ -9,7 +9,7 @@ from loguru import logger
 
 from app.cron.scheduler import scheduler, setup_jobs
 from app.database import init_db
-from app.routers import health, internal_whatsapp, webhook, dashboard
+from app.routers import health, internal_whatsapp, webhook, dashboard, gcal_auth
 
 
 @asynccontextmanager
@@ -89,6 +89,7 @@ app.include_router(health.router)
 app.include_router(webhook.router)
 app.include_router(internal_whatsapp.router)
 app.include_router(dashboard.router)
+app.include_router(gcal_auth.router)
 
 
 @app.get("/")
