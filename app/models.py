@@ -41,6 +41,50 @@ class Task(Base):
     )
 
 
+class AgendaBlock(Base):
+    __tablename__ = "agenda_blocks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(VARCHAR(300), nullable=False)
+    start_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
+    end_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
+    block_type: Mapped[str] = mapped_column(VARCHAR(30), default="focus")  # focus/meeting/break/admin/personal
+    source: Mapped[str | None] = mapped_column(VARCHAR(30))  # manual/gcal/system
+    status: Mapped[str] = mapped_column(VARCHAR(20), default="planned")  # planned/done/cancelled
+    linked_task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    notes: Mapped[str | None] = mapped_column(TEXT)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_agenda_blocks_start_at", "start_at"),
+        Index("idx_agenda_blocks_block_type", "block_type"),
+    )
+
+
+class DumpItem(Base):
+    __tablename__ = "dump_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    raw_text: Mapped[str] = mapped_column(TEXT, nullable=False)
+    rewritten_title: Mapped[str] = mapped_column(VARCHAR(500), nullable=False)
+    summary: Mapped[str | None] = mapped_column(TEXT)
+    category: Mapped[str | None] = mapped_column(VARCHAR(80))
+    subcategory: Mapped[str | None] = mapped_column(VARCHAR(80))
+    confidence: Mapped[float | None] = mapped_column(FLOAT)
+    status: Mapped[str] = mapped_column(VARCHAR(20), default="categorized")  # categorized/unknown/reviewed
+    source: Mapped[str | None] = mapped_column(VARCHAR(30))
+    source_task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    notes: Mapped[str | None] = mapped_column(TEXT)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_dump_items_category", "category"),
+        Index("idx_dump_items_status", "status"),
+        Index("idx_dump_items_created_at", "created_at"),
+    )
+
+
 class Message(Base):
     __tablename__ = "messages"
 

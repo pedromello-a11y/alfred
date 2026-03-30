@@ -8,9 +8,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Task, Streak, PlayerStat
-from app.services import gcal_client
-from app.services.task_manager import get_active_tasks, update_task_status
+from app.models import AgendaBlock, PlayerStat, Streak, Task
+from app.services.dashboard_projection import (
+    get_active_queue,
+    get_dump_library,
+    get_focus_board,
+    get_horizon_board,
+)
+from app.services.task_manager import update_task_status
 
 router = APIRouter(prefix="/dashboard")
 
@@ -25,16 +30,6 @@ def _priority_label(p: int | None) -> str:
     if p == 3:
         return "média"
     return "baixa"
-
-
-def _priority_dot(p: int | None) -> str:
-    if p is None:
-        return "md"
-    if p <= 2:
-        return "hi"
-    if p == 3:
-        return "md"
-    return "lo"
 
 
 def _estimate_label(minutes: int | None) -> str:
@@ -64,48 +59,67 @@ def _deadline_label(dl: datetime | None) -> str:
     return dl.strftime("%d/%m")
 
 
-def _task_dto(t: Task, is_first: bool = False) -> dict:
+def _task_dto(item: dict, is_first: bool = False) -> dict:
+    priority = item.get("priority", "md")
     return {
-        "id": str(t.id),
-        "name": t.title,
-        "badge": _priority_label(t.priority),
-        "priority": _priority_dot(t.priority),
-        "cls": "cur" if is_first else ("hi" if t.priority and t.priority <= 2 else ""),
+        "id": item.get("id"),
+        "name": item.get("title", ""),
+        "badge": item.get("priorityLabel", "média"),
+        "priority": priority,
+        "cls": "cur" if is_first else ("hi" if priority == "hi" else ""),
     }
+
+
+def _agenda_weekday_payload(timeline: list[dict]) -> list[dict]:
+    if not timeline:
+        return []
+    today_dow = date.today().weekday()
+    return [{
+        "day": today_dow,
+        "events": [
+            {
+                "title": block.get("title", ""),
+                "time": block.get("start", ""),
+                "end": block.get("end", ""),
+                "type": block.get("type", "focus"),
+            }
+            for block in timeline
+        ],
+    }]
 
 
 # ── GET /dashboard/state ──────────────────────────────────────────────────────
 
 @router.get("/state")
 async def dashboard_state(db: AsyncSession = Depends(get_db)):
-    today = date.today()
+    focus_board = await get_focus_board(db)
+    horizon_board = await get_horizon_board(db)
+    active_queue = await get_active_queue(db)
+    dump_library = await get_dump_library(db)
 
-    # Usa get_active_tasks — já aplica dedupe, canonicalização e filtra backlog/system
-    active = list(await get_active_tasks(db))
-
-    # "hoje" = tarefas planejadas para hoje ou in_progress; restante vai para backlog visual
-    hoje = [t for t in active if t.status == "in_progress" or t.last_planned == today]
-    backlog = [t for t in active if t not in hoje]
-
-    # Se não há nada "hoje", mostra as primeiras 3 ativas como hoje
+    hoje = focus_board.get("todayTasks", [])
+    hoje_ids = {item.get("id") for item in hoje}
+    backlog = [item for item in active_queue if item.get("id") not in hoje_ids]
     if not hoje:
-        hoje = active[:3]
-        backlog = active[3:]
+        hoje = active_queue[:3]
+        backlog = active_queue[3:]
 
+    current_block = focus_board.get("currentBlock")
+    next_block = focus_board.get("nextBlock")
     focus_task = hoje[0] if hoje else None
     next_task = hoje[1] if len(hoje) > 1 else (backlog[0] if backlog else None)
 
     focus = {
-        "title": focus_task.title if focus_task else "nenhuma tarefa ativa",
-        "project": (focus_task.title.split("|")[0].strip()) if focus_task else "",
-        "estimate": _estimate_label(focus_task.estimated_minutes) if focus_task else "?",
-        "deadline": _deadline_label(focus_task.deadline) if focus_task else "sem prazo",
-        "priority": _priority_label(focus_task.priority) if focus_task else "média",
+        "title": (current_block or {}).get("title") or (focus_task or {}).get("title") or "nenhuma tarefa ativa",
+        "project": ((focus_task or {}).get("title", "").split("|")[0].strip()) if focus_task else "",
+        "estimate": (focus_task or {}).get("estimate") or "?",
+        "deadline": (focus_task or {}).get("deadline") or "sem prazo",
+        "priority": (focus_task or {}).get("priorityLabel") or "média",
     }
 
     next_info = {
-        "title": next_task.title if next_task else "",
-        "note": "",
+        "title": (next_block or {}).get("title") or (next_task or {}).get("title") or "",
+        "note": (next_block or {}).get("notes") or "",
     }
 
     # XP — usa atributo "craft" como proxy de nível geral
@@ -117,51 +131,46 @@ async def dashboard_state(db: AsyncSession = Depends(get_db)):
     xp_percent = min(int((xp_current / xp_next_level) * 100), 100) if xp_next_level else 0
 
     # Streak
-    streak_q = await db.execute(
-        select(Streak).order_by(Streak.streak_date.desc()).limit(1)
-    )
+    streak_q = await db.execute(select(Streak).order_by(Streak.streak_date.desc()).limit(1))
     latest_streak = streak_q.scalar_one_or_none()
     streak_count = latest_streak.streak_count if latest_streak else 0
 
-    # Agenda — Google Calendar (hoje)
-    agenda = []
-    try:
-        raw = await gcal_client.get_today_events()
-        today_dow = today.weekday()  # 0=seg … 4=sex
-        if 0 <= today_dow <= 4 and raw:
-            def _hhmm(iso: str) -> str:
-                try:
-                    return datetime.fromisoformat(iso).strftime("%H:%M")
-                except Exception:
-                    return iso
-            agenda_events = [
-                {
-                    "title": ev.get("title", ""),
-                    "time": _hhmm(ev.get("start", "")),
-                    "end": _hhmm(ev.get("end", "")),
-                    "type": "meeting",
-                }
-                for ev in raw
-            ]
-            agenda = [{"day": today_dow, "events": agenda_events}]
-    except Exception:
-        agenda = []
-
     return {
+        # shape antiga — preservada para o HTML atual
         "focus": focus,
         "next": next_info,
         "tasks": {
-            "hoje": [_task_dto(t, i == 0) for i, t in enumerate(hoje)],
-            "backlog": [_task_dto(t) for t in backlog],
+            "hoje": [_task_dto(item, i == 0) for i, item in enumerate(hoje)],
+            "backlog": [_task_dto(item) for item in backlog],
         },
-        "agenda": agenda,
+        "agenda": _agenda_weekday_payload(focus_board.get("timeline", [])),
         "xp": {
             "level": level,
             "current": xp_current,
             "percent": xp_percent,
             "streak": streak_count,
         },
+        # shape nova — base para FocusBoard / HorizonBoard / DumpLibrary
+        "focusBoard": focus_board,
+        "horizonBoard": horizon_board,
+        "activeQueue": active_queue,
+        "dumpLibrary": dump_library,
     }
+
+
+@router.get("/focus")
+async def dashboard_focus(db: AsyncSession = Depends(get_db)):
+    return await get_focus_board(db)
+
+
+@router.get("/horizon")
+async def dashboard_horizon(db: AsyncSession = Depends(get_db)):
+    return await get_horizon_board(db)
+
+
+@router.get("/dumps")
+async def dashboard_dumps(db: AsyncSession = Depends(get_db)):
+    return await get_dump_library(db)
 
 
 # ── POST /dashboard/action ────────────────────────────────────────────────────
@@ -186,7 +195,6 @@ async def dashboard_action(body: ActionRequest, db: AsyncSession = Depends(get_d
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
 
     if body.action == "concluida":
-        # Delega para update_task_status — mesma lógica usada pelo message_handler
         await update_task_status(task, "done", db, note=body.note or None)
 
     elif body.action == "nota":
@@ -206,3 +214,53 @@ async def dashboard_action(body: ActionRequest, db: AsyncSession = Depends(get_d
 
     await db.commit()
     return {"status": "ok", "task_id": body.task_id, "action": body.action}
+
+
+class AgendaBlockRequest(BaseModel):
+    title: str
+    start_at: str
+    end_at: str
+    block_type: Literal["focus", "meeting", "break", "admin", "personal"] = "focus"
+    source: str | None = "manual"
+    notes: str | None = None
+    linked_task_id: str | None = None
+
+
+@router.post("/agenda-blocks")
+async def create_agenda_block(body: AgendaBlockRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        start_at = datetime.fromisoformat(body.start_at)
+        end_at = datetime.fromisoformat(body.end_at)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Datas inválidas")
+
+    linked_task_id = None
+    if body.linked_task_id:
+        try:
+            linked_task_id = UUID(body.linked_task_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="linked_task_id inválido")
+
+    block = AgendaBlock(
+        title=body.title,
+        start_at=start_at,
+        end_at=end_at,
+        block_type=body.block_type,
+        source=body.source,
+        notes=body.notes,
+        linked_task_id=linked_task_id,
+    )
+    db.add(block)
+    await db.commit()
+    await db.refresh(block)
+
+    return {
+        "status": "ok",
+        "agenda_block": {
+            "id": str(block.id),
+            "title": block.title,
+            "start_at": block.start_at.isoformat(),
+            "end_at": block.end_at.isoformat(),
+            "block_type": block.block_type,
+        },
+    }
