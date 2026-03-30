@@ -7,7 +7,7 @@ from typing import Optional
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services import brain, jira_client, task_manager
+from app.services import agenda_manager, brain, dump_manager, jira_client, task_manager
 
 
 @dataclass
@@ -68,7 +68,7 @@ _RENAME_HINTS = re.compile(r"(?i)^separe assim\s+(.+)$")
 _STATUS_PATTERNS = {
     "done": re.compile(r"(?i)(terminei|finalizei|concluí|conclui|entreguei|foi entregue|foi aprovado|resolvido|resolvida|concluído|concluída|concluida)"),
     "done_external": re.compile(r"(?i)(rig já fez|rig ja fez|rig já entregou|rig ja entregou|já entregou|ja entregou)"),
-    "in_progress": re.compile(r"(?i)(em andamento|ativo agora|ativa agora|ativo|frente estratégica ativa|frente estrategica ativa|startado|startei|comecei|iniciei|segue|continua|mandei briefing|briefing enviado|assets prontos|assets chegaram|está andando|esta andando|está rolando|esta rolando|rolando)"),
+    "in_progress": re.compile(r"(?i)(em andamento|ativo agora|ativa agora|ativo|frente estratégica ativa|frente strategica ativa|startado|startei|comecei|iniciei|segue|continua|mandei briefing|briefing enviado|assets prontos|assets chegaram|está andando|esta andando|está rolando|esta rolando|rolando)"),
     "pending": re.compile(r"(?i)(pendente|em aberto|aberto|registrado|registrada|próximo da fila|proximo da fila|secundário|secundario|travado|pausou|voltou para pendente)"),
 }
 
@@ -117,6 +117,17 @@ async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | Non
         item = InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title="active_tasks")
         return item, response, "command"
 
+    if _DUMP_PREFIX.match(raw_stripped):
+        response = await _handle_dump(raw_stripped, origin, db)
+        item = InboundItem(item_type="task", origin=origin, raw_text=raw_text, extracted_title=raw_stripped)
+        return item, response, "dump"
+
+    if db is not None and _looks_like_agenda_only_input(raw_stripped):
+        blocks = await agenda_manager.capture_agenda_from_text(raw_stripped, db, source=origin)
+        if blocks:
+            item = InboundItem(item_type="update", origin=origin, raw_text=raw_text, extracted_title="agenda_update")
+            return item, _agenda_capture_response(blocks), "agenda_update"
+
     if db is not None and _looks_like_context_update(raw_stripped):
         response = await _handle_context_update(raw_stripped, db)
         item = InboundItem(item_type="update", origin=origin, raw_text=raw_text, extracted_title="context_update")
@@ -138,11 +149,6 @@ async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | Non
             response = await _handle_ritual_choice(raw_stripped, db)
             item = InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title="ritual_choice")
             return item, response, "command"
-
-    if _DUMP_PREFIX.match(raw_stripped):
-        response = await _handle_dump(raw_stripped, origin, db)
-        item = InboundItem(item_type="task", origin=origin, raw_text=raw_text, extracted_title=raw_stripped)
-        return item, response, "dump"
 
     if db is not None:
         crisis_mode = await task_manager.get_setting("crisis_mode", "false", db=db)
@@ -277,12 +283,31 @@ def _looks_like_explicit_done_update(raw_text: str) -> bool:
     return bool(_EXPLICIT_DONE.search(raw_text)) and len(raw_text) < 220
 
 
+def _looks_like_agenda_only_input(raw_text: str) -> bool:
+    if not agenda_manager.looks_like_agenda_input(raw_text):
+        return False
+    lowered = raw_text.lower()
+    blockers = (
+        "demanda",
+        "tarefa",
+        "pra entregar",
+        "deadline",
+        "fila",
+        "backlog",
+        "preciso fazer",
+        "tenho que fazer",
+    )
+    return not any(token in lowered for token in blockers)
+
+
 async def _route(item: InboundItem, classification: str, db: AsyncSession | None) -> str:
     if classification == "new_task":
         if db is not None:
             task = await task_manager.create(item, db)
+            linked_blocks = await agenda_manager.capture_agenda_from_text(item.raw_text, db, linked_task_id=task.id, source=item.origin)
             boss_msg = "\n⚔️ Boss fight detectado! XP triplo se vencer. Quer enfrentar hoje?" if task.is_boss_fight else ""
-            return f"Anotado: *{task.title}*. Prioridade: {item.priority_hint or 'normal'}.{boss_msg}"
+            agenda_msg = f"\nAgenda vinculada: {_agenda_blocks_inline(linked_blocks)}" if linked_blocks else ""
+            return f"Anotado: *{task.title}*. Prioridade: {item.priority_hint or 'normal'}.{agenda_msg}{boss_msg}"
         return f"Anotado: *{item.extracted_title}*."
 
     if classification == "update":
@@ -318,9 +343,12 @@ async def _build_context(db: AsyncSession | None) -> str:
 
 async def _handle_context_update(raw_text: str, db: AsyncSession) -> str:
     updates = await _extract_status_updates(raw_text, db)
-    if not updates:
+    agenda_blocks = await agenda_manager.capture_agenda_from_text(raw_text, db)
+    if not updates and not agenda_blocks:
         await _capture_context_note(raw_text, db)
         return "Entendi como atualização de contexto. Registrei isso sem marcar nenhuma tarefa como concluída.\nSe quiser, me pede depois: *minhas tarefas ativas*."
+    if not updates and agenda_blocks:
+        return _agenda_capture_response(agenda_blocks)
 
     applied_lines: list[str] = []
     unclear_lines: list[str] = []
@@ -361,6 +389,9 @@ async def _handle_context_update(raw_text: str, db: AsyncSession) -> str:
 
     response = ["Atualizei seu estado atual assim:"]
     response.extend(applied_lines[:8])
+    if agenda_blocks:
+        response.append("\nAgenda registrada:")
+        response.extend([f"- {_format_agenda_block(block)}" for block in agenda_blocks[:5]])
     if unclear_lines:
         response.append("\nPontos que deixei sem aplicar automaticamente:")
         response.extend(unclear_lines[:4])
@@ -757,6 +788,20 @@ def _status_label(status: str) -> str:
     }.get(status, status)
 
 
+def _format_agenda_block(block) -> str:
+    return f"{block.title} — {block.start_at.strftime('%d/%m %H:%M')}→{block.end_at.strftime('%H:%M')}"
+
+
+def _agenda_blocks_inline(blocks) -> str:
+    return "; ".join(_format_agenda_block(block) for block in blocks[:3])
+
+
+def _agenda_capture_response(blocks) -> str:
+    lines = ["Agenda registrada:"]
+    lines.extend([f"- {_format_agenda_block(block)}" for block in blocks[:5]])
+    return "\n".join(lines)
+
+
 async def _handle_unstuck_flow(raw_text: str, db: AsyncSession) -> str:
     step = int(await task_manager.get_setting("unstuck_step", "1", db=db) or "1")
     if step == 1:
@@ -823,17 +868,20 @@ async def _handle_dump(raw_stripped: str, origin: str, db: AsyncSession | None) 
     dump_text = _DUMP_PREFIX.sub("", raw_stripped).strip()
     if not dump_text:
         return "Dump vazio — manda o que quer registrar depois de 'dump:'"
-    if db is not None:
-        from app.models import Task
-        task = Task(title=dump_text[:500], origin=origin, status="dump", category="backlog")
-        db.add(task)
-        await db.commit()
-    foco = "sua tarefa atual"
-    if db is not None:
+    if db is None:
+        return "Registrado em dumps."
+
+    item = await dump_manager.create_dump_item(raw_stripped, origin, db)
+    current_block = await agenda_manager.get_current_agenda_block(db)
+    if current_block and current_block.block_type == "break":
+        focus_line = f"Segue no seu descanso: *{current_block.title}*."
+    elif current_block:
+        focus_line = f"Depois volta pra *{current_block.title}*."
+    else:
         pending = await task_manager.get_active_tasks(db)
-        if pending:
-            foco = pending[0].title
-    return f"Registrado. Isso não vai se perder.\nVolta pra *{foco}*."
+        focus_line = f"Volta pra *{pending[0].title}*." if pending else "Isso não vai se perder."
+
+    return f"Registrado em dumps como *{item.rewritten_title}* ({item.category or 'desconhecido'}).\n{focus_line}"
 
 
 async def _handle_ritual_choice(choice: str, db: AsyncSession) -> str:

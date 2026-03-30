@@ -134,6 +134,35 @@ async def create_dump_item(raw_text: str, origin: str | None, db: AsyncSession, 
     return item
 
 
+async def update_dump_item(
+    dump_id: UUID,
+    db: AsyncSession,
+    *,
+    category: str | None = None,
+    subcategory: str | None = None,
+    status: str | None = None,
+    rewritten_title: str | None = None,
+    summary: str | None = None,
+) -> DumpItem | None:
+    result = await db.execute(select(DumpItem).where(DumpItem.id == dump_id).limit(1))
+    item = result.scalar_one_or_none()
+    if not item:
+        return None
+    if category is not None:
+        item.category = category
+    if subcategory is not None:
+        item.subcategory = subcategory
+    if status is not None:
+        item.status = status
+    if rewritten_title is not None:
+        item.rewritten_title = rewritten_title
+    if summary is not None:
+        item.summary = summary
+    await db.commit()
+    await db.refresh(item)
+    return item
+
+
 async def list_dump_items(db: AsyncSession, limit: int = 50) -> list[DumpItem]:
     result = await db.execute(
         select(DumpItem)

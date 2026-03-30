@@ -1,6 +1,6 @@
 from sqlalchemy import select
 
-from app.models import Task
+from app.models import AgendaBlock, DumpItem, Task
 from app.services import task_manager
 
 
@@ -196,3 +196,41 @@ async def test_me_diga_minhas_demandas_abertas_maps_to_active_view(db_session, s
     _, response, _ = await send("me diga minhas demandas abertas")
 
     assert "barbara" in response.lower()
+
+
+async def test_dump_goes_to_dump_library_not_task_backlog(db_session, send):
+    await send("Dump: comprar produto máquina de lavar líquido")
+
+    task_result = await db_session.execute(select(Task).where(Task.status == "dump"))
+    dump_result = await db_session.execute(select(DumpItem))
+    tasks = list(task_result.scalars().all())
+    dumps = list(dump_result.scalars().all())
+
+    assert len(tasks) == 0
+    assert len(dumps) == 1
+    assert dumps[0].category == "compras"
+
+
+async def test_agenda_only_break_message_creates_agenda_block(db_session, send):
+    await send("intervalo + almoco de 12h a 13h")
+
+    result = await db_session.execute(select(AgendaBlock))
+    blocks = list(result.scalars().all())
+
+    assert len(blocks) == 1
+    assert blocks[0].block_type == "break"
+    assert blocks[0].start_at.hour == 12
+    assert blocks[0].end_at.hour == 13
+
+
+async def test_agenda_meeting_message_creates_meeting_block(db_session, send):
+    await send("marquei uma reuniao de 1h as 15h pra repassar o comportamento de motion do FIRE 26 pra barbara")
+
+    result = await db_session.execute(select(AgendaBlock))
+    blocks = list(result.scalars().all())
+
+    assert len(blocks) == 1
+    assert blocks[0].block_type == "meeting"
+    assert blocks[0].start_at.hour == 15
+    assert blocks[0].end_at.hour == 16
+    assert "barbara" in task_manager.normalize_task_title(blocks[0].title)

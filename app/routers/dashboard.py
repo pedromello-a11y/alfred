@@ -8,19 +8,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import AgendaBlock, PlayerStat, Streak, Task
+from app.models import AgendaBlock, DumpItem, PlayerStat, Streak, Task
 from app.services.dashboard_projection import (
     get_active_queue,
     get_dump_library,
     get_focus_board,
     get_horizon_board,
 )
+from app.services.dump_manager import update_dump_item
 from app.services.task_manager import update_task_status
 
 router = APIRouter(prefix="/dashboard")
 
-
-# ── helpers ───────────────────────────────────────────────────────────────────
 
 def _priority_label(p: int | None) -> str:
     if p is None:
@@ -88,8 +87,6 @@ def _agenda_weekday_payload(timeline: list[dict]) -> list[dict]:
     }]
 
 
-# ── GET /dashboard/state ──────────────────────────────────────────────────────
-
 @router.get("/state")
 async def dashboard_state(db: AsyncSession = Depends(get_db)):
     focus_board = await get_focus_board(db)
@@ -122,7 +119,6 @@ async def dashboard_state(db: AsyncSession = Depends(get_db)):
         "note": (next_block or {}).get("notes") or "",
     }
 
-    # XP — usa atributo "craft" como proxy de nível geral
     xp_q = await db.execute(select(PlayerStat).where(PlayerStat.attribute == "craft"))
     stat = xp_q.scalar_one_or_none()
     level = stat.level if stat else 1
@@ -130,13 +126,11 @@ async def dashboard_state(db: AsyncSession = Depends(get_db)):
     xp_next_level = level * 1000
     xp_percent = min(int((xp_current / xp_next_level) * 100), 100) if xp_next_level else 0
 
-    # Streak
     streak_q = await db.execute(select(Streak).order_by(Streak.streak_date.desc()).limit(1))
     latest_streak = streak_q.scalar_one_or_none()
     streak_count = latest_streak.streak_count if latest_streak else 0
 
     return {
-        # shape antiga — preservada para o HTML atual
         "focus": focus,
         "next": next_info,
         "tasks": {
@@ -150,7 +144,6 @@ async def dashboard_state(db: AsyncSession = Depends(get_db)):
             "percent": xp_percent,
             "streak": streak_count,
         },
-        # shape nova — base para FocusBoard / HorizonBoard / DumpLibrary
         "focusBoard": focus_board,
         "horizonBoard": horizon_board,
         "activeQueue": active_queue,
@@ -173,13 +166,11 @@ async def dashboard_dumps(db: AsyncSession = Depends(get_db)):
     return await get_dump_library(db)
 
 
-# ── POST /dashboard/action ────────────────────────────────────────────────────
-
 class ActionRequest(BaseModel):
     task_id: str
     action: Literal["concluida", "nota", "data", "excluir"]
     note: Optional[str] = None
-    date: Optional[str] = None  # ISO e.g. "2026-04-01"
+    date: Optional[str] = None
 
 
 @router.post("/action")
@@ -196,19 +187,16 @@ async def dashboard_action(body: ActionRequest, db: AsyncSession = Depends(get_d
 
     if body.action == "concluida":
         await update_task_status(task, "done", db, note=body.note or None)
-
     elif body.action == "nota":
         if body.note:
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
             task.notes = f"{task.notes or ''}\n[{ts}] {body.note}".strip()
-
     elif body.action == "data":
         if body.date:
             try:
                 task.deadline = datetime.fromisoformat(body.date).replace(tzinfo=timezone.utc)
             except ValueError:
                 raise HTTPException(status_code=400, detail="Formato de data inválido")
-
     elif body.action == "excluir":
         await db.delete(task)
 
@@ -264,3 +252,34 @@ async def create_agenda_block(body: AgendaBlockRequest, db: AsyncSession = Depen
             "block_type": block.block_type,
         },
     }
+
+
+class DumpUpdateRequest(BaseModel):
+    dump_id: str
+    category: str | None = None
+    subcategory: str | None = None
+    status: Literal["categorized", "unknown", "reviewed"] | None = None
+    rewritten_title: str | None = None
+    summary: str | None = None
+
+
+@router.post("/dump-action")
+async def dashboard_dump_action(body: DumpUpdateRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        dump_uuid = UUID(body.dump_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="dump_id inválido")
+
+    item = await update_dump_item(
+        dump_uuid,
+        db,
+        category=body.category,
+        subcategory=body.subcategory,
+        status=body.status,
+        rewritten_title=body.rewritten_title,
+        summary=body.summary,
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Dump não encontrado")
+
+    return {"status": "ok", "dump_id": str(item.id)}
