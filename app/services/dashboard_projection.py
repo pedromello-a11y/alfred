@@ -143,6 +143,20 @@ async def get_focus_board(db: AsyncSession) -> dict[str, Any]:
 
     manual_blocks = await _today_agenda_blocks(db)
     gcal_blocks = await _today_gcal_blocks()
+
+    # Normalize all block datetimes to naive local time for consistent comparison
+    def _to_naive(dt: datetime) -> datetime:
+        if dt is None:
+            return datetime.max
+        if dt.tzinfo is not None:
+            from datetime import timezone as _tz
+            return dt.astimezone().replace(tzinfo=None)
+        return dt
+
+    for b in manual_blocks + gcal_blocks:
+        b["start_at"] = _to_naive(b.get("start_at"))
+        b["end_at"] = _to_naive(b.get("end_at") or datetime.max)
+
     timeline = sorted(manual_blocks + gcal_blocks, key=lambda item: item.get("start_at") or datetime.max)
 
     current_block = next((b for b in timeline if b["start_at"] <= now < b["end_at"]), None)
