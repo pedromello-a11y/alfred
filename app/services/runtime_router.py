@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -6,9 +6,25 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AgendaBlock, DumpItem, Task
-from app.services import agenda_manager, dump_manager, interpreter, message_handler, task_manager
+from app.services import agenda_manager, brain, dump_manager, interpreter, message_handler, task_manager
+from app.services.time_utils import now_brt, now_brt_naive, to_brt_naive, today_brt
 
 _PRIORITY_MAP = {"high": 1, "medium": 3, "low": 5}
+_AGENDA_QUESTION_HINTS = (
+    "agenda",
+    "horario",
+    "horário",
+    "reuniao",
+    "reunião",
+    "o que tenho",
+    "o que falta",
+    "próximo bloco",
+    "proximo bloco",
+    "meu dia",
+    "como está meu dia",
+    "como esta meu dia",
+    "como ta meu dia",
+)
 
 
 async def _remember_last_action(kind: str, object_id: str, db: AsyncSession) -> None:
@@ -20,7 +36,7 @@ async def _remember_last_action(kind: str, object_id: str, db: AsyncSession) -> 
 
 async def _append_setting_log(key: str, value: str, db: AsyncSession, limit: int = 4000) -> None:
     existing = await task_manager.get_setting(key, "", db=db) or ""
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    timestamp = now_brt().strftime("%Y-%m-%d %H:%M")
     entry = f"[{timestamp}] {value.strip()}"
     merged = f"{existing}\n{entry}".strip() if existing else entry
     if len(merged) > limit:
@@ -39,14 +55,11 @@ def _compose_title(task_title: str, project: str | None = None) -> str:
 def _to_naive_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
-    dt = datetime.fromisoformat(value)
-    if dt.tzinfo is not None:
-        return dt.astimezone().replace(tzinfo=None)
-    return dt
+    return to_brt_naive(datetime.fromisoformat(value))
 
 
 async def _append_note_to_task(task: Task, note_text: str, db: AsyncSession) -> Task:
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    timestamp = now_brt().strftime("%Y-%m-%d %H:%M")
     entry = f"[{timestamp}] {note_text.strip()}"
     task.notes = f"{task.notes or ''}\n{entry}".strip()
     await db.commit()
@@ -294,6 +307,96 @@ def _agenda_response(blocks: list[AgendaBlock]) -> str:
     return "\n".join(lines)
 
 
+def _looks_like_agenda_question(raw_text: str) -> bool:
+    lowered = (raw_text or "").lower()
+    return any(token in lowered for token in _AGENDA_QUESTION_HINTS)
+
+
+async def _build_question_context(db: AsyncSession) -> str:
+    now = now_brt()
+    tasks = list(await task_manager.get_active_tasks(db))[:10]
+    today = today_brt()
+    start_day = datetime.combine(today, time.min)
+    end_day = start_day + timedelta(days=1)
+    result = await db.execute(
+        select(AgendaBlock)
+        .where(AgendaBlock.start_at >= start_day)
+        .where(AgendaBlock.start_at < end_day)
+        .order_by(AgendaBlock.start_at.asc())
+    )
+    blocks = list(result.scalars().all())
+
+    task_lines = [
+        f"- {task.title} | status={task.status} | prazo={(task.deadline.strftime('%d/%m %H:%M') if task.deadline else 'sem prazo')}"
+        for task in tasks
+    ] or ["- nenhuma task ativa"]
+    block_lines = [
+        f"- {block.title} | {block.start_at.strftime('%H:%M')}->{block.end_at.strftime('%H:%M')} | tipo={block.block_type}"
+        for block in blocks
+    ] or ["- nenhum bloco hoje"]
+    return (
+        f"Hora atual BRT: {now.strftime('%Y-%m-%d %H:%M')}\n\n"
+        f"Agenda de hoje:\n" + "\n".join(block_lines) + "\n\n"
+        f"Tasks ativas:\n" + "\n".join(task_lines)
+    )
+
+
+async def _handle_operational_agenda_question(db: AsyncSession) -> str:
+    now = now_brt()
+    now_naive = now_brt_naive()
+    today = today_brt()
+    start_day = datetime.combine(today, time.min)
+    end_day = start_day + timedelta(days=1)
+    result = await db.execute(
+        select(AgendaBlock)
+        .where(AgendaBlock.start_at >= start_day)
+        .where(AgendaBlock.start_at < end_day)
+        .order_by(AgendaBlock.start_at.asc())
+    )
+    blocks = list(result.scalars().all())
+    active_tasks = list(await task_manager.get_active_tasks(db))
+    due_today = [t for t in active_tasks if t.deadline and t.deadline.date() == today][:5]
+
+    lines = [f"Agora: {now.strftime('%H:%M')} BRT."]
+    current = None
+    upcoming = None
+    if blocks:
+        lines.append("Agenda de hoje:")
+        for block in blocks:
+            if block.end_at <= now_naive:
+                marker = "✅"
+            elif block.start_at <= now_naive < block.end_at:
+                marker = "▶️"
+                current = block
+            else:
+                marker = "⏰"
+                if upcoming is None:
+                    upcoming = block
+            lines.append(f"{marker} {block.start_at.strftime('%H:%M')}→{block.end_at.strftime('%H:%M')} — {block.title}")
+    else:
+        lines.append("Agenda de hoje: sem blocos registrados.")
+
+    if due_today:
+        lines.append("\nTarefas com prazo hoje:")
+        for task in due_today:
+            deadline_label = task.deadline.strftime('%H:%M') if task.deadline else 'hoje'
+            lines.append(f"- {task.title} ({deadline_label})")
+
+    if current:
+        if current.block_type == "break":
+            lines.append(f"\nVocê está em descanso até {current.end_at.strftime('%H:%M')}.")
+        else:
+            lines.append(f"\nVocê está em: *{current.title}* até {current.end_at.strftime('%H:%M')}.")
+    elif upcoming:
+        lines.append(f"\nPróximo bloco: *{upcoming.title}* às {upcoming.start_at.strftime('%H:%M')}.")
+    elif due_today:
+        lines.append(f"\nPróximo foco sugerido: *{due_today[0].title}*.")
+    else:
+        lines.append("\nSem próximo bloco registrado agora.")
+
+    return "\n".join(lines)
+
+
 async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | None = None):
     if db is None:
         return await message_handler.handle(raw_text, origin=origin, db=db)
@@ -343,7 +446,21 @@ async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | Non
         item = message_handler.InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title="context_note")
         return item, response, "context_note"
 
-    if intent in {"question", "chat", "unknown"}:
+    if intent == "question":
+        if _looks_like_agenda_question(raw_text):
+            response = await _handle_operational_agenda_question(db)
+        else:
+            context = await _build_question_context(db)
+            response = await brain.answer_question(raw_text, context, db=db)
+        item = message_handler.InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title="question")
+        return item, response, "question"
+
+    if intent == "chat":
+        response = await brain.casual_response(raw_text, db=db)
+        item = message_handler.InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title="chat")
+        return item, response, "chat"
+
+    if intent == "unknown":
         return await message_handler.handle(raw_text, origin=origin, db=db)
 
     return await message_handler.handle(raw_text, origin=origin, db=db)

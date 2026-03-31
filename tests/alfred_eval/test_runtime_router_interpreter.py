@@ -1,7 +1,10 @@
+from datetime import datetime, time
+
 from sqlalchemy import select
 
 from app.models import AgendaBlock, DumpItem, Task
-from app.services import dump_manager, interpreter, runtime_router, task_manager
+from app.services import dump_manager, interpreter, message_handler, runtime_router, task_manager
+from app.services.time_utils import today_brt
 
 
 async def test_interpreter_new_task_creates_task_with_project(db_session, monkeypatch):
@@ -222,3 +225,37 @@ async def test_interpreter_context_note_can_attach_to_named_task(db_session, mon
     assert classification == "context_note"
     assert "guardei isso como nota" in response.lower()
     assert refreshed.notes is not None and "cavazza" in refreshed.notes.lower()
+
+
+async def test_agenda_question_uses_runtime_router_not_legacy_handler(db_session, monkeypatch):
+    today = today_brt()
+    block = AgendaBlock(
+        title="Reunião com Bárbara",
+        start_at=datetime.combine(today, time(15, 0)),
+        end_at=datetime.combine(today, time(16, 0)),
+        block_type="meeting",
+        source="manual",
+    )
+    db_session.add(block)
+    await db_session.commit()
+    await task_manager.upsert_task_from_context("Spark | Countdown", db_session, status="in_progress", category="work")
+
+    async def fake_interpret_message(text: str, db=None):
+        return {
+            "intent": "question",
+            "confidence": 0.95,
+            "raw_text": text,
+        }
+
+    async def fail_legacy(*args, **kwargs):
+        raise AssertionError("legacy handler should not run for agenda question")
+
+    monkeypatch.setattr(interpreter, "interpret_message", fake_interpret_message)
+    monkeypatch.setattr(message_handler, "handle", fail_legacy)
+
+    _, response, classification = await runtime_router.handle("como está minha agenda hoje?", db=db_session)
+
+    assert classification == "question"
+    assert "Agenda de hoje" in response
+    assert "Reunião com Bárbara" in response
+    assert "Agora:" in response

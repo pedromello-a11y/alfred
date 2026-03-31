@@ -1,6 +1,6 @@
 import json
 import re
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AgendaBlock
 from app.services import brain, task_manager
+from app.services.time_utils import now_brt, today_brt
 
 _INTERPRET_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 _SUPPORTED_INTENTS = {
@@ -26,8 +27,8 @@ _SUPPORTED_BLOCK_TYPES = {"focus", "meeting", "break", "personal", "admin"}
 
 
 async def _build_interpreter_context(db: AsyncSession) -> str:
-    now = datetime.now()
-    today = date.today()
+    now = now_brt()
+    today = today_brt()
 
     tasks = list(await task_manager.get_active_tasks(db))[:8]
     task_lines = []

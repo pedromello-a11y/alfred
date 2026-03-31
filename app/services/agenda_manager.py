@@ -1,5 +1,5 @@
 import re
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AgendaBlock
+from app.services.time_utils import now_brt_naive, today_brt
 
 _RANGE_RE = re.compile(
     r"(?i)(?P<start_h>\d{1,2})(?::(?P<start_m>\d{2}))?\s*h?\s*(?:a|às?|ate|até|-)\s*(?P<end_h>\d{1,2})(?::(?P<end_m>\d{2}))?\s*h?"
@@ -26,8 +27,8 @@ def looks_like_agenda_input(text: str) -> bool:
     return has_time and has_agenda_signal
 
 
-def _reference_day(text: str) -> date:
-    today = date.today()
+def _reference_day(text: str):
+    today = today_brt()
     lowered = (text or "").lower()
     explicit = _EXPLICIT_DATE_RE.search(text or "")
     if explicit:
@@ -38,7 +39,7 @@ def _reference_day(text: str) -> date:
         if year_val < 100:
             year_val += 2000
         try:
-            return date(year_val, month, day)
+            return today.replace(year=year_val, month=month, day=day)
         except ValueError:
             return today
     if "amanhã" in lowered or "amanha" in lowered:
@@ -198,7 +199,7 @@ async def capture_agenda_from_text(
 
 
 async def get_current_agenda_block(db: AsyncSession) -> AgendaBlock | None:
-    now = datetime.now()
+    now = now_brt_naive()
     result = await db.execute(
         select(AgendaBlock)
         .where(AgendaBlock.start_at <= now)
