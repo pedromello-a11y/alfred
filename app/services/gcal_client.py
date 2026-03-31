@@ -82,9 +82,11 @@ async def get_today_events() -> list[dict]:
             None, _build_service, creds["refresh_token"], creds["client_id"], creds["client_secret"]
         )
 
-        now = datetime.now(timezone.utc)
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-        end = now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
+        from zoneinfo import ZoneInfo
+        tz_brt = ZoneInfo("America/Sao_Paulo")
+        now_local = datetime.now(tz_brt)
+        start = now_local.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        end = now_local.replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
 
         def _fetch():
             return service.events().list(
