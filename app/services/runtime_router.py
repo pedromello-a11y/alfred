@@ -82,6 +82,11 @@ _REFERENCE_GENERIC = {
     "reunioes",
     "projeto",
 }
+_STATUS_LABELS = {
+    "pending": "pendente",
+    "in_progress": "em andamento",
+    "done": "concluída",
+}
 
 
 async def _remember_last_action(kind: str, object_id: str, db: AsyncSession) -> None:
@@ -180,6 +185,104 @@ def _reference_match_is_viable(reference: str, score: int, *candidate_texts: str
     return False
 
 
+def _format_deadline_brief(deadline: datetime | None) -> str | None:
+    if not deadline:
+        return None
+    today = today_brt()
+    target = deadline.date()
+    time_label = deadline.strftime('%H:%M')
+    has_meaningful_time = time_label != '00:00'
+    if target == today:
+        return f"hoje às {time_label}" if has_meaningful_time else "hoje"
+    if target == today + timedelta(days=1):
+        return f"amanhã às {time_label}" if has_meaningful_time else "amanhã"
+    return deadline.strftime('%d/%m às %H:%M') if has_meaningful_time else deadline.strftime('%d/%m')
+
+
+def _task_display_name(task: Task | None) -> str:
+    if not task:
+        return ""
+    return task.title or ""
+
+
+async def _current_or_next_focus_hint(db: AsyncSession, exclude_task_id: UUID | None = None) -> str | None:
+    now_naive = now_brt_naive()
+    today = today_brt()
+    current_result = await db.execute(
+        select(AgendaBlock)
+        .where(AgendaBlock.start_at <= now_naive)
+        .where(AgendaBlock.end_at > now_naive)
+        .order_by(AgendaBlock.start_at.desc())
+        .limit(1)
+    )
+    current_block = current_result.scalar_one_or_none()
+    if current_block:
+        if current_block.block_type == "break":
+            return f"Você está em descanso até {current_block.end_at.strftime('%H:%M')}."
+        return f"Foco agora: *{current_block.title}* até {current_block.end_at.strftime('%H:%M')}."
+
+    upcoming_result = await db.execute(
+        select(AgendaBlock)
+        .where(AgendaBlock.start_at > now_naive)
+        .where(AgendaBlock.start_at < datetime.combine(today, time.max))
+        .order_by(AgendaBlock.start_at.asc())
+        .limit(1)
+    )
+    upcoming_block = upcoming_result.scalar_one_or_none()
+
+    active_tasks = list(await task_manager.get_active_tasks(db))
+    if exclude_task_id:
+        active_tasks = [task for task in active_tasks if task.id != exclude_task_id]
+    due_today = [task for task in active_tasks if task.deadline and task.deadline.date() == today]
+    due_today.sort(key=lambda task: (task.deadline, task.priority or 99))
+
+    if due_today:
+        first = due_today[0]
+        deadline = _format_deadline_brief(first.deadline)
+        if deadline:
+            return f"Próximo foco sugerido: *{_task_display_name(first)}* ({deadline})."
+        return f"Próximo foco sugerido: *{_task_display_name(first)}*."
+    if active_tasks:
+        return f"Próximo foco sugerido: *{_task_display_name(active_tasks[0])}*."
+    if upcoming_block:
+        return f"Próximo bloco: *{upcoming_block.title}* às {upcoming_block.start_at.strftime('%H:%M')}."
+    return None
+
+
+async def _build_new_task_response(task: Task, db: AsyncSession) -> str:
+    lines = [f"Anotado: *{task.title}*."]
+    deadline = _format_deadline_brief(task.deadline)
+    if deadline:
+        lines.append(f"Prazo: {deadline}.")
+    hint = await _current_or_next_focus_hint(db)
+    if hint:
+        lines.append(hint)
+    return "\n".join(lines)
+
+
+async def _build_dump_response(dump: DumpItem, db: AsyncSession) -> str:
+    lines = [f"Guardei em dumps como *{dump.rewritten_title}*."]
+    if dump.category:
+        lines.append(f"Categoria: {dump.category}.")
+    hint = await _current_or_next_focus_hint(db)
+    if hint:
+        lines.append(hint)
+    return "\n".join(lines)
+
+
+async def _build_task_update_response(task: Task, db: AsyncSession) -> str:
+    status_label = _STATUS_LABELS.get(task.status, task.status)
+    lines = [f"Atualizado: *{task.title}* → {status_label}."]
+    if task.status in {"pending", "in_progress"}:
+        deadline = _format_deadline_brief(task.deadline)
+        if deadline:
+            lines.append(f"Prazo: {deadline}.")
+    hint = await _current_or_next_focus_hint(db, exclude_task_id=task.id if task.status == "done" else None)
+    if hint:
+        lines.append(hint)
+    return "\n".join(lines)
+
+
 async def _append_note_to_task(task: Task, note_text: str, db: AsyncSession) -> Task:
     timestamp = now_brt().strftime("%Y-%m-%d %H:%M")
     entry = f"[{timestamp}] {note_text.strip()}"
@@ -194,7 +297,7 @@ async def _store_system_feedback(decision: dict[str, Any], db: AsyncSession):
     await task_manager.set_setting("last_system_feedback", text, db)
     await _append_setting_log("system_feedback_log", text, db)
     await _remember_last_action("system_feedback", "settings", db)
-    return "Entendi. Tratei isso como ajuste de comportamento do sistema, não como demanda operacional."
+    return "Entendi. Guardei isso como ajuste de comportamento do sistema. Não virou task nem bloco de agenda."
 
 
 async def _store_context_note(decision: dict[str, Any], db: AsyncSession):
@@ -632,13 +735,13 @@ async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | Non
     if intent == "new_task":
         task = await _create_task_from_interpretation(decision, origin, db)
         item = message_handler.InboundItem(item_type="task", origin=origin, raw_text=raw_text, extracted_title=task.title)
-        return item, f"Anotado: *{task.title}*.", "new_task"
+        return item, await _build_new_task_response(task, db), "new_task"
 
     if intent == "dump":
         dump = await dump_manager.create_dump_item(raw_text, origin, db)
         await _remember_last_action("dump", str(dump.id), db)
         item = message_handler.InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title=dump.rewritten_title)
-        return item, f"Registrado em dumps como *{dump.rewritten_title}* ({dump.category or 'desconhecido'}).", "dump"
+        return item, await _build_dump_response(dump, db), "dump"
 
     if intent == "agenda_add":
         blocks = await _persist_blocks_from_interpretation(decision, origin, db)
@@ -651,7 +754,7 @@ async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | Non
         task = await _update_task_from_interpretation(decision, db)
         if task:
             item = message_handler.InboundItem(item_type="update", origin=origin, raw_text=raw_text, extracted_title=task.title)
-            return item, f"Atualizado: *{task.title}* → {task.status}.", "task_update"
+            return item, await _build_task_update_response(task, db), "task_update"
         return await message_handler.handle(raw_text, origin=origin, db=db)
 
     if intent == "correction":
