@@ -69,6 +69,54 @@ _SYSTEM_HINTS = (
     "sistema alfred",
     "bug audio alfred",
 )
+_MATCH_STOPWORDS = {
+    "de",
+    "da",
+    "do",
+    "das",
+    "dos",
+    "para",
+    "pra",
+    "com",
+    "sem",
+    "uma",
+    "um",
+    "na",
+    "no",
+    "em",
+    "por",
+    "que",
+    "e",
+    "o",
+    "a",
+    "as",
+    "os",
+}
+_GENERIC_MATCH_TOKENS = {
+    "video",
+    "videos",
+    "motion",
+    "task",
+    "tarefa",
+    "tarefas",
+    "demanda",
+    "demandas",
+    "projeto",
+    "projetos",
+    "ajustar",
+    "fazer",
+    "reuniao",
+    "reunioes",
+}
+_PROJECT_ALIAS_RULES = [
+    ({"spark"}, {"spark"}),
+    ({"fire", "26"}, {"fire", "fire26", "f26"}),
+    ({"fire"}, {"fire"}),
+    ({"galaxy"}, {"galaxy"}),
+    ({"hotmart"}, {"hotmart"}),
+    ({"3k"}, {"3k"}),
+    ({"marcom"}, {"marcom"}),
+]
 
 _CANONICAL_TITLE_RULES = [
     (["motion avisos"], "Spark | Motion Avisos"),
@@ -142,16 +190,121 @@ def is_system_task_title(value: str) -> bool:
     return any(hint in normalized for hint in _SYSTEM_HINTS)
 
 
-def titles_look_similar(a: str, b: str) -> bool:
-    na = normalize_task_title(canonicalize_task_title(a))
-    nb = normalize_task_title(canonicalize_task_title(b))
-    if not na or not nb:
-        return False
-    if na == nb or na in nb or nb in na:
+def _split_task_title_parts(value: str) -> tuple[str | None, str]:
+    text = (value or "").strip()
+    if "|" in text:
+        left, right = text.split("|", 1)
+        project = left.strip()
+        task_name = right.strip()
+        if project and task_name:
+            return project, task_name
+    return None, text
+
+
+def _meaningful_tokens(value: str) -> set[str]:
+    normalized = normalize_task_title(value)
+    tokens = set()
+    for token in normalized.split():
+        if token in _MATCH_STOPWORDS:
+            continue
+        if len(token) >= 3 or any(ch.isdigit() for ch in token):
+            tokens.add(token)
+    return tokens
+
+
+def _project_tokens(value: str) -> set[str]:
+    project, _ = _split_task_title_parts(canonicalize_task_title(value))
+    source = project or value
+    tokens = _meaningful_tokens(source)
+    expanded = set(tokens)
+    for required, aliases in _PROJECT_ALIAS_RULES:
+        if required.issubset(tokens):
+            expanded.update(aliases)
+    return expanded
+
+
+def _task_body_tokens(value: str) -> set[str]:
+    _, body = _split_task_title_parts(canonicalize_task_title(value))
+    return _meaningful_tokens(body)
+
+
+def _task_match_score(query: str, candidate: str) -> int:
+    query_canonical = canonicalize_task_title(query)
+    candidate_canonical = canonicalize_task_title(candidate)
+    query_norm = normalize_task_title(query_canonical)
+    candidate_norm = normalize_task_title(candidate_canonical)
+    if not query_norm or not candidate_norm:
+        return 0
+    if query_norm == candidate_norm:
+        return 200
+
+    score = 0
+    if query_norm in candidate_norm:
+        score += 90
+    elif candidate_norm in query_norm:
+        score += 60
+
+    query_project = _project_tokens(query_canonical)
+    candidate_project = _project_tokens(candidate_canonical)
+    if query_project and candidate_project:
+        project_overlap = query_project & candidate_project
+        if project_overlap:
+            score += 25 + (len(project_overlap) * 5)
+        else:
+            score -= 20
+
+    _, query_body = _split_task_title_parts(query_canonical)
+    _, candidate_body = _split_task_title_parts(candidate_canonical)
+    query_body_norm = normalize_task_title(query_body or query_canonical)
+    candidate_body_norm = normalize_task_title(candidate_body or candidate_canonical)
+    if query_body_norm and query_body_norm in candidate_body_norm:
+        score += 45
+    elif candidate_body_norm and candidate_body_norm in query_body_norm and len(candidate_body_norm) >= 8:
+        score += 15
+
+    query_tokens = _task_body_tokens(query_canonical)
+    candidate_tokens = _task_body_tokens(candidate_canonical)
+    overlap = query_tokens & candidate_tokens
+    if overlap:
+        score += len(overlap) * 14
+        if query_tokens and overlap == query_tokens:
+            score += 20
+        rare_overlap = [token for token in overlap if token not in _GENERIC_MATCH_TOKENS]
+        score += len(rare_overlap) * 4
+    else:
+        score -= 5
+
+    if len(query_tokens) == 1 and len(overlap) == 1:
+        token = next(iter(query_tokens))
+        if token in _GENERIC_MATCH_TOKENS:
+            score -= 10
+        else:
+            score += 8
+
+    if overlap and not [token for token in overlap if token not in _GENERIC_MATCH_TOKENS] and not (query_project & candidate_project):
+        score -= 12
+
+    return score
+
+
+def _is_viable_task_match(query: str, candidate: str, score: int) -> bool:
+    query_tokens = _task_body_tokens(query)
+    overlap = query_tokens & _task_body_tokens(candidate)
+    if score >= 90:
         return True
-    wa = set(na.split())
-    wb = set(nb.split())
-    return len(wa & wb) >= 2
+    if len(overlap) >= 2 and score >= 22:
+        return True
+    if query_tokens and overlap == query_tokens and score >= 18:
+        return True
+    if len(query_tokens) == 1 and len(overlap) == 1 and score >= 26:
+        token = next(iter(query_tokens))
+        return token not in _GENERIC_MATCH_TOKENS
+    return False
+
+
+def titles_look_similar(a: str, b: str) -> bool:
+    score = _task_match_score(a, b)
+    return _is_viable_task_match(a, b, score)
 
 
 def _dedupe_tasks_by_canonical_title(tasks: Sequence[Task]) -> list[Task]:
@@ -266,29 +419,46 @@ def calculate_points(task: Task) -> int:
     return base
 
 
-async def find_task_by_fragment(title_fragment: str, db: AsyncSession, open_only: bool = True) -> Task | None:
-    canonical_fragment = canonicalize_task_title(title_fragment)
-    query = select(Task)
-    if open_only:
-        query = query.where(Task.status.in_(_OPEN_STATUSES))
-    query = (
-        query.where(Task.title.ilike(f"%{canonical_fragment}%"))
-        .order_by(Task.priority.nulls_last(), Task.deadline.nulls_last(), Task.created_at.desc())
-        .limit(1)
+async def _candidate_tasks_for_matching(
+    db: AsyncSession,
+    *,
+    include_closed: bool,
+    include_system: bool,
+    limit: int = 120,
+) -> Sequence[Task]:
+    result = await db.execute(
+        select(Task)
+        .order_by(Task.completed_at.desc().nullslast(), Task.created_at.desc())
+        .limit(limit)
     )
-    result = await db.execute(query)
-    return result.scalar_one_or_none()
+    tasks = list(result.scalars().all())
+    if not include_closed:
+        tasks = [task for task in tasks if task.status in _OPEN_STATUSES]
+    if not include_system:
+        tasks = [task for task in tasks if task.category not in ("backlog", "system") and not is_system_task_title(task.title or "")]
+    return _dedupe_tasks_by_canonical_title(tasks)
+
+
+async def find_task_by_fragment(title_fragment: str, db: AsyncSession, open_only: bool = True) -> Task | None:
+    return await find_task_by_title_like(title_fragment, db, include_closed=not open_only, include_system=False)
 
 
 async def find_task_by_title_like(title: str, db: AsyncSession, include_closed: bool = True, include_system: bool = False) -> Task | None:
-    canonical_title = canonicalize_task_title(title)
-    recent = await get_recent_tasks(db, limit=80, include_system=include_system)
-    for task in recent:
-        if not include_closed and task.status not in _OPEN_STATUSES:
+    candidates = await _candidate_tasks_for_matching(db, include_closed=include_closed, include_system=include_system)
+    best_task: Task | None = None
+    best_score = 0
+    for task in candidates:
+        score = _task_match_score(title, task.title or "")
+        if not _is_viable_task_match(title, task.title or "", score):
             continue
-        if titles_look_similar(task.title or "", canonical_title):
-            return task
-    return None
+        if score > best_score:
+            best_task = task
+            best_score = score
+            continue
+        if score == best_score and best_task is not None:
+            if (task.created_at or datetime.min) > (best_task.created_at or datetime.min):
+                best_task = task
+    return best_task
 
 
 async def upsert_task_from_context(
@@ -385,14 +555,7 @@ async def rename_most_recent_active_task(new_title: str, db: AsyncSession) -> Ta
 
 
 async def mark_done(title_fragment: str, db: AsyncSession) -> tuple[Task | None, str]:
-    canonical_fragment = canonicalize_task_title(title_fragment)
-    result = await db.execute(
-        select(Task)
-        .where(Task.status.in_(_OPEN_STATUSES))
-        .where(Task.title.ilike(f"%{canonical_fragment}%"))
-        .limit(1)
-    )
-    task = result.scalar_one_or_none()
+    task = await find_task_by_title_like(title_fragment, db, include_closed=False, include_system=True)
     if not task:
         return None, ""
 
@@ -438,14 +601,7 @@ async def mark_done(title_fragment: str, db: AsyncSession) -> tuple[Task | None,
 
 
 async def delegate_task(title_fragment: str, delegated_to: str, db: AsyncSession) -> Task | None:
-    canonical_fragment = canonicalize_task_title(title_fragment)
-    result = await db.execute(
-        select(Task)
-        .where(Task.status.in_(_OPEN_STATUSES))
-        .where(Task.title.ilike(f"%{canonical_fragment}%"))
-        .limit(1)
-    )
-    task = result.scalar_one_or_none()
+    task = await find_task_by_title_like(title_fragment, db, include_closed=False, include_system=True)
     if task:
         task.status = "delegated"
         task.notes = f"Delegado para: {delegated_to}"
@@ -455,14 +611,7 @@ async def delegate_task(title_fragment: str, delegated_to: str, db: AsyncSession
 
 
 async def drop_task(title_fragment: str, db: AsyncSession) -> Task | None:
-    canonical_fragment = canonicalize_task_title(title_fragment)
-    result = await db.execute(
-        select(Task)
-        .where(Task.status.in_(_OPEN_STATUSES))
-        .where(Task.title.ilike(f"%{canonical_fragment}%"))
-        .limit(1)
-    )
-    task = result.scalar_one_or_none()
+    task = await find_task_by_title_like(title_fragment, db, include_closed=False, include_system=True)
     if task:
         task.status = "dropped"
         await db.commit()
