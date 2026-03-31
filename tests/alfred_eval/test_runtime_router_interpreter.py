@@ -177,3 +177,48 @@ async def test_interpreter_correction_can_target_named_task_not_only_last_action
     assert any("countdown" in (t.title or "").lower() for t in tasks)
     assert not any("motion avisos" in (t.title or "").lower() for t in tasks)
     assert any("motion avisos" in ((d.raw_text or '') + ' ' + (d.rewritten_title or '')).lower() for d in dumps)
+
+
+async def test_interpreter_system_feedback_does_not_create_task(db_session, monkeypatch):
+    async def fake_interpret_message(text: str, db=None):
+        return {
+            "intent": "system_feedback",
+            "confidence": 0.97,
+            "raw_text": text,
+            "note": text,
+        }
+
+    monkeypatch.setattr(interpreter, "interpret_message", fake_interpret_message)
+
+    _, response, classification = await runtime_router.handle("isso não era pra virar task, era ajuste do sistema", db=db_session)
+    task_result = await db_session.execute(select(Task))
+    tasks = list(task_result.scalars().all())
+    saved = await task_manager.get_setting("last_system_feedback", db=db_session)
+
+    assert classification == "system_feedback"
+    assert len(tasks) == 0
+    assert "ajuste de comportamento do sistema" in response.lower()
+    assert saved is not None and "ajuste do sistema" in saved.lower()
+
+
+async def test_interpreter_context_note_can_attach_to_named_task(db_session, monkeypatch):
+    task = await task_manager.upsert_task_from_context("FIRE 26 | Abertura", db_session, status="in_progress", category="work")
+
+    async def fake_interpret_message(text: str, db=None):
+        return {
+            "intent": "context_note",
+            "confidence": 0.96,
+            "raw_text": text,
+            "reference_title": "Abertura",
+            "note": "O Cavazza quer manter o corte atual.",
+        }
+
+    monkeypatch.setattr(interpreter, "interpret_message", fake_interpret_message)
+
+    _, response, classification = await runtime_router.handle("nota: o Cavazza quer manter o corte atual", db=db_session)
+    result = await db_session.execute(select(Task).where(Task.id == task.id))
+    refreshed = result.scalar_one()
+
+    assert classification == "context_note"
+    assert "guardei isso como nota" in response.lower()
+    assert refreshed.notes is not None and "cavazza" in refreshed.notes.lower()

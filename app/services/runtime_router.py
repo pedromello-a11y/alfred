@@ -18,6 +18,16 @@ async def _remember_last_action(kind: str, object_id: str, db: AsyncSession) -> 
         await task_manager.set_setting("last_created_task_id", object_id, db)
 
 
+async def _append_setting_log(key: str, value: str, db: AsyncSession, limit: int = 4000) -> None:
+    existing = await task_manager.get_setting(key, "", db=db) or ""
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    entry = f"[{timestamp}] {value.strip()}"
+    merged = f"{existing}\n{entry}".strip() if existing else entry
+    if len(merged) > limit:
+        merged = merged[-limit:]
+    await task_manager.set_setting(key, merged, db)
+
+
 def _compose_title(task_title: str, project: str | None = None) -> str:
     title = (task_title or "").strip()
     project_name = (project or "").strip()
@@ -33,6 +43,39 @@ def _to_naive_datetime(value: str | None) -> datetime | None:
     if dt.tzinfo is not None:
         return dt.astimezone().replace(tzinfo=None)
     return dt
+
+
+async def _append_note_to_task(task: Task, note_text: str, db: AsyncSession) -> Task:
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    entry = f"[{timestamp}] {note_text.strip()}"
+    task.notes = f"{task.notes or ''}\n{entry}".strip()
+    await db.commit()
+    await db.refresh(task)
+    return task
+
+
+async def _store_system_feedback(decision: dict[str, Any], db: AsyncSession):
+    text = decision.get("note") or decision.get("raw_text") or ""
+    await task_manager.set_setting("last_system_feedback", text, db)
+    await _append_setting_log("system_feedback_log", text, db)
+    await _remember_last_action("system_feedback", "settings", db)
+    return "Entendi. Tratei isso como ajuste de comportamento do sistema, não como demanda operacional."
+
+
+async def _store_context_note(decision: dict[str, Any], db: AsyncSession):
+    note_text = decision.get("note") or decision.get("raw_text") or ""
+    reference = decision.get("reference_title") or decision.get("task_title")
+    task = None
+    if reference:
+        task = await task_manager.find_task_by_title_like(reference, db, include_closed=True, include_system=True)
+    if task:
+        await _append_note_to_task(task, note_text, db)
+        await _remember_last_action("task", str(task.id), db)
+        return f"Entendi. Guardei isso como nota em *{task.title}*."
+    await task_manager.set_setting("last_context_note", note_text, db)
+    await _append_setting_log("context_note_log", note_text, db)
+    await _remember_last_action("note", "context", db)
+    return "Entendi. Guardei isso como nota contextual, sem virar demanda operacional."
 
 
 async def _create_task_from_interpretation(decision: dict[str, Any], origin: str, db: AsyncSession):
@@ -232,14 +275,12 @@ async def _apply_correction(decision: dict[str, Any], origin: str, db: AsyncSess
         await db.delete(task)
         active = list(await task_manager.get_active_tasks(db))
         if active:
-            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
-            target = active[0]
-            target.notes = f"{target.notes or ''}\n[{timestamp}] {note_text}".strip()
-            await db.commit()
+            target = await _append_note_to_task(active[0], note_text, db)
             await _remember_last_action("task", str(target.id), db)
             return target, f"Corrigido. Removi a task e guardei isso como nota em *{target.title}*."
         await db.commit()
         await task_manager.set_setting("last_context_note", note_text, db)
+        await _append_setting_log("context_note_log", note_text, db)
         await _remember_last_action("note", "context", db)
         return None, "Corrigido. Removi a task e guardei isso como nota contextual."
 
@@ -291,6 +332,16 @@ async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | Non
         obj, response = await _apply_correction(decision, origin, db)
         item = message_handler.InboundItem(item_type="update", origin=origin, raw_text=raw_text, extracted_title=decision.get("correction_new_type") or "correction")
         return item, response, "correction"
+
+    if intent == "system_feedback":
+        response = await _store_system_feedback(decision, db)
+        item = message_handler.InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title="system_feedback")
+        return item, response, "system_feedback"
+
+    if intent == "context_note":
+        response = await _store_context_note(decision, db)
+        item = message_handler.InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title="context_note")
+        return item, response, "context_note"
 
     if intent in {"question", "chat", "unknown"}:
         return await message_handler.handle(raw_text, origin=origin, db=db)

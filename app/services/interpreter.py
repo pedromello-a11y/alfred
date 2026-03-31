@@ -6,11 +6,22 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AgendaBlock, Task
+from app.models import AgendaBlock
 from app.services import brain, task_manager
 
 _INTERPRET_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
-_SUPPORTED_INTENTS = {"new_task", "dump", "agenda_add", "task_update", "correction", "question", "chat", "unknown"}
+_SUPPORTED_INTENTS = {
+    "new_task",
+    "dump",
+    "agenda_add",
+    "task_update",
+    "correction",
+    "system_feedback",
+    "context_note",
+    "question",
+    "chat",
+    "unknown",
+}
 _SUPPORTED_BLOCK_TYPES = {"focus", "meeting", "break", "personal", "admin"}
 
 
@@ -134,12 +145,14 @@ Regras obrigatórias:
 - Responda APENAS JSON válido.
 - Nunca use markdown.
 - Escolha uma intenção principal entre:
-  new_task, dump, agenda_add, task_update, correction, question, chat, unknown
+  new_task, dump, agenda_add, task_update, correction, system_feedback, context_note, question, chat, unknown
 - Se a mensagem for correção do que acabou de ser anotado, use intent=correction.
 - Se a mensagem só quer guardar algo para acessar depois, use intent=dump.
 - Se a mensagem estiver marcando horário/bloco/reunião/descanso, use intent=agenda_add.
 - Se a mensagem estiver informando avanço/conclusão/estado de algo existente, use intent=task_update.
 - Se a mensagem estiver criando uma demanda nova, use intent=new_task.
+- Se a mensagem estiver falando do comportamento do próprio Alfred/sistema/bot, use intent=system_feedback.
+- Se a mensagem for só contexto, observação ou nota que não deve virar task nem agenda, use intent=context_note.
 - Só preencha time_blocks quando a intenção principal for agenda_add.
 - Em correction, preencha correction_new_type com dump, task, agenda_block ou note.
 - Use deadline_iso e time_blocks.start_at/end_at em ISO 8601 completo no timezone America/Sao_Paulo.
@@ -153,7 +166,7 @@ Mensagem do Pedro:
 
 Schema:
 {{
-  "intent": "new_task|dump|agenda_add|task_update|correction|question|chat|unknown",
+  "intent": "new_task|dump|agenda_add|task_update|correction|system_feedback|context_note|question|chat|unknown",
   "confidence": 0.0,
   "task_title": "",
   "project": "",
