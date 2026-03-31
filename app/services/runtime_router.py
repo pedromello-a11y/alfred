@@ -93,23 +93,73 @@ async def _update_task_from_interpretation(decision: dict[str, Any], db: AsyncSe
     return task
 
 
+async def _find_task_correction_target(reference: str | None, last_type: str | None, last_id: str | None, db: AsyncSession) -> Task | None:
+    if reference:
+        task = await task_manager.find_task_by_title_like(reference, db, include_closed=True, include_system=True)
+        if task:
+            return task
+    if last_type == "task" and last_id:
+        try:
+            task_uuid = UUID(last_id)
+        except ValueError:
+            return None
+        result = await db.execute(select(Task).where(Task.id == task_uuid).limit(1))
+        return result.scalar_one_or_none()
+    return None
+
+
+async def _find_dump_correction_target(reference: str | None, last_type: str | None, last_id: str | None, db: AsyncSession) -> DumpItem | None:
+    if reference:
+        result = await db.execute(
+            select(DumpItem)
+            .where((DumpItem.rewritten_title.ilike(f"%{reference}%")) | (DumpItem.raw_text.ilike(f"%{reference}%")))
+            .order_by(DumpItem.created_at.desc())
+            .limit(1)
+        )
+        dump = result.scalar_one_or_none()
+        if dump:
+            return dump
+    if last_type == "dump" and last_id:
+        try:
+            dump_uuid = UUID(last_id)
+        except ValueError:
+            return None
+        result = await db.execute(select(DumpItem).where(DumpItem.id == dump_uuid).limit(1))
+        return result.scalar_one_or_none()
+    return None
+
+
+async def _find_agenda_correction_target(reference: str | None, last_type: str | None, last_id: str | None, db: AsyncSession) -> AgendaBlock | None:
+    if reference:
+        result = await db.execute(
+            select(AgendaBlock)
+            .where(AgendaBlock.title.ilike(f"%{reference}%"))
+            .order_by(AgendaBlock.start_at.desc())
+            .limit(1)
+        )
+        block = result.scalar_one_or_none()
+        if block:
+            return block
+    if last_type == "agenda_block" and last_id:
+        try:
+            block_uuid = UUID(last_id)
+        except ValueError:
+            return None
+        result = await db.execute(select(AgendaBlock).where(AgendaBlock.id == block_uuid).limit(1))
+        return result.scalar_one_or_none()
+    return None
+
+
 async def _apply_correction(decision: dict[str, Any], origin: str, db: AsyncSession):
     correction_type = (decision.get("correction_new_type") or "").strip()
     last_type = await task_manager.get_setting("last_action_type", db=db)
     last_id = await task_manager.get_setting("last_action_id", db=db)
+    reference = decision.get("reference_title") or decision.get("task_title")
 
-    if not last_id:
-        return None, "Entendi como correção, mas não encontrei a última ação gravada."
-
-    if correction_type == "dump" and last_type == "task":
-        try:
-            task_uuid = UUID(last_id)
-        except ValueError:
-            return None, "Não consegui localizar a última task para corrigir."
-        result = await db.execute(select(Task).where(Task.id == task_uuid).limit(1))
-        task = result.scalar_one_or_none()
+    if correction_type == "dump":
+        task = await _find_task_correction_target(reference, last_type, last_id, db)
         if not task:
-            return None, "Não encontrei a última task para corrigir."
+            return None, "Não encontrei a task para mover para dumps."
         payload = decision.get("reference_title") or task.title
         dump = await dump_manager.create_dump_item(payload, origin, db, source_task_id=task.id)
         await db.delete(task)
@@ -117,43 +167,55 @@ async def _apply_correction(decision: dict[str, Any], origin: str, db: AsyncSess
         await _remember_last_action("dump", str(dump.id), db)
         return dump, f"Corrigido. Movi *{task.title}* para dumps como *{dump.rewritten_title}*."
 
-    if correction_type == "task" and last_type == "dump":
-        try:
-            dump_uuid = UUID(last_id)
-        except ValueError:
-            return None, "Não consegui localizar o último dump para corrigir."
-        result = await db.execute(select(DumpItem).where(DumpItem.id == dump_uuid).limit(1))
-        dump = result.scalar_one_or_none()
-        if not dump:
-            return None, "Não encontrei o último dump para corrigir."
-        task_title = decision.get("task_title") or decision.get("reference_title") or dump.rewritten_title or dump.raw_text
-        combined = _compose_title(task_title, decision.get("project"))
-        task = Task(
-            title=task_manager.canonicalize_task_title(combined),
-            origin=origin,
-            status=decision.get("task_status") or "pending",
-            deadline=_to_naive_datetime(decision.get("deadline_iso")),
-            category=decision.get("category") or "work",
-            effort_type="project",
-            notes=f"Criada via correção do dump: {dump.raw_text}",
-        )
-        db.add(task)
-        await db.flush()
-        await db.delete(dump)
-        await db.commit()
-        await db.refresh(task)
-        await _remember_last_action("task", str(task.id), db)
-        return task, f"Corrigido. Transformei o dump em task: *{task.title}*."
+    if correction_type == "task":
+        dump = await _find_dump_correction_target(reference, last_type, last_id, db)
+        if dump:
+            task_title = decision.get("task_title") or decision.get("reference_title") or dump.rewritten_title or dump.raw_text
+            combined = _compose_title(task_title, decision.get("project"))
+            task = Task(
+                title=task_manager.canonicalize_task_title(combined),
+                origin=origin,
+                status=decision.get("task_status") or "pending",
+                deadline=_to_naive_datetime(decision.get("deadline_iso")),
+                category=decision.get("category") or "work",
+                effort_type="project",
+                notes=f"Criada via correção do dump: {dump.raw_text}",
+            )
+            db.add(task)
+            await db.flush()
+            await db.delete(dump)
+            await db.commit()
+            await db.refresh(task)
+            await _remember_last_action("task", str(task.id), db)
+            return task, f"Corrigido. Transformei o dump em task: *{task.title}*."
 
-    if correction_type == "agenda_block" and last_type == "task":
-        try:
-            task_uuid = UUID(last_id)
-        except ValueError:
-            return None, "Não consegui localizar a última task para corrigir."
-        result = await db.execute(select(Task).where(Task.id == task_uuid).limit(1))
-        task = result.scalar_one_or_none()
+        block = await _find_agenda_correction_target(reference, last_type, last_id, db)
+        if block:
+            task_title = decision.get("task_title") or decision.get("reference_title") or block.title
+            combined = _compose_title(task_title, decision.get("project"))
+            task = Task(
+                title=task_manager.canonicalize_task_title(combined),
+                origin=origin,
+                status=decision.get("task_status") or "pending",
+                deadline=_to_naive_datetime(decision.get("deadline_iso")),
+                category=decision.get("category") or "work",
+                effort_type="project",
+                notes=f"Criada via correção de bloco de agenda: {block.title} {block.start_at.isoformat()}->{block.end_at.isoformat()}",
+            )
+            db.add(task)
+            await db.flush()
+            await db.delete(block)
+            await db.commit()
+            await db.refresh(task)
+            await _remember_last_action("task", str(task.id), db)
+            return task, f"Corrigido. Transformei o bloco de agenda em task: *{task.title}*."
+
+        return None, "Entendi como correção para task, mas não achei dump ou bloco compatível."
+
+    if correction_type == "agenda_block":
+        task = await _find_task_correction_target(reference, last_type, last_id, db)
         if not task:
-            return None, "Não encontrei a última task para corrigir."
+            return None, "Não encontrei a task para mover para agenda."
         blocks = await _persist_blocks_from_interpretation(decision, origin, db)
         if not blocks:
             return None, "Entendi como correção para agenda, mas faltou bloco de horário válido."
@@ -162,43 +224,10 @@ async def _apply_correction(decision: dict[str, Any], origin: str, db: AsyncSess
         await _remember_last_action("agenda_block", str(blocks[-1].id), db)
         return blocks[-1], "Corrigido. Removi a task e registrei isso na agenda.\n" + _agenda_response(blocks)
 
-    if correction_type == "task" and last_type == "agenda_block":
-        try:
-            block_uuid = UUID(last_id)
-        except ValueError:
-            return None, "Não consegui localizar o último bloco para corrigir."
-        result = await db.execute(select(AgendaBlock).where(AgendaBlock.id == block_uuid).limit(1))
-        block = result.scalar_one_or_none()
-        if not block:
-            return None, "Não encontrei o último bloco para corrigir."
-        task_title = decision.get("task_title") or decision.get("reference_title") or block.title
-        combined = _compose_title(task_title, decision.get("project"))
-        task = Task(
-            title=task_manager.canonicalize_task_title(combined),
-            origin=origin,
-            status=decision.get("task_status") or "pending",
-            deadline=_to_naive_datetime(decision.get("deadline_iso")),
-            category=decision.get("category") or "work",
-            effort_type="project",
-            notes=f"Criada via correção de bloco de agenda: {block.title} {block.start_at.isoformat()}->{block.end_at.isoformat()}",
-        )
-        db.add(task)
-        await db.flush()
-        await db.delete(block)
-        await db.commit()
-        await db.refresh(task)
-        await _remember_last_action("task", str(task.id), db)
-        return task, f"Corrigido. Transformei o bloco de agenda em task: *{task.title}*."
-
-    if correction_type == "note" and last_type == "task":
-        try:
-            task_uuid = UUID(last_id)
-        except ValueError:
-            return None, "Não consegui localizar a última task para corrigir."
-        result = await db.execute(select(Task).where(Task.id == task_uuid).limit(1))
-        task = result.scalar_one_or_none()
+    if correction_type == "note":
+        task = await _find_task_correction_target(reference, last_type, last_id, db)
         if not task:
-            return None, "Não encontrei a última task para corrigir."
+            return None, "Não encontrei a task para converter em nota."
         note_text = decision.get("note") or f"Convertida para nota contextual: {task.title}"
         await db.delete(task)
         active = list(await task_manager.get_active_tasks(db))

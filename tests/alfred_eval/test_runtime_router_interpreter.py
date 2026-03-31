@@ -1,7 +1,7 @@
 from sqlalchemy import select
 
 from app.models import AgendaBlock, DumpItem, Task
-from app.services import interpreter, runtime_router, task_manager
+from app.services import dump_manager, interpreter, runtime_router, task_manager
 
 
 async def test_interpreter_new_task_creates_task_with_project(db_session, monkeypatch):
@@ -150,3 +150,30 @@ async def test_interpreter_correction_moves_last_task_to_agenda_block(db_session
     assert len(blocks) == 1
     assert blocks[0].block_type == "meeting"
     assert "registrei isso na agenda" in response.lower()
+
+
+async def test_interpreter_correction_can_target_named_task_not_only_last_action(db_session, monkeypatch):
+    await task_manager.upsert_task_from_context("Spark | Countdown", db_session, status="pending", category="work")
+    await task_manager.upsert_task_from_context("Spark | Motion Avisos", db_session, status="pending", category="work")
+
+    async def fake_interpret_message(text: str, db=None):
+        return {
+            "intent": "correction",
+            "confidence": 0.95,
+            "raw_text": text,
+            "correction_new_type": "dump",
+            "reference_title": "Motion Avisos",
+        }
+
+    monkeypatch.setattr(interpreter, "interpret_message", fake_interpret_message)
+
+    _, response, classification = await runtime_router.handle("motion avisos é dump", db=db_session)
+    task_result = await db_session.execute(select(Task))
+    dump_result = await db_session.execute(select(DumpItem))
+    tasks = list(task_result.scalars().all())
+    dumps = list(dump_result.scalars().all())
+
+    assert classification == "correction"
+    assert any("countdown" in (t.title or "").lower() for t in tasks)
+    assert not any("motion avisos" in (t.title or "").lower() for t in tasks)
+    assert any("motion avisos" in ((d.raw_text or '') + ' ' + (d.rewritten_title or '')).lower() for d in dumps)
