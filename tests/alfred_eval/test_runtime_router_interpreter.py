@@ -259,3 +259,41 @@ async def test_agenda_question_uses_runtime_router_not_legacy_handler(db_session
     assert "Agenda de hoje" in response
     assert "Reunião com Bárbara" in response
     assert "Agora:" in response
+
+
+async def test_focus_question_uses_runtime_router(db_session, monkeypatch):
+    await task_manager.upsert_task_from_context("FIRE 26 | Ajustar abertura", db_session, status="in_progress", category="work")
+
+    async def fake_interpret_message(text: str, db=None):
+        return {"intent": "question", "confidence": 0.95, "raw_text": text}
+
+    async def fail_legacy(*args, **kwargs):
+        raise AssertionError("legacy handler should not run for focus question")
+
+    monkeypatch.setattr(interpreter, "interpret_message", fake_interpret_message)
+    monkeypatch.setattr(message_handler, "handle", fail_legacy)
+
+    _, response, classification = await runtime_router.handle("qual meu foco agora?", db=db_session)
+
+    assert classification == "question"
+    assert "foco" in response.lower()
+    assert "ajustar abertura" in response.lower()
+
+
+async def test_unknown_agenda_input_falls_back_without_legacy(db_session, monkeypatch):
+    async def fake_interpret_message(text: str, db=None):
+        return {"intent": "unknown", "confidence": 0.91, "raw_text": text}
+
+    async def fail_legacy(*args, **kwargs):
+        raise AssertionError("legacy handler should not run for unknown agenda fallback")
+
+    monkeypatch.setattr(interpreter, "interpret_message", fake_interpret_message)
+    monkeypatch.setattr(message_handler, "handle", fail_legacy)
+
+    _, response, classification = await runtime_router.handle("amanhã 15h reunião com a Bárbara por 1h", db=db_session)
+    result = await db_session.execute(select(AgendaBlock))
+    blocks = list(result.scalars().all())
+
+    assert classification == "agenda_add_fallback"
+    assert len(blocks) == 1
+    assert "Agenda registrada" in response

@@ -25,6 +25,29 @@ _AGENDA_QUESTION_HINTS = (
     "como esta meu dia",
     "como ta meu dia",
 )
+_FOCUS_QUESTION_HINTS = (
+    "foco agora",
+    "qual meu foco",
+    "em que eu foco",
+    "em que devo focar",
+    "o que eu faço agora",
+    "qual a próxima tarefa",
+    "qual a proxima tarefa",
+)
+_PRIORITY_QUESTION_HINTS = (
+    "prioridade do dia",
+    "qual a prioridade",
+    "principal prioridade",
+    "mais importante hoje",
+)
+_DELAY_QUESTION_HINTS = (
+    "atrasado",
+    "atrasada",
+    "vencido",
+    "vencida",
+    "passou do prazo",
+    "em atraso",
+)
 
 
 async def _remember_last_action(kind: str, object_id: str, db: AsyncSession) -> None:
@@ -312,6 +335,21 @@ def _looks_like_agenda_question(raw_text: str) -> bool:
     return any(token in lowered for token in _AGENDA_QUESTION_HINTS)
 
 
+def _looks_like_focus_question(raw_text: str) -> bool:
+    lowered = (raw_text or "").lower()
+    return any(token in lowered for token in _FOCUS_QUESTION_HINTS)
+
+
+def _looks_like_priority_question(raw_text: str) -> bool:
+    lowered = (raw_text or "").lower()
+    return any(token in lowered for token in _PRIORITY_QUESTION_HINTS)
+
+
+def _looks_like_delay_question(raw_text: str) -> bool:
+    lowered = (raw_text or "").lower()
+    return any(token in lowered for token in _DELAY_QUESTION_HINTS)
+
+
 async def _build_question_context(db: AsyncSession) -> str:
     now = now_brt()
     tasks = list(await task_manager.get_active_tasks(db))[:10]
@@ -397,12 +435,90 @@ async def _handle_operational_agenda_question(db: AsyncSession) -> str:
     return "\n".join(lines)
 
 
+async def _handle_focus_question(db: AsyncSession) -> str:
+    now_naive = now_brt_naive()
+    today = today_brt()
+    result = await db.execute(
+        select(AgendaBlock)
+        .where(AgendaBlock.start_at <= now_naive)
+        .where(AgendaBlock.end_at > now_naive)
+        .order_by(AgendaBlock.start_at.desc())
+        .limit(1)
+    )
+    current_block = result.scalar_one_or_none()
+    active_tasks = list(await task_manager.get_active_tasks(db))
+    due_today = [t for t in active_tasks if t.deadline and t.deadline.date() == today]
+    due_today.sort(key=lambda t: t.deadline)
+
+    if current_block:
+        if current_block.block_type == "break":
+            return f"Agora você está em descanso até {current_block.end_at.strftime('%H:%M')}. Quando voltar, o foco sugerido é *{(due_today[0].title if due_today else (active_tasks[0].title if active_tasks else 'nenhuma task ativa'))}*."
+        return f"Seu foco agora é *{current_block.title}* até {current_block.end_at.strftime('%H:%M')}."
+    if due_today:
+        return f"Seu foco sugerido agora é *{due_today[0].title}* — é a task com prazo mais próximo hoje."
+    if active_tasks:
+        return f"Seu foco sugerido agora é *{active_tasks[0].title}*."
+    return "Agora você não tem task ativa registrada."
+
+
+async def _handle_priority_question(db: AsyncSession) -> str:
+    today = today_brt()
+    active_tasks = list(await task_manager.get_active_tasks(db))
+    due_today = [t for t in active_tasks if t.deadline and t.deadline.date() == today]
+    due_today.sort(key=lambda t: (t.deadline, t.priority or 99))
+    if due_today:
+        first = due_today[0]
+        return f"A prioridade do dia é *{first.title}* — prazo hoje às {first.deadline.strftime('%H:%M')}."
+    if active_tasks:
+        return f"A prioridade mais clara agora é *{active_tasks[0].title}*."
+    return "Não encontrei prioridade ativa registrada agora."
+
+
+async def _handle_delay_question(db: AsyncSession) -> str:
+    today = today_brt()
+    active_tasks = list(await task_manager.get_active_tasks(db))
+    delayed = [t for t in active_tasks if t.deadline and t.deadline.date() < today]
+    delayed.sort(key=lambda t: t.deadline)
+    if not delayed:
+        return "Não encontrei tarefas atrasadas ativas agora."
+    lines = ["Tarefas atrasadas:"]
+    for task in delayed[:5]:
+        lines.append(f"- {task.title} (prazo {task.deadline.strftime('%d/%m %H:%M')})")
+    return "\n".join(lines)
+
+
+async def _handle_unknown_without_legacy(raw_text: str, db: AsyncSession):
+    if agenda_manager.looks_like_agenda_input(raw_text):
+        blocks = await agenda_manager.capture_agenda_from_text(raw_text, db, source="whatsapp")
+        if blocks:
+            await _remember_last_action("agenda_block", str(blocks[-1].id), db)
+            return _agenda_response(blocks), "agenda_add_fallback"
+    text = (raw_text or "").strip().lower()
+    if text.startswith("dump:"):
+        dump = await dump_manager.create_dump_item(raw_text, "whatsapp", db)
+        await _remember_last_action("dump", str(dump.id), db)
+        return f"Registrado em dumps como *{dump.rewritten_title}* ({dump.category or 'desconhecido'}).", "dump_fallback"
+    if _looks_like_agenda_question(raw_text):
+        return await _handle_operational_agenda_question(db), "question"
+    if _looks_like_focus_question(raw_text):
+        return await _handle_focus_question(db), "question"
+    if _looks_like_priority_question(raw_text):
+        return await _handle_priority_question(db), "question"
+    if _looks_like_delay_question(raw_text):
+        return await _handle_delay_question(db), "question"
+    return None, None
+
+
 async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | None = None):
     if db is None:
         return await message_handler.handle(raw_text, origin=origin, db=db)
 
     decision = await interpreter.interpret_message(raw_text, db)
     if not decision or decision.get("confidence", 0) < 0.6:
+        response, classification = await _handle_unknown_without_legacy(raw_text, db)
+        if response:
+            item = message_handler.InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title=classification or "fallback")
+            return item, response, classification or "fallback"
         return await message_handler.handle(raw_text, origin=origin, db=db)
 
     intent = decision.get("intent")
@@ -449,6 +565,12 @@ async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | Non
     if intent == "question":
         if _looks_like_agenda_question(raw_text):
             response = await _handle_operational_agenda_question(db)
+        elif _looks_like_focus_question(raw_text):
+            response = await _handle_focus_question(db)
+        elif _looks_like_priority_question(raw_text):
+            response = await _handle_priority_question(db)
+        elif _looks_like_delay_question(raw_text):
+            response = await _handle_delay_question(db)
         else:
             context = await _build_question_context(db)
             response = await brain.answer_question(raw_text, context, db=db)
@@ -461,6 +583,10 @@ async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | Non
         return item, response, "chat"
 
     if intent == "unknown":
+        response, classification = await _handle_unknown_without_legacy(raw_text, db)
+        if response:
+            item = message_handler.InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title=classification or "unknown")
+            return item, response, classification or "unknown"
         return await message_handler.handle(raw_text, origin=origin, db=db)
 
     return await message_handler.handle(raw_text, origin=origin, db=db)

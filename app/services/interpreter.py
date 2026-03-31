@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AgendaBlock
-from app.services import brain, task_manager
+from app.services import agenda_manager, brain, task_manager
 from app.services.time_utils import now_brt, today_brt
 
 _INTERPRET_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -24,6 +24,23 @@ _SUPPORTED_INTENTS = {
     "unknown",
 }
 _SUPPORTED_BLOCK_TYPES = {"focus", "meeting", "break", "personal", "admin"}
+_FAST_HINTS = (
+    "dump:",
+    "isso é dump",
+    "isso é tarefa",
+    "isso era bloco",
+    "isso era só nota",
+    "agenda",
+    "o que tenho",
+    "o que falta",
+    "foco agora",
+    "prioridade do dia",
+    "atrasado",
+    "vencido",
+    "qual meu foco",
+    "proximo bloco",
+    "próximo bloco",
+)
 
 
 async def _build_interpreter_context(db: AsyncSession) -> str:
@@ -136,6 +153,21 @@ def _sanitize(data: dict[str, Any], raw_text: str) -> dict[str, Any] | None:
     }
 
 
+def _should_use_fast_model(raw_text: str) -> bool:
+    text = (raw_text or "").strip().lower()
+    if not text:
+        return True
+    if len(text) <= 140 and any(h in text for h in _FAST_HINTS):
+        return True
+    if len(text) <= 90 and agenda_manager.looks_like_agenda_input(text):
+        return True
+    if len(text) <= 90 and text.startswith(("dump:", "nota:", "note:")):
+        return True
+    if len(text) <= 70:
+        return True
+    return False
+
+
 async def interpret_message(raw_text: str, db: AsyncSession) -> dict[str, Any] | None:
     ctx = await _build_interpreter_context(db)
     prompt = f"""
@@ -183,12 +215,13 @@ Schema:
 }}
 """.strip()
 
+    use_fast = _should_use_fast_model(raw_text)
     raw = await brain._call(
         prompt,
-        model=brain.settings.model_smart,
-        max_tokens=350,
+        model=brain.settings.model_fast if use_fast else brain.settings.model_smart,
+        max_tokens=250 if use_fast else 350,
         temperature=0.1,
-        call_type="interpret",
+        call_type="interpret_fast" if use_fast else "interpret_smart",
         db=db,
         include_history=False,
     )
