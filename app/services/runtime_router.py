@@ -48,6 +48,40 @@ _DELAY_QUESTION_HINTS = (
     "passou do prazo",
     "em atraso",
 )
+_REFERENCE_STOPWORDS = {
+    "de",
+    "da",
+    "do",
+    "das",
+    "dos",
+    "para",
+    "pra",
+    "com",
+    "sem",
+    "uma",
+    "um",
+    "na",
+    "no",
+    "em",
+    "por",
+    "que",
+    "e",
+    "o",
+    "a",
+    "as",
+    "os",
+}
+_REFERENCE_GENERIC = {
+    "task",
+    "tarefa",
+    "agenda",
+    "bloco",
+    "dump",
+    "nota",
+    "reuniao",
+    "reunioes",
+    "projeto",
+}
 
 
 async def _remember_last_action(kind: str, object_id: str, db: AsyncSession) -> None:
@@ -79,6 +113,71 @@ def _to_naive_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
     return to_brt_naive(datetime.fromisoformat(value))
+
+
+def _reference_tokens(value: str) -> set[str]:
+    normalized = task_manager.normalize_task_title(value or "")
+    tokens: set[str] = set()
+    for token in normalized.split():
+        if token in _REFERENCE_STOPWORDS:
+            continue
+        if len(token) >= 3 or any(ch.isdigit() for ch in token):
+            tokens.add(token)
+    return tokens
+
+
+def _reference_match_score(reference: str, *candidate_texts: str) -> int:
+    ref_norm = task_manager.normalize_task_title(reference or "")
+    if not ref_norm:
+        return 0
+    ref_tokens = _reference_tokens(reference)
+    best = 0
+    for text in candidate_texts:
+        cand_norm = task_manager.normalize_task_title(text or "")
+        if not cand_norm:
+            continue
+        score = 0
+        if ref_norm == cand_norm:
+            score += 180
+        elif ref_norm in cand_norm:
+            score += 80
+        elif cand_norm in ref_norm and len(cand_norm) >= 8:
+            score += 30
+        cand_tokens = _reference_tokens(text or "")
+        overlap = ref_tokens & cand_tokens
+        if overlap:
+            score += len(overlap) * 14
+            rare = [token for token in overlap if token not in _REFERENCE_GENERIC]
+            score += len(rare) * 5
+            if ref_tokens and overlap == ref_tokens:
+                score += 18
+        else:
+            score -= 4
+        if len(ref_tokens) == 1 and len(overlap) == 1:
+            token = next(iter(ref_tokens))
+            if token in _REFERENCE_GENERIC:
+                score -= 12
+            else:
+                score += 8
+        best = max(best, score)
+    return best
+
+
+def _reference_match_is_viable(reference: str, score: int, *candidate_texts: str) -> bool:
+    ref_tokens = _reference_tokens(reference)
+    overlap: set[str] = set()
+    for text in candidate_texts:
+        overlap |= ref_tokens & _reference_tokens(text or "")
+    if score >= 70:
+        return True
+    if len(overlap) >= 2 and score >= 20:
+        return True
+    if ref_tokens and overlap == ref_tokens and score >= 16:
+        return True
+    if len(ref_tokens) == 1 and len(overlap) == 1 and score >= 24:
+        token = next(iter(ref_tokens))
+        return token not in _REFERENCE_GENERIC
+    return False
 
 
 async def _append_note_to_task(task: Task, note_text: str, db: AsyncSession) -> Task:
@@ -189,15 +288,19 @@ async def _find_task_correction_target(reference: str | None, last_type: str | N
 
 async def _find_dump_correction_target(reference: str | None, last_type: str | None, last_id: str | None, db: AsyncSession) -> DumpItem | None:
     if reference:
-        result = await db.execute(
-            select(DumpItem)
-            .where((DumpItem.rewritten_title.ilike(f"%{reference}%")) | (DumpItem.raw_text.ilike(f"%{reference}%")))
-            .order_by(DumpItem.created_at.desc())
-            .limit(1)
-        )
-        dump = result.scalar_one_or_none()
-        if dump:
-            return dump
+        result = await db.execute(select(DumpItem).order_by(DumpItem.created_at.desc()).limit(80))
+        dumps = list(result.scalars().all())
+        best_dump: DumpItem | None = None
+        best_score = 0
+        for dump in dumps:
+            score = _reference_match_score(reference, dump.rewritten_title or "", dump.raw_text or "")
+            if not _reference_match_is_viable(reference, score, dump.rewritten_title or "", dump.raw_text or ""):
+                continue
+            if score > best_score:
+                best_dump = dump
+                best_score = score
+        if best_dump:
+            return best_dump
     if last_type == "dump" and last_id:
         try:
             dump_uuid = UUID(last_id)
@@ -210,15 +313,19 @@ async def _find_dump_correction_target(reference: str | None, last_type: str | N
 
 async def _find_agenda_correction_target(reference: str | None, last_type: str | None, last_id: str | None, db: AsyncSession) -> AgendaBlock | None:
     if reference:
-        result = await db.execute(
-            select(AgendaBlock)
-            .where(AgendaBlock.title.ilike(f"%{reference}%"))
-            .order_by(AgendaBlock.start_at.desc())
-            .limit(1)
-        )
-        block = result.scalar_one_or_none()
-        if block:
-            return block
+        result = await db.execute(select(AgendaBlock).order_by(AgendaBlock.start_at.desc()).limit(80))
+        blocks = list(result.scalars().all())
+        best_block: AgendaBlock | None = None
+        best_score = 0
+        for block in blocks:
+            score = _reference_match_score(reference, block.title or "", block.notes or "")
+            if not _reference_match_is_viable(reference, score, block.title or "", block.notes or ""):
+                continue
+            if score > best_score:
+                best_block = block
+                best_score = score
+        if best_block:
+            return best_block
     if last_type == "agenda_block" and last_id:
         try:
             block_uuid = UUID(last_id)

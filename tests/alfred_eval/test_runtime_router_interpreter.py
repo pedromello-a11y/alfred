@@ -297,3 +297,81 @@ async def test_unknown_agenda_input_falls_back_without_legacy(db_session, monkey
     assert classification == "agenda_add_fallback"
     assert len(blocks) == 1
     assert "Agenda registrada" in response
+
+
+async def test_interpreter_correction_prefers_named_dump_when_multiple_exist(db_session, monkeypatch):
+    dump_a = await dump_manager.create_dump_item("quero ver o filme Pulp Fiction", "whatsapp", db_session)
+    dump_b = await dump_manager.create_dump_item("lembrar de comprar tinta dourada", "whatsapp", db_session)
+    await task_manager.set_setting("last_action_type", "dump", db_session)
+    await task_manager.set_setting("last_action_id", str(dump_a.id), db_session)
+
+    async def fake_interpret_message(text: str, db=None):
+        return {
+            "intent": "correction",
+            "confidence": 0.95,
+            "raw_text": text,
+            "correction_new_type": "task",
+            "reference_title": "tinta dourada",
+            "task_title": "Comprar tinta dourada",
+        }
+
+    monkeypatch.setattr(interpreter, "interpret_message", fake_interpret_message)
+
+    _, response, classification = await runtime_router.handle("isso de tinta dourada é tarefa", db=db_session)
+    task_result = await db_session.execute(select(Task))
+    dump_result = await db_session.execute(select(DumpItem))
+    tasks = list(task_result.scalars().all())
+    dumps = list(dump_result.scalars().all())
+
+    assert classification == "correction"
+    assert any("tinta dourada" in (t.title or "").lower() for t in tasks)
+    assert any("pulp fiction" in ((d.raw_text or '') + ' ' + (d.rewritten_title or '')).lower() for d in dumps)
+    assert not any("tinta dourada" in ((d.raw_text or '') + ' ' + (d.rewritten_title or '')).lower() for d in dumps)
+    assert "Transformei o dump em task" in response
+
+
+async def test_interpreter_correction_prefers_named_agenda_block_when_multiple_exist(db_session, monkeypatch):
+    today = today_brt()
+    block_a = AgendaBlock(
+        title="Reunião com Bárbara",
+        start_at=datetime.combine(today, time(15, 0)),
+        end_at=datetime.combine(today, time(16, 0)),
+        block_type="meeting",
+        source="manual",
+    )
+    block_b = AgendaBlock(
+        title="Reunião com Cavazza",
+        start_at=datetime.combine(today, time(17, 0)),
+        end_at=datetime.combine(today, time(18, 0)),
+        block_type="meeting",
+        source="manual",
+    )
+    db_session.add(block_a)
+    db_session.add(block_b)
+    await db_session.commit()
+    await task_manager.set_setting("last_action_type", "agenda_block", db_session)
+    await task_manager.set_setting("last_action_id", str(block_a.id), db_session)
+
+    async def fake_interpret_message(text: str, db=None):
+        return {
+            "intent": "correction",
+            "confidence": 0.95,
+            "raw_text": text,
+            "correction_new_type": "task",
+            "reference_title": "Cavazza",
+            "task_title": "Preparar reunião com Cavazza",
+        }
+
+    monkeypatch.setattr(interpreter, "interpret_message", fake_interpret_message)
+
+    _, response, classification = await runtime_router.handle("a do cavazza era tarefa", db=db_session)
+    task_result = await db_session.execute(select(Task))
+    block_result = await db_session.execute(select(AgendaBlock))
+    tasks = list(task_result.scalars().all())
+    blocks = list(block_result.scalars().all())
+
+    assert classification == "correction"
+    assert any("cavazza" in (t.title or "").lower() for t in tasks)
+    assert any("barbara" in (b.title or "").lower() for b in blocks)
+    assert not any("cavazza" in (b.title or "").lower() for b in blocks)
+    assert "Transformei o bloco de agenda em task" in response
