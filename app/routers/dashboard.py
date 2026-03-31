@@ -21,48 +21,48 @@ from app.services.task_manager import update_task_status
 router = APIRouter(prefix="/dashboard")
 
 
-def _priority_label(p: int | None) -> str:
-    if p is None:
-        return "média"
-    if p <= 2:
-        return "alta"
-    if p == 3:
-        return "média"
-    return "baixa"
+def _split_task_title(value: str) -> tuple[str | None, str]:
+    text = (value or "").strip()
+    if "|" in text:
+        left, right = text.split("|", 1)
+        project = left.strip()
+        task_name = right.strip()
+        if project and task_name:
+            return project, task_name
+    return None, text
 
 
-def _estimate_label(minutes: int | None) -> str:
-    if not minutes:
-        return "?"
-    h, m = divmod(minutes, 60)
-    if h and m:
-        return f"~{h}h{m:02d}m"
-    if h:
-        return f"~{h}h"
-    return f"~{m}min"
+def _compose_task_title(title: str, project: str | None = None) -> str:
+    task_name = (title or "").strip(" |-–—")
+    project_name = (project or "").strip(" |-–—")
+    if project_name and task_name:
+        return f"{project_name} | {task_name}"
+    return task_name or project_name
 
 
-def _deadline_label(dl: datetime | None) -> str:
-    if dl is None:
-        return "sem prazo"
-    today = date.today()
-    delta = (dl.date() - today).days
-    if delta < 0:
-        return "atrasado"
-    if delta == 0:
-        return "hoje"
-    if delta == 1:
-        return "amanhã"
-    if delta <= 7:
-        return "esta semana"
-    return dl.strftime("%d/%m")
+def _extract_project_names(*collections: list[dict]) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for items in collections:
+        for item in items:
+            title = item.get("title") or item.get("name") or ""
+            project, _ = _split_task_title(title)
+            if project:
+                key = project.casefold()
+                if key not in seen:
+                    seen.add(key)
+                    names.append(project)
+    return names[:40]
 
 
 def _task_dto(item: dict, is_first: bool = False) -> dict:
     priority = item.get("priority", "md")
+    project, task_name = _split_task_title(item.get("title", ""))
     return {
         "id": item.get("id"),
         "name": item.get("title", ""),
+        "taskName": task_name,
+        "project": project or "",
         "badge": item.get("priorityLabel", "média"),
         "priority": priority,
         "cls": "cur" if is_first else ("hi" if priority == "hi" else ""),
@@ -108,7 +108,7 @@ async def dashboard_state(db: AsyncSession = Depends(get_db)):
 
     focus = {
         "title": (current_block or {}).get("title") or (focus_task or {}).get("title") or "nenhuma tarefa ativa",
-        "project": ((focus_task or {}).get("title", "").split("|")[0].strip()) if focus_task else "",
+        "project": ((focus_task or {}).get("title", "").split("|")[0].strip()) if focus_task and "|" in (focus_task or {}).get("title", "") else "",
         "estimate": (focus_task or {}).get("estimate") or "?",
         "deadline": (focus_task or {}).get("deadline") or "sem prazo",
         "priority": (focus_task or {}).get("priorityLabel") or "média",
@@ -130,6 +130,15 @@ async def dashboard_state(db: AsyncSession = Depends(get_db)):
     latest_streak = streak_q.scalar_one_or_none()
     streak_count = latest_streak.streak_count if latest_streak else 0
 
+    projects = _extract_project_names(
+        hoje,
+        backlog,
+        active_queue,
+        horizon_board.get("tomorrow", []),
+        horizon_board.get("thisWeek", []),
+        horizon_board.get("later", []),
+    )
+
     return {
         "focus": focus,
         "next": next_info,
@@ -144,6 +153,7 @@ async def dashboard_state(db: AsyncSession = Depends(get_db)):
             "percent": xp_percent,
             "streak": streak_count,
         },
+        "projects": projects,
         "focusBoard": focus_board,
         "horizonBoard": horizon_board,
         "activeQueue": active_queue,
@@ -202,6 +212,126 @@ async def dashboard_action(body: ActionRequest, db: AsyncSession = Depends(get_d
 
     await db.commit()
     return {"status": "ok", "task_id": body.task_id, "action": body.action}
+
+
+class TaskCreateRequest(BaseModel):
+    title: str
+    project: str | None = None
+    date: str | None = None
+    priority: int | None = None
+    category: str | None = "work"
+    estimated_minutes: int | None = None
+
+
+@router.post("/create-task")
+async def dashboard_create_task(body: TaskCreateRequest, db: AsyncSession = Depends(get_db)):
+    if not (body.title or "").strip():
+        raise HTTPException(status_code=400, detail="title obrigatório")
+
+    combined_title = _compose_task_title(body.title, body.project)
+    deadline = None
+    if body.date:
+        try:
+            deadline = datetime.fromisoformat(body.date).replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de data inválido")
+
+    minutes = body.estimated_minutes
+    if minutes is None:
+        effort_type = "project"
+    elif minutes < 15:
+        effort_type = "quick"
+    elif minutes <= 60:
+        effort_type = "logistics"
+    else:
+        effort_type = "project"
+
+    task = Task(
+        title=combined_title,
+        origin="manual",
+        status="pending",
+        priority=body.priority,
+        category=body.category or "work",
+        deadline=deadline,
+        effort_type=effort_type,
+        estimated_minutes=minutes,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    project, task_name = _split_task_title(task.title)
+    return {
+        "status": "ok",
+        "task": {
+            "id": str(task.id),
+            "title": task.title,
+            "project": project or "",
+            "taskName": task_name,
+            "deadline": task.deadline.isoformat() if task.deadline else None,
+        },
+    }
+
+
+class TaskEditRequest(BaseModel):
+    task_id: str
+    title: str | None = None
+    project: str | None = None
+    date: str | None = None
+    clear_date: bool = False
+    note: str | None = None
+    priority: int | None = None
+
+
+@router.post("/task-edit")
+async def dashboard_task_edit(body: TaskEditRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        task_uuid = UUID(body.task_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="task_id inválido")
+
+    result = await db.execute(select(Task).where(Task.id == task_uuid))
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+
+    current_project, current_task_name = _split_task_title(task.title)
+    new_title = current_task_name if body.title is None else (body.title.strip() or current_task_name)
+    new_project = current_project if body.project is None else body.project.strip()
+    task.title = _compose_task_title(new_title, new_project)
+
+    if body.clear_date:
+        task.deadline = None
+    elif body.date is not None:
+        if body.date == "":
+            task.deadline = None
+        else:
+            try:
+                task.deadline = datetime.fromisoformat(body.date).replace(tzinfo=timezone.utc)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Formato de data inválido")
+
+    if body.note:
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        task.notes = f"{task.notes or ''}\n[{ts}] {body.note}".strip()
+
+    if body.priority is not None:
+        task.priority = body.priority
+
+    await db.commit()
+    await db.refresh(task)
+
+    project, task_name = _split_task_title(task.title)
+    return {
+        "status": "ok",
+        "task": {
+            "id": str(task.id),
+            "title": task.title,
+            "project": project or "",
+            "taskName": task_name,
+            "deadline": task.deadline.isoformat() if task.deadline else None,
+        },
+    }
 
 
 class AgendaBlockRequest(BaseModel):
