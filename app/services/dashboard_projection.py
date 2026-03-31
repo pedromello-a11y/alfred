@@ -110,17 +110,24 @@ async def _today_agenda_blocks(db: AsyncSession) -> list[dict[str, Any]]:
     return blocks
 
 
-async def _today_gcal_blocks() -> list[dict[str, Any]]:
+async def _week_gcal_blocks() -> list[dict[str, Any]]:
+    """Retorna blocos do GCal para a semana (seg-dom), com start_at/end_at em hora local naive."""
     try:
-        raw = await gcal_client.get_today_events()
+        raw = await gcal_client.get_week_events()
     except Exception:
         return []
 
     blocks = []
     for ev in raw or []:
         try:
-            start_at = datetime.fromisoformat(ev.get("start", ""))
-            end_at = datetime.fromisoformat(ev.get("end", ""))
+            from dateutil.parser import parse as _parse
+            start_at = _parse(ev.get("start", ""))
+            end_at = _parse(ev.get("end", ""))
+            # Normalize to naive local
+            if start_at.tzinfo is not None:
+                start_at = start_at.astimezone().replace(tzinfo=None)
+            if end_at.tzinfo is not None:
+                end_at = end_at.astimezone().replace(tzinfo=None)
         except Exception:
             continue
         blocks.append(
@@ -142,25 +149,24 @@ async def get_focus_board(db: AsyncSession) -> dict[str, Any]:
     now = datetime.now()
 
     manual_blocks = await _today_agenda_blocks(db)
-    gcal_blocks = await _today_gcal_blocks()
+    gcal_blocks = await _week_gcal_blocks()
 
-    # Normalize all block datetimes to naive local time for consistent comparison
-    def _to_naive(dt: datetime) -> datetime:
-        if dt is None:
-            return datetime.max
-        if dt.tzinfo is not None:
-            from datetime import timezone as _tz
-            return dt.astimezone().replace(tzinfo=None)
-        return dt
+    # today-only blocks for current/next detection
+    today_gcal = [b for b in gcal_blocks if b["start_at"].date() == today]
+    all_today = sorted(manual_blocks + today_gcal, key=lambda b: b.get("start_at") or datetime.max)
 
+    timeline = all_today  # kept for backwards compat (today's timeline)
+
+    current_block = next((b for b in all_today if b["start_at"] <= now < b["end_at"]), None)
+    next_block = next((b for b in all_today if b["start_at"] > now), None)
+
+    # Build weekly timeline: dict keyed by Python weekday (0=Mon..4=Fri)
+    from collections import defaultdict
+    week_by_day: dict[int, list] = defaultdict(list)
     for b in manual_blocks + gcal_blocks:
-        b["start_at"] = _to_naive(b.get("start_at"))
-        b["end_at"] = _to_naive(b.get("end_at") or datetime.max)
-
-    timeline = sorted(manual_blocks + gcal_blocks, key=lambda item: item.get("start_at") or datetime.max)
-
-    current_block = next((b for b in timeline if b["start_at"] <= now < b["end_at"]), None)
-    next_block = next((b for b in timeline if b["start_at"] > now), None)
+        dow = b["start_at"].weekday()
+        if 0 <= dow <= 4:
+            week_by_day[dow].append(b)
 
     today_tasks = [
         _serialize_task(task, current=(idx == 0))
@@ -184,10 +190,16 @@ async def get_focus_board(db: AsyncSession) -> dict[str, Any]:
 
     meetings = [_serialize_block(block) for block in timeline if block.get("type") == "meeting"]
 
+    weekly_timeline = {
+        dow: [_serialize_block(b) for b in sorted(blocks, key=lambda x: x["start_at"])]
+        for dow, blocks in week_by_day.items()
+    }
+
     return {
         "currentBlock": _serialize_block(current_block) if current_block else None,
         "nextBlock": _serialize_block(next_block) if next_block else None,
         "timeline": [_serialize_block(block) for block in timeline],
+        "weeklyTimeline": weekly_timeline,
         "todayTasks": today_tasks,
         "meetings": meetings,
         "alerts": alerts,

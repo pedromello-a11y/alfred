@@ -68,37 +68,44 @@ def _calc_duration(event: dict) -> int:
         return 0
 
 
-async def get_today_events() -> list[dict]:
-    """Retorna compromissos do dia no Google Calendar (primary)."""
+async def _fetch_events(time_min: str, time_max: str) -> list[dict]:
+    """Busca eventos no GCal entre time_min e time_max (ISO strings com tz)."""
+    import asyncio
+
+    creds = await _load_google_creds()
+    if not creds["refresh_token"]:
+        logger.warning("GCal: no refresh token configured.")
+        return []
+
+    service = await asyncio.get_event_loop().run_in_executor(
+        None, _build_service, creds["refresh_token"], creds["client_id"], creds["client_secret"]
+    )
+
+    def _fetch():
+        return service.events().list(
+            calendarId="primary",
+            timeMin=time_min,
+            timeMax=time_max,
+            singleEvents=True,
+            orderBy="startTime",
+        ).execute()
+
+    result = await asyncio.get_event_loop().run_in_executor(None, _fetch)
+    return result.get("items", [])
+
+
+async def get_week_events() -> list[dict]:
+    """Retorna eventos da semana atual (seg-dom) no fuso America/Sao_Paulo."""
     try:
-        import asyncio
-
-        creds = await _load_google_creds()
-        if not creds["refresh_token"]:
-            logger.warning("GCal: no refresh token configured.")
-            return []
-
-        service = await asyncio.get_event_loop().run_in_executor(
-            None, _build_service, creds["refresh_token"], creds["client_id"], creds["client_secret"]
-        )
-
         from zoneinfo import ZoneInfo
         tz_brt = ZoneInfo("America/Sao_Paulo")
         now_local = datetime.now(tz_brt)
-        start = now_local.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-        end = now_local.replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
+        # Monday of current week
+        monday = now_local - timedelta(days=now_local.weekday())
+        week_start = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_end = week_start + timedelta(days=7)
 
-        def _fetch():
-            return service.events().list(
-                calendarId="primary",
-                timeMin=start,
-                timeMax=end,
-                singleEvents=True,
-                orderBy="startTime",
-            ).execute()
-
-        result = await asyncio.get_event_loop().run_in_executor(None, _fetch)
-        events = result.get("items", [])
+        raw = await _fetch_events(week_start.isoformat(), week_end.isoformat())
         parsed = [
             {
                 "title": e.get("summary", "Sem título"),
@@ -106,7 +113,33 @@ async def get_today_events() -> list[dict]:
                 "end": e["end"].get("dateTime", e["end"].get("date")),
                 "duration_minutes": _calc_duration(e),
             }
-            for e in events
+            for e in raw
+        ]
+        logger.info("GCal week: {} events.", len(parsed))
+        return parsed
+    except Exception as exc:
+        logger.error("get_week_events failed: {}", exc)
+        return []
+
+
+async def get_today_events() -> list[dict]:
+    """Retorna compromissos do dia no Google Calendar (primary)."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz_brt = ZoneInfo("America/Sao_Paulo")
+        now_local = datetime.now(tz_brt)
+        start = now_local.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        end = now_local.replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
+
+        raw = await _fetch_events(start, end)
+        parsed = [
+            {
+                "title": e.get("summary", "Sem título"),
+                "start": e["start"].get("dateTime", e["start"].get("date")),
+                "end": e["end"].get("dateTime", e["end"].get("date")),
+                "duration_minutes": _calc_duration(e),
+            }
+            for e in raw
         ]
         logger.info("GCal: {} events today.", len(parsed))
         return parsed

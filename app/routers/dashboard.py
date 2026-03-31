@@ -98,22 +98,27 @@ def _task_model_dto(task: Task, is_first: bool = False) -> dict:
     }
 
 
-def _agenda_weekday_payload(timeline: list[dict]) -> list[dict]:
+def _agenda_weekday_payload(timeline: list[dict], weekly_timeline: dict | None = None) -> list[dict]:
+    """Retorna [{day: 0..4, events: [...]}] para seg-sex."""
+    if weekly_timeline:
+        result = []
+        for dow in range(5):
+            blocks = weekly_timeline.get(str(dow)) or weekly_timeline.get(dow) or []
+            result.append({
+                "day": dow,
+                "events": [
+                    {"title": b.get("title", ""), "time": b.get("start", ""), "end": b.get("end", ""), "type": b.get("type", "focus")}
+                    for b in blocks
+                ],
+            })
+        return result
     if not timeline:
         return []
     today_dow = date.today().weekday()
-    return [{
-        "day": today_dow,
-        "events": [
-            {
-                "title": block.get("title", ""),
-                "time": block.get("start", ""),
-                "end": block.get("end", ""),
-                "type": block.get("type", "focus"),
-            }
-            for block in timeline
-        ],
-    }]
+    return [{"day": today_dow, "events": [
+        {"title": b.get("title", ""), "time": b.get("start", ""), "end": b.get("end", ""), "type": b.get("type", "focus")}
+        for b in timeline
+    ]}]
 
 
 def _operational_summary(active_tasks: list[Task], current_block: dict | None) -> dict:
@@ -224,7 +229,7 @@ async def dashboard_state(db: AsyncSession = Depends(get_db)):
             "hoje": [_task_dto(item, i == 0) for i, item in enumerate(hoje)],
             "backlog": [_task_dto(item) for item in backlog],
         },
-        "agenda": _agenda_weekday_payload(focus_board.get("timeline", [])),
+        "agenda": _agenda_weekday_payload(focus_board.get("timeline", []), focus_board.get("weeklyTimeline")),
         "xp": {
             "level": level,
             "current": xp_current,
