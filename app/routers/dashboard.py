@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import AgendaBlock, DumpItem, PlayerStat, Streak, Task
+from app.models import AgendaBlock, PlayerStat, Streak, Task
 from app.services.dashboard_projection import (
     get_active_queue,
     get_dump_library,
@@ -16,7 +16,8 @@ from app.services.dashboard_projection import (
     get_horizon_board,
 )
 from app.services.dump_manager import update_dump_item
-from app.services.task_manager import update_task_status
+from app.services.task_manager import get_active_tasks, update_task_status
+from app.services.time_utils import now_brt, today_brt
 
 router = APIRouter(prefix="/dashboard")
 
@@ -55,6 +56,18 @@ def _extract_project_names(*collections: list[dict]) -> list[str]:
     return names[:40]
 
 
+def _priority_meta(priority_value) -> tuple[str, str]:
+    try:
+        p = int(priority_value) if priority_value is not None else 3
+    except Exception:
+        p = 3
+    if p <= 2:
+        return "hi", "alta"
+    if p >= 5:
+        return "lo", "baixa"
+    return "md", "média"
+
+
 def _task_dto(item: dict, is_first: bool = False) -> dict:
     priority = item.get("priority", "md")
     project, task_name = _split_task_title(item.get("title", ""))
@@ -66,6 +79,22 @@ def _task_dto(item: dict, is_first: bool = False) -> dict:
         "badge": item.get("priorityLabel", "média"),
         "priority": priority,
         "cls": "cur" if is_first else ("hi" if priority == "hi" else ""),
+    }
+
+
+def _task_model_dto(task: Task, is_first: bool = False) -> dict:
+    priority, badge = _priority_meta(task.priority)
+    project, task_name = _split_task_title(task.title or "")
+    return {
+        "id": str(task.id),
+        "name": task.title or "",
+        "taskName": task_name,
+        "project": project or "",
+        "badge": badge,
+        "priority": priority,
+        "cls": "cur" if is_first else ("hi" if priority == "hi" else ""),
+        "rawDate": task.deadline.isoformat() if task.deadline else "",
+        "deadlineLabel": task.deadline.strftime("%d/%m %H:%M") if task.deadline else "sem prazo",
     }
 
 
@@ -85,6 +114,52 @@ def _agenda_weekday_payload(timeline: list[dict]) -> list[dict]:
             for block in timeline
         ],
     }]
+
+
+def _operational_summary(active_tasks: list[Task], current_block: dict | None) -> dict:
+    today = today_brt()
+    overdue = [t for t in active_tasks if t.deadline and t.deadline.date() < today]
+    overdue.sort(key=lambda t: (t.deadline, t.priority or 99))
+    due_today = [t for t in active_tasks if t.deadline and t.deadline.date() == today]
+    due_today.sort(key=lambda t: (t.deadline, t.priority or 99))
+
+    if current_block:
+        suggestion = {
+            "title": current_block.get("title") or "bloco atual",
+            "project": "",
+            "reason": f"bloco atual até {(current_block.get('end') or '').strip()}" if current_block.get("end") else "bloco atual",
+        }
+    elif due_today:
+        first = due_today[0]
+        project, task_name = _split_task_title(first.title or "")
+        suggestion = {
+            "title": task_name or first.title or "",
+            "project": project or "",
+            "reason": f"prazo hoje às {first.deadline.strftime('%H:%M')}" if first.deadline else "prazo hoje",
+        }
+    elif active_tasks:
+        first = active_tasks[0]
+        project, task_name = _split_task_title(first.title or "")
+        suggestion = {
+            "title": task_name or first.title or "",
+            "project": project or "",
+            "reason": "primeira task ativa",
+        }
+    else:
+        suggestion = {
+            "title": "nenhum foco ativo",
+            "project": "",
+            "reason": "sem tasks abertas",
+        }
+
+    priority_task = due_today[0] if due_today else (overdue[0] if overdue else (active_tasks[0] if active_tasks else None))
+    return {
+        "nowLabel": now_brt().strftime("%H:%M BRT"),
+        "suggestion": suggestion,
+        "priorityTask": _task_model_dto(priority_task, True) if priority_task else None,
+        "overdueTasks": [_task_model_dto(task) for task in overdue[:5]],
+        "dueTodayTasks": [_task_model_dto(task) for task in due_today[:5]],
+    }
 
 
 @router.get("/state")
@@ -139,6 +214,9 @@ async def dashboard_state(db: AsyncSession = Depends(get_db)):
         horizon_board.get("later", []),
     )
 
+    active_tasks = list(await get_active_tasks(db))
+    operational = _operational_summary(active_tasks, current_block)
+
     return {
         "focus": focus,
         "next": next_info,
@@ -154,6 +232,7 @@ async def dashboard_state(db: AsyncSession = Depends(get_db)):
             "streak": streak_count,
         },
         "projects": projects,
+        "operational": operational,
         "focusBoard": focus_board,
         "horizonBoard": horizon_board,
         "activeQueue": active_queue,
