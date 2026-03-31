@@ -10,16 +10,46 @@ from loguru import logger
 from app.config import settings
 
 
-def _build_service():
+async def _load_google_creds() -> dict:
+    """
+    Carrega credenciais Google: DB primeiro (salvas via /gcal/callback),
+    fallback para variáveis de ambiente.
+    """
+    try:
+        from sqlalchemy import select as sa_select
+        from app.database import AsyncSessionLocal
+        from app.models import Settings
+
+        async with AsyncSessionLocal() as db:
+            keys = ["google_refresh_token", "google_client_id", "google_client_secret"]
+            result = await db.execute(sa_select(Settings).where(Settings.key.in_(keys)))
+            rows = result.scalars().all()
+            db_vals = {r.key: r.value for r in rows if r.value}
+
+        return {
+            "refresh_token": db_vals.get("google_refresh_token") or settings.google_refresh_token,
+            "client_id": db_vals.get("google_client_id") or settings.google_client_id,
+            "client_secret": db_vals.get("google_client_secret") or settings.google_client_secret,
+        }
+    except Exception as exc:
+        logger.warning("Could not load Google creds from DB, using env: {}", exc)
+        return {
+            "refresh_token": settings.google_refresh_token,
+            "client_id": settings.google_client_id,
+            "client_secret": settings.google_client_secret,
+        }
+
+
+def _build_service(refresh_token: str, client_id: str, client_secret: str):
     """Cria o serviço Google Calendar autenticado via refresh token."""
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
 
     creds = Credentials(
         token=None,
-        refresh_token=settings.google_refresh_token,
-        client_id=settings.google_client_id,
-        client_secret=settings.google_client_secret,
+        refresh_token=refresh_token,
+        client_id=client_id,
+        client_secret=client_secret,
         token_uri="https://oauth2.googleapis.com/token",
     )
     return build("calendar", "v3", credentials=creds)
@@ -42,7 +72,15 @@ async def get_today_events() -> list[dict]:
     """Retorna compromissos do dia no Google Calendar (primary)."""
     try:
         import asyncio
-        service = await asyncio.get_event_loop().run_in_executor(None, _build_service)
+
+        creds = await _load_google_creds()
+        if not creds["refresh_token"]:
+            logger.warning("GCal: no refresh token configured.")
+            return []
+
+        service = await asyncio.get_event_loop().run_in_executor(
+            None, _build_service, creds["refresh_token"], creds["client_id"], creds["client_secret"]
+        )
 
         now = datetime.now(timezone.utc)
         start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
@@ -97,8 +135,12 @@ async def create_event(
     try:
         import asyncio
 
+        creds = await _load_google_creds()
+        if not creds["refresh_token"]:
+            return {"status": "failed", "error": "no refresh token configured"}
+
         def _create():
-            service = _build_service()
+            service = _build_service(creds["refresh_token"], creds["client_id"], creds["client_secret"])
             body = {
                 "summary": title,
                 "start": {"dateTime": start_dt.isoformat(), "timeZone": "America/Sao_Paulo"},
