@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+"""Router do webhook whapi — sem autenticação por design (whapi não suporta secret header)."""
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Request
 from loguru import logger
@@ -20,7 +21,7 @@ def _should_accept_self_authored_message(msg: dict) -> bool:
 
 
 async def _is_recent_outbound_echo(text_body: str, db: AsyncSession, window_seconds: int = 120) -> bool:
-    cutoff = datetime.utcnow() - timedelta(seconds=window_seconds)
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
     result = await db.execute(
         select(Message)
         .where(Message.direction == "outbound")
@@ -75,7 +76,7 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
             await db.commit()
             await whapi_client.send_message(settings.pedro_phone, response_text)
         except Exception as exc:
-            logger.error("Webhook v2 processing failed for msg '{}': {}", text_body[:80], exc)
+            logger.error("webhook processing failed for msg '{}': {}", text_body[:80], exc)
             inbound.processed = False
             inbound.classification = "error"
             try:

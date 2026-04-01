@@ -1,3 +1,4 @@
+"""Router de inbound interno — gateway whatsapp-web.js."""
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -27,7 +28,7 @@ async def inbound_from_gateway(
     payload: GatewayInboundPayload,
     db: AsyncSession = Depends(get_db),
     x_bridge_secret: str | None = Header(default=None, alias="X-Bridge-Secret"),
-):
+) -> dict:
     expected_secret = (settings.wa_bridge_shared_secret or "").strip()
     if expected_secret and x_bridge_secret != expected_secret:
         raise HTTPException(status_code=401, detail="invalid_bridge_secret")

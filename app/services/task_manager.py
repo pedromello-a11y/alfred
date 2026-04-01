@@ -1,7 +1,7 @@
 import random
 import re
 import unicodedata
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Sequence
 
 from loguru import logger
@@ -304,7 +304,7 @@ async def upsert_task_from_context(
     existing = await find_task_by_title_like(title, db, include_closed=True, include_system=(category == "system"))
     if existing:
         if note:
-            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
             extra = f"[{timestamp}] {note.strip()}"
             existing.notes = f"{existing.notes}\n{extra}" if existing.notes else extra
         if estimated_minutes and not existing.estimated_minutes:
@@ -314,7 +314,7 @@ async def upsert_task_from_context(
         if status in _OPEN_STATUSES:
             existing.completed_at = None
         elif status == "done":
-            existing.completed_at = datetime.utcnow()
+            existing.completed_at = datetime.now(timezone.utc)
         existing.status = status
         await db.commit()
         await db.refresh(existing)
@@ -330,10 +330,10 @@ async def upsert_task_from_context(
         estimated_minutes=estimated_minutes,
     )
     if note:
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         task.notes = f"[{timestamp}] {note.strip()}"
     if status == "done":
-        task.completed_at = datetime.utcnow()
+        task.completed_at = datetime.now(timezone.utc)
     db.add(task)
     await db.commit()
     await db.refresh(task)
@@ -359,11 +359,11 @@ async def update_task_status(task: Task, new_status: str, db: AsyncSession, note
     if category:
         task.category = category
     if new_status == "done":
-        task.completed_at = datetime.utcnow()
+        task.completed_at = datetime.now(timezone.utc)
     elif new_status in _OPEN_STATUSES:
         task.completed_at = None
     if note:
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         extra = f"[{timestamp}] {note.strip()}"
         task.notes = f"{task.notes}\n{extra}" if task.notes else extra
     await db.commit()
@@ -397,7 +397,7 @@ async def mark_done(title_fragment: str, db: AsyncSession) -> tuple[Task | None,
         return None, ""
 
     task.status = "done"
-    task.completed_at = datetime.utcnow()
+    task.completed_at = datetime.now(timezone.utc)
     await db.commit()
     logger.info("Task done: {} (id={})", task.title, task.id)
 
@@ -559,7 +559,7 @@ async def reset_proactive_count(db: AsyncSession) -> None:
 
 async def _update_multiplier(db: AsyncSession) -> float:
     from dateutil.parser import parse as parse_dt
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     last_str = await get_setting("last_task_completed_at", db=db)
     if last_str:

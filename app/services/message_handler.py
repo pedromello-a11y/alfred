@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from difflib import SequenceMatcher
 from typing import Optional
 
@@ -917,7 +917,7 @@ async def _handle_day_off_accept(db: AsyncSession) -> str:
 
 async def _handle_schedule_intent(raw_text: str, db: AsyncSession) -> str:
     import json
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone, timedelta, timezone
     from app.services import gcal_client
 
     duration_min = 60
@@ -962,7 +962,7 @@ async def _handle_schedule_intent(raw_text: str, db: AsyncSession) -> str:
 
 async def _handle_gcal_confirm(db: AsyncSession) -> str:
     import json
-    from datetime import datetime
+    from datetime import datetime, timezone
     from app.services import gcal_client
 
     raw = await task_manager.get_setting("pending_gcal_event", db=db)
@@ -980,7 +980,7 @@ async def _handle_gcal_confirm(db: AsyncSession) -> str:
 
 async def _append_task_note(task, raw_text: str, db: AsyncSession) -> None:
     snippet = raw_text[:300].strip()
-    now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
     addition = f"[{now_str}] {snippet}"
     task.notes = f"{task.notes}\n{addition}" if task.notes else addition
     await db.commit()

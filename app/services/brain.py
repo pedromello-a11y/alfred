@@ -1,6 +1,6 @@
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 
 import anthropic
 from loguru import logger
@@ -104,7 +104,7 @@ async def get_recent_messages(db, limit: int = 10, max_hours: int = 6) -> list[d
     Retorna lista no formato multi-turn da API Anthropic.
     """
     from app.models import Message
-    cutoff = datetime.utcnow() - timedelta(hours=max_hours)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_hours)
     result = await db.execute(
         select(Message)
         .where(Message.created_at >= cutoff)
@@ -235,7 +235,7 @@ async def build_smart_context(question: str, db) -> str:
             .limit(10)
         )
     elif any(w in lower for w in ("semana", "próximos", "proximos", "week")):
-        cutoff = datetime.utcnow() - timedelta(days=7)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
         query = (
             select(Task)
             .where(Task.status.in_(_ACTIVE_STATUSES))

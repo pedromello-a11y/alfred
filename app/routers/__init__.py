@@ -1,3 +1,3 @@
-from . import health, internal_whatsapp_v2, webhook_v2
+from . import dashboard, health, internal_whatsapp, webhook, whatsapp
 
-__all__ = ["health", "internal_whatsapp_v2", "webhook_v2"]
+__all__ = ["health", "webhook", "whatsapp", "internal_whatsapp", "dashboard"]
