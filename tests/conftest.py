@@ -9,18 +9,20 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/alfred_test")
+os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
-os.environ.setdefault("JIRA_BASE_URL", "https://example.atlassian.net")
-os.environ.setdefault("JIRA_EMAIL", "test@example.com")
-os.environ.setdefault("JIRA_API_TOKEN", "test-token")
-os.environ.setdefault("GOOGLE_REFRESH_TOKEN", "test-refresh")
-os.environ.setdefault("GOOGLE_CLIENT_ID", "test-client-id")
-os.environ.setdefault("GOOGLE_CLIENT_SECRET", "test-client-secret")
+os.environ.setdefault("WHAPI_TOKEN", "test-whapi")
+os.environ.setdefault("MY_WHATSAPP", "5511999999999")
+
+
+# Patch: SQLite does not support JSONB - use JSON for tests
+import sqlalchemy.dialects.postgresql as _pg
+from sqlalchemy import JSON as _JSON
+_pg.JSONB = _JSON
 
 from app import database as app_database
 from app.database import Base
-from app.services import brain, interpreter, jira_client, runtime_router
+from app.services import brain, interpreter, runtime_router
 
 
 def _to_async_db_url(url: str) -> str:
@@ -45,9 +47,6 @@ def stub_external_calls(monkeypatch):
     async def fake_execute_command(command: str, context: str, db=None):
         return f"[fake-command] {command[:80]}"
 
-    async def fake_get_cached_issues(db):
-        return []
-
     async def fake_interpret_message(text: str, db=None):
         return None
 
@@ -55,7 +54,6 @@ def stub_external_calls(monkeypatch):
     monkeypatch.setattr(brain, "answer_question", fake_answer_question)
     monkeypatch.setattr(brain, "casual_response", fake_casual_response)
     monkeypatch.setattr(brain, "execute_command", fake_execute_command)
-    monkeypatch.setattr(jira_client, "get_cached_issues", fake_get_cached_issues)
     monkeypatch.setattr(interpreter, "interpret_message", fake_interpret_message)
 
 
