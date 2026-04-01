@@ -31,7 +31,7 @@ async def run() -> None:
             await whapi_client.send_message(settings.pedro_phone, msg)
             await task_manager.increment_proactive_count(db)
     except Exception as exc:
-        logger.error("midday_checkin_rebuild.run failed: {}", exc)
+        logger.error("midday_checkin.run failed: {}", exc)
 
 
 async def run_plan_b() -> None:
@@ -61,4 +61,4 @@ async def run_plan_b() -> None:
             await whapi_client.send_message(settings.pedro_phone, msg)
             await task_manager.increment_proactive_count(db)
     except Exception as exc:
-        logger.error("midday_checkin_rebuild.run_plan_b failed: {}", exc)
+        logger.error("midday_checkin.run_plan_b failed: {}", exc)
