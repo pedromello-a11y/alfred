@@ -7,7 +7,7 @@ from typing import Optional
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services import agenda_manager, brain, dump_manager, jira_client, task_manager
+from app.services import agenda_manager, brain, dump_manager, task_manager
 
 
 @dataclass
@@ -486,17 +486,7 @@ async def _handle_active_tasks(db: AsyncSession) -> str:
 
 
 async def _build_jira_active_lines(db: AsyncSession) -> list[str]:
-    cached = await jira_client.get_cached_issues(db)
-    lines = []
-    for issue in cached[:5]:
-        title = issue.summary if hasattr(issue, "summary") else issue.get("summary")
-        key = issue.jira_key if hasattr(issue, "jira_key") else issue.get("key")
-        status = issue.status if hasattr(issue, "status") else issue.get("status")
-        if title:
-            prefix = f"[{key}] " if key else ""
-            suffix = f" — {status}" if status else ""
-            lines.append(f"- {prefix}{title}{suffix}")
-    return lines
+    return []
 
 
 async def _extract_status_updates(raw_text: str, db: AsyncSession) -> list[dict]:
