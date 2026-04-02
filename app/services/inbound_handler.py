@@ -13,25 +13,48 @@ from app.services import runtime_router
 from app.services.active_tasks_view import format_active_tasks_for_whatsapp, get_unified_active_view
 from app.services.focus_snapshot import build_focus_snapshot
 
+_TASK_NOUNS = (
+    "tarefa", "tarefas", "demanda", "demandas", "atividade", "atividades",
+    "prioridade", "prioridades", "pendencia", "pendencias", "pendência", "pendências",
+)
+
+_TASK_QUERY_HINTS = (
+    "ativas", "ativa", "abertas", "aberta", "em aberto", "pendentes", "pendente",
+    "agora", "hoje", "lista", "listar", "quais", "qual", "me diga", "me fala",
+    "o que tenho", "o que falta", "o que preciso", "minhas", "meus", "resta",
+    "restando", "sobrou", "sobrando", "prioridade", "prioridades",
+)
+
+
+def _normalize_text(text: str) -> str:
+    return re.sub(r"\\s+", " ", re.sub(r"[^\\w\\s]", " ", (text or "").lower())).strip()
+
 
 def _is_active_tasks_question(text: str) -> bool:
-    cleaned = re.sub(r"[?!.,;:]", "", (text or "").strip().lower()).strip()
+    cleaned = _normalize_text(text)
+    if not cleaned:
+        return False
+
     direct_patterns = [
-        "demandas ativas", "demandas ativa", "demanda ativa",
-        "tarefas ativas", "tarefas ativa", "tarefa ativa",
-        "atividades ativas", "atividades ativa", "atividade ativa",
-        "atividades em aberto", "tarefas em aberto", "demandas em aberto",
-        "atividades abertas", "tarefas abertas", "demandas abertas",
-        "o que tenho pra fazer", "o que falta fazer", "o que falta",
-        "que tenho em aberto", "que esta em aberto", "que está em aberto",
-        "todas atividades", "todas as atividades", "todas as tarefas",
-        "todas demandas", "todas as demandas",
-        "me diga minhas demandas", "me diga minhas tarefas",
-        "quais sao minhas", "quais são minhas",
-        "minhas demandas", "minhas tarefas", "minhas atividades",
-        "minha demandas", "minha tarefas",
+        "demandas ativas", "demanda ativa", "tarefas ativas", "tarefa ativa",
+        "atividades ativas", "atividade ativa", "demandas em aberto", "tarefas em aberto",
+        "atividades em aberto", "demandas abertas", "tarefas abertas", "atividades abertas",
+        "tarefas pendentes", "demandas pendentes", "atividades pendentes",
+        "o que tenho pra fazer", "o que eu tenho pra fazer", "o que falta fazer",
+        "o que falta", "o que ainda falta", "quais sao minhas tarefas", "quais são minhas tarefas",
+        "quais sao minhas demandas", "quais são minhas demandas", "quais sao minhas atividades",
+        "quais são minhas atividades", "minhas tarefas", "minhas demandas", "minhas atividades",
+        "lista de tarefas", "lista de demandas", "lista de atividades",
+        "me diga minhas tarefas", "me diga minhas demandas", "me diga minhas atividades",
+        "me fala minhas tarefas", "me fala minhas demandas", "me fala minhas atividades",
+        "prioridades abertas", "prioridades de hoje", "minhas prioridades",
     ]
-    return any(pattern in cleaned for pattern in direct_patterns)
+    if any(pattern in cleaned for pattern in direct_patterns):
+        return True
+
+    has_task_noun = any(noun in cleaned for noun in _TASK_NOUNS)
+    has_hint = any(hint in cleaned for hint in _TASK_QUERY_HINTS)
+    return has_task_noun and has_hint
 
 
 def _build_operational_tail(snapshot: dict, classification: str) -> str:
@@ -83,7 +106,7 @@ async def process_inbound(
     try:
         if _is_active_tasks_question(text):
             response_text = format_active_tasks_for_whatsapp(await get_unified_active_view(db))
-            classification = "command"
+            classification = "question"
         else:
             _item, response_text, classification = await runtime_router.handle(
                 text, origin=origin, db=db
