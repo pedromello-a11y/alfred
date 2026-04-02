@@ -20,6 +20,12 @@ async def lifespan(app: FastAPI):
     await init_db()
     setup_jobs()
     scheduler.start()
+    # Sync GCal on startup so calendar is populated immediately
+    try:
+        from app.cron.gcal_sync import run as gcal_sync_run
+        await gcal_sync_run()
+    except Exception:
+        pass
     yield
     if scheduler.running:
         scheduler.shutdown(wait=False)

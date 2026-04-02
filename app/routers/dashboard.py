@@ -328,3 +328,30 @@ async def dashboard_task_edit(
 
     await db.commit()
     return {"status": "ok", "title": task.title}
+
+
+@router.post("/sync-gcal")
+async def sync_gcal(db: AsyncSession = Depends(get_db)) -> dict:
+    """Triggers a manual Google Calendar sync and cleans up junk agenda blocks."""
+    from sqlalchemy import delete as sql_delete
+
+    # Remove junk blocks: those not sourced from gcal with suspicious titles
+    # (long titles that look like chat messages)
+    junk_result = await db.execute(
+        select(AgendaBlock).where(
+            (AgendaBlock.source != "gcal") | (AgendaBlock.source == None)
+        )
+    )
+    junk_blocks = junk_result.scalars().all()
+    junk_to_delete = [b for b in junk_blocks if b.title and len(b.title) > 60]
+    for b in junk_to_delete:
+        await db.delete(b)
+    await db.commit()
+
+    # Trigger gcal sync
+    from app.services import gcal_client
+    if not gcal_client._is_configured():
+        return {"status": "error", "message": "gcal not configured", "deleted_junk": len(junk_to_delete)}
+
+    synced = await gcal_client.sync_to_agenda_blocks(db)
+    return {"status": "ok", "synced": synced, "deleted_junk": len(junk_to_delete)}
