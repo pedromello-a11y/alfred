@@ -3,7 +3,7 @@ from datetime import datetime, time, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AgendaBlock
+from app.models import AgendaBlock, DailyPlan
 from app.services import task_manager
 from app.services.time_utils import now_brt, now_brt_naive, today_brt
 
@@ -40,10 +40,21 @@ async def build_focus_snapshot(db: AsyncSession) -> dict:
     active = list(await task_manager.get_active_tasks(db))
     due_today = [t for t in active if t.deadline and t.deadline.date() == today]
     overdue = [t for t in active if t.deadline and t.deadline.date() < today]
+
+    plan_result = await db.execute(select(DailyPlan).where(DailyPlan.plan_date == today))
+    plan = plan_result.scalar_one_or_none()
+    planned_ids = set()
+    if plan and plan.tasks_planned and isinstance(plan.tasks_planned, dict):
+        planned_ids = set(plan.tasks_planned.get("ids", []))
+
+    planned_today = [t for t in active if str(t.id) in planned_ids and t not in due_today and t not in overdue]
+    today_combined = due_today + planned_today
+
     due_today.sort(key=lambda t: (t.deadline, t.priority or 99))
     overdue.sort(key=lambda t: (t.deadline, t.priority or 99))
+    planned_today.sort(key=lambda t: (t.priority or 99, t.created_at or datetime.max))
 
-    focus_task = due_today[0] if due_today else (overdue[0] if overdue else (active[0] if active else None))
+    focus_task = due_today[0] if due_today else (planned_today[0] if planned_today else (overdue[0] if overdue else (active[0] if active else None)))
     next_task = active[1] if len(active) > 1 else None
 
     suggestion = None
@@ -86,7 +97,7 @@ async def build_focus_snapshot(db: AsyncSession) -> dict:
         "focusTask": task_payload(focus_task),
         "nextTask": task_payload(next_task),
         "suggestion": suggestion,
-        "dueToday": [task_payload(t) for t in due_today[:5]],
+        "dueToday": [task_payload(t) for t in today_combined[:5]],
         "overdue": [task_payload(t) for t in overdue[:5]],
         "active": [task_payload(t) for t in active[:12]],
     }

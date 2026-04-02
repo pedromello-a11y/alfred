@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import PlayerStat, Streak, Task
 from app.services import task_manager
+from app.services.active_tasks_view import get_unified_active_view
 from app.services.focus_snapshot import build_focus_snapshot
 from app.services.tomorrow_board import build_tomorrow_board
 
@@ -22,6 +23,7 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 async def dashboard_state(db: AsyncSession = Depends(get_db)) -> dict:
     focus = await build_focus_snapshot(db)
     tomorrow = await build_tomorrow_board(db)
+    unified = await get_unified_active_view(db)
     return {
         "focus": {
             "title": (focus.get("focusTask") or {}).get("title", "nenhuma tarefa ativa"),
@@ -33,20 +35,20 @@ async def dashboard_state(db: AsyncSession = Depends(get_db)) -> dict:
         "focusBoard": {
             "currentBlock": focus.get("currentBlock"),
             "nextBlock": focus.get("nextBlock"),
-            "todayTasks": focus.get("dueToday", []),
+            "todayTasks": (unified.get("todayCombined") or unified.get("top3") or [])[:8],
             "alerts": [],
         },
         "horizonBoard": {
             "tomorrow": tomorrow.get("dueTomorrow", []),
-            "thisWeek": [],
+            "thisWeek": unified.get("upcoming", []),
             "later": tomorrow.get("unscheduled", []),
         },
-        "activeQueue": focus.get("active", []),
+        "activeQueue": unified.get("allActive") or (unified.get("top3", []) + unified.get("rest", [])),
         "operational": {
             "nowLabel": focus.get("nowLabel", ""),
             "suggestion": focus.get("suggestion"),
-            "priorityTask": focus.get("focusTask"),
-            "overdueTasks": focus.get("overdue", []),
+            "priorityTask": (unified.get("top3") or [None])[0] or focus.get("focusTask"),
+            "overdueTasks": unified.get("overdue", []),
         },
         "dumpLibrary": {
             "categories": [],
