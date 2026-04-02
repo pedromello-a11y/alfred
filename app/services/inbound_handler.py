@@ -2,18 +2,41 @@
 
 Todos os routers (webhook, whatsapp, internal_whatsapp) chamam este service.
 """
+import re
+
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Message
 from app.services import runtime_router
+from app.services.active_tasks_view import format_active_tasks_for_whatsapp, get_unified_active_view
 from app.services.focus_snapshot import build_focus_snapshot
+
+
+def _is_active_tasks_question(text: str) -> bool:
+    cleaned = re.sub(r"[?!.,;:]", "", (text or "").strip().lower()).strip()
+    direct_patterns = [
+        "demandas ativas", "demandas ativa", "demanda ativa",
+        "tarefas ativas", "tarefas ativa", "tarefa ativa",
+        "atividades ativas", "atividades ativa", "atividade ativa",
+        "atividades em aberto", "tarefas em aberto", "demandas em aberto",
+        "atividades abertas", "tarefas abertas", "demandas abertas",
+        "o que tenho pra fazer", "o que falta fazer", "o que falta",
+        "que tenho em aberto", "que esta em aberto", "que está em aberto",
+        "todas atividades", "todas as atividades", "todas as tarefas",
+        "todas demandas", "todas as demandas",
+        "me diga minhas demandas", "me diga minhas tarefas",
+        "quais sao minhas", "quais são minhas",
+        "minhas demandas", "minhas tarefas", "minhas atividades",
+        "minha demandas", "minha tarefas",
+    ]
+    return any(pattern in cleaned for pattern in direct_patterns)
 
 
 def _build_operational_tail(snapshot: dict, classification: str) -> str:
     """Adiciona contexto operacional (bloco atual / próximo foco) à resposta."""
-    if classification == "question":
+    if classification in {"question", "command"}:
         return ""
     current_block = snapshot.get("currentBlock") or {}
     suggestion = snapshot.get("suggestion") or {}
@@ -58,9 +81,14 @@ async def process_inbound(
     await db.flush()
 
     try:
-        _item, response_text, classification = await runtime_router.handle(
-            text, origin=origin, db=db
-        )
+        if _is_active_tasks_question(text):
+            response_text = format_active_tasks_for_whatsapp(await get_unified_active_view(db))
+            classification = "command"
+        else:
+            _item, response_text, classification = await runtime_router.handle(
+                text, origin=origin, db=db
+            )
+
         base = (response_text or "Entendi.").strip()
         cls = (classification or "unknown").strip()
 
