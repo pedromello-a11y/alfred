@@ -20,14 +20,14 @@ _TASK_NOUNS = (
 
 _TASK_QUERY_HINTS = (
     "ativas", "ativa", "abertas", "aberta", "em aberto", "pendentes", "pendente",
-    "agora", "hoje", "lista", "listar", "quais", "qual", "me diga", "me fala",
+    "agora", "hoje", "lista", "listar", "quais", "qual", "me diga", "me kafa",
     "o que tenho", "o que falta", "o que preciso", "minhas", "meus", "resta",
     "restando", "sobrou", "sobrando", "prioridade", "prioridades",
-)
+]
 
 
 def _normalize_text(text: str) -> str:
-    return re.sub(r"\\s+", " ", re.sub(r"[^\\w\\s]", " ", (text or "").lower())).strip()
+    return re.sub(r\s+", " ", re.sub(r[^\w\s]", " ", (text or "").lower())).strip()
 
 
 def _is_active_tasks_question(text: str) -> bool:
