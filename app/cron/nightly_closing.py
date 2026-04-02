@@ -78,6 +78,13 @@ async def run() -> None:
 
             await _check_achievements(db, done_today, streak_count, today)
 
+            # Feature 2.6: check daily quest (silent if not completed)
+            from app.services.daily_quest import check_daily_quest, QUEST_XP_BONUS
+            quest_completed, quest_label = await check_daily_quest(db)
+            if quest_completed and quest_label:
+                closing_text += f"\n\n🎯 *Daily Quest completa!* {quest_label}\n+{QUEST_XP_BONUS} XP bônus!"
+                await task_manager.grant_xp("willpower", QUEST_XP_BONUS, db)
+
             await task_manager.reset_proactive_count(db)
             await task_manager.set_setting("ritual_answered", "false", db)
             await task_manager.set_setting("rest_xp_granted_today", "false", db)

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AgendaBlock, DumpItem, Task
-from app.services import agenda_manager, brain, dump_manager, interpreter, message_handler, task_manager
+from app.services import agenda_manager, brain, dump_manager, interpreter, task_manager
 from app.services.time_utils import now_brt, now_brt_naive, to_brt_naive, today_brt
 
 _PRIORITY_MAP = {"high": 1, "medium": 3, "low": 5}
@@ -719,58 +719,62 @@ async def _handle_unknown_without_legacy(raw_text: str, db: AsyncSession):
     return None, None
 
 
+async def _legacy_fallback(raw_text: str, origin: str, db):
+    """Fallback to legacy message_handler. Lazy import avoids circular dependency."""
+    from app.services import message_handler
+    return await message_handler.handle(raw_text, origin=origin, db=db)
+
+
+def _make_item(origin: str, raw_text: str, item_type: str, extracted_title: str):
+    """Creates an InboundItem lazily to avoid circular import at module level."""
+    from app.services.message_handler import InboundItem
+    return InboundItem(item_type=item_type, origin=origin, raw_text=raw_text, extracted_title=extracted_title)
+
+
 async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | None = None):
     if db is None:
-        return await message_handler.handle(raw_text, origin=origin, db=db)
+        return await _legacy_fallback(raw_text, origin, db)
 
     decision = await interpreter.interpret_message(raw_text, db)
     if not decision or decision.get("confidence", 0) < 0.6:
         response, classification = await _handle_unknown_without_legacy(raw_text, db)
         if response:
-            item = message_handler.InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title=classification or "fallback")
-            return item, response, classification or "fallback"
-        return await message_handler.handle(raw_text, origin=origin, db=db)
+            return _make_item(origin, raw_text, "idea", classification or "fallback"), response, classification or "fallback"
+        return await _legacy_fallback(raw_text, origin, db)
 
     intent = decision.get("intent")
     if intent == "new_task":
         task = await _create_task_from_interpretation(decision, origin, db)
-        item = message_handler.InboundItem(item_type="task", origin=origin, raw_text=raw_text, extracted_title=task.title)
-        return item, await _build_new_task_response(task, db), "new_task"
+        return _make_item(origin, raw_text, "task", task.title), await _build_new_task_response(task, db), "new_task"
 
     if intent == "dump":
         dump = await dump_manager.create_dump_item(raw_text, origin, db)
         await _remember_last_action("dump", str(dump.id), db)
-        item = message_handler.InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title=dump.rewritten_title)
-        return item, await _build_dump_response(dump, db), "dump"
+        return _make_item(origin, raw_text, "idea", dump.rewritten_title), await _build_dump_response(dump, db), "dump"
 
     if intent == "agenda_add":
         blocks = await _persist_blocks_from_interpretation(decision, origin, db)
         if blocks:
-            item = message_handler.InboundItem(item_type="update", origin=origin, raw_text=raw_text, extracted_title=blocks[-1].title)
-            return item, _agenda_response(blocks), "agenda_add"
-        return await message_handler.handle(raw_text, origin=origin, db=db)
+            return _make_item(origin, raw_text, "update", blocks[-1].title), _agenda_response(blocks), "agenda_add"
+        return await _legacy_fallback(raw_text, origin, db)
 
     if intent == "task_update":
         task = await _update_task_from_interpretation(decision, db)
         if task:
-            item = message_handler.InboundItem(item_type="update", origin=origin, raw_text=raw_text, extracted_title=task.title)
-            return item, await _build_task_update_response(task, db), "task_update"
-        return await message_handler.handle(raw_text, origin=origin, db=db)
+            return _make_item(origin, raw_text, "update", task.title), await _build_task_update_response(task, db), "task_update"
+        return await _legacy_fallback(raw_text, origin, db)
 
     if intent == "correction":
         obj, response = await _apply_correction(decision, origin, db)
-        item = message_handler.InboundItem(item_type="update", origin=origin, raw_text=raw_text, extracted_title=decision.get("correction_new_type") or "correction")
-        return item, response, "correction"
+        return _make_item(origin, raw_text, "update", decision.get("correction_new_type") or "correction"), response, "correction"
 
     if intent == "system_feedback":
         response = await _store_system_feedback(decision, db)
-        item = message_handler.InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title="system_feedback")
-        return item, response, "system_feedback"
+        return _make_item(origin, raw_text, "idea", "system_feedback"), response, "system_feedback"
 
     if intent == "context_note":
         response = await _store_context_note(decision, db)
-        item = message_handler.InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title="context_note")
-        return item, response, "context_note"
+        return _make_item(origin, raw_text, "idea", "context_note"), response, "context_note"
 
     if intent == "question":
         if _looks_like_agenda_question(raw_text):
@@ -784,19 +788,16 @@ async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | Non
         else:
             context = await _build_question_context(db)
             response = await brain.answer_question(raw_text, context, db=db)
-        item = message_handler.InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title="question")
-        return item, response, "question"
+        return _make_item(origin, raw_text, "idea", "question"), response, "question"
 
     if intent == "chat":
         response = await brain.casual_response(raw_text, db=db)
-        item = message_handler.InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title="chat")
-        return item, response, "chat"
+        return _make_item(origin, raw_text, "idea", "chat"), response, "chat"
 
     if intent == "unknown":
         response, classification = await _handle_unknown_without_legacy(raw_text, db)
         if response:
-            item = message_handler.InboundItem(item_type="idea", origin=origin, raw_text=raw_text, extracted_title=classification or "unknown")
-            return item, response, classification or "unknown"
-        return await message_handler.handle(raw_text, origin=origin, db=db)
+            return _make_item(origin, raw_text, "idea", classification or "unknown"), response, classification or "unknown"
+        return await _legacy_fallback(raw_text, origin, db)
 
-    return await message_handler.handle(raw_text, origin=origin, db=db)
+    return await _legacy_fallback(raw_text, origin, db)

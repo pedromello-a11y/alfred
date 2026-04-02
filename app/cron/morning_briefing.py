@@ -1,5 +1,5 @@
 """Morning briefing — preview, briefing completo e nudges."""
-from datetime import date
+from datetime import datetime, timezone
 
 from loguru import logger
 from sqlalchemy import select
@@ -47,6 +47,23 @@ async def run_full() -> None:
                     "daily_victory_task_id", str(victory.id), db
                 )
             await task_manager.set_setting("awaiting_ritual_response", "true", db)
+
+            # Bug 1.2: increment times_planned and detect boss fights
+            for t in top:
+                t.times_planned = (t.times_planned or 0) + 1
+                t.last_planned = today
+                if t.times_planned >= 3 and not t.is_boss_fight:
+                    t.is_boss_fight = True
+                    logger.info("Boss fight detected: {} (planned {} times)", t.title, t.times_planned)
+            await db.flush()
+
+            # Feature 2.6: generate daily quest
+            from app.services.daily_quest import generate_daily_quest
+            await generate_daily_quest(db)
+            await task_manager.set_setting(
+                "briefing_sent_at", datetime.now(timezone.utc).isoformat(), db
+            )
+            await task_manager.set_setting("tasks_postponed_today", "0", db)
 
             prompt_lines = [
                 "Gere o briefing do dia para o Pedro em WhatsApp.",

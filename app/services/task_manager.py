@@ -354,12 +354,64 @@ async def search_tasks_by_keywords(keywords: list[str], db: AsyncSession, open_o
     return result.scalars().all()
 
 
+async def start_task_timer(task_id: str, db: AsyncSession) -> None:
+    """Starts invisible timer when task enters in_progress."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await set_setting(f"task_{task_id}_started_at", now_iso, db)
+    await set_setting("active_task_id", str(task_id), db)
+    await set_setting("active_task_started_at", now_iso, db)
+
+
+async def stop_task_timer(task_id: str, db: AsyncSession) -> int | None:
+    """Stops timer and returns elapsed minutes. Returns None if no timer was active."""
+    started_at_str = await get_setting(f"task_{task_id}_started_at", db=db)
+    if not started_at_str:
+        return None
+    try:
+        started_at = datetime.fromisoformat(started_at_str)
+        now = datetime.now(timezone.utc)
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        elapsed = int((now - started_at).total_seconds() / 60)
+        await set_setting(f"task_{task_id}_started_at", "", db)
+        active = await get_setting("active_task_id", db=db)
+        if active == str(task_id):
+            await set_setting("active_task_id", "", db)
+            await set_setting("active_task_started_at", "", db)
+        return elapsed if elapsed > 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
+async def get_active_task_elapsed_minutes(db: AsyncSession) -> tuple[str | None, int]:
+    """Returns (task_id, elapsed_minutes) for active task. (None, 0) if none."""
+    task_id = await get_setting("active_task_id", db=db)
+    started_str = await get_setting("active_task_started_at", db=db)
+    if not task_id or not started_str:
+        return None, 0
+    try:
+        started = datetime.fromisoformat(started_str)
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        elapsed = int((datetime.now(timezone.utc) - started).total_seconds() / 60)
+        return task_id, elapsed
+    except (ValueError, TypeError):
+        return None, 0
+
+
 async def update_task_status(task: Task, new_status: str, db: AsyncSession, note: str | None = None, category: str | None = None) -> Task:
+    old_status = task.status
     task.status = new_status
     if category:
         task.category = category
     if new_status == "done":
         task.completed_at = datetime.now(timezone.utc)
+        elapsed = await stop_task_timer(str(task.id), db)
+        if elapsed is not None:
+            task.actual_minutes = elapsed
+    elif new_status == "in_progress" and old_status != "in_progress":
+        task.completed_at = None
+        await start_task_timer(str(task.id), db)
     elif new_status in _OPEN_STATUSES:
         task.completed_at = None
     if note:
@@ -368,7 +420,7 @@ async def update_task_status(task: Task, new_status: str, db: AsyncSession, note
         task.notes = f"{task.notes}\n{extra}" if task.notes else extra
     await db.commit()
     await db.refresh(task)
-    logger.info("Task status updated: {} -> {}", task.title, new_status)
+    logger.info("Task status updated: {} -> {} (actual_minutes={})", task.title, new_status, task.actual_minutes)
     return task
 
 
@@ -398,8 +450,19 @@ async def mark_done(title_fragment: str, db: AsyncSession) -> tuple[Task | None,
 
     task.status = "done"
     task.completed_at = datetime.now(timezone.utc)
+    elapsed = await stop_task_timer(str(task.id), db)
+    if elapsed is not None:
+        task.actual_minutes = elapsed
     await db.commit()
     logger.info("Task done: {} (id={})", task.title, task.id)
+
+    if task.origin == "jira" and task.origin_ref:
+        try:
+            from app.services.jira_client import transition_issue
+            await transition_issue(task.origin_ref, "Done")
+            logger.info("Jira issue {} transitioned to Done", task.origin_ref)
+        except Exception as exc:
+            logger.warning("Failed to transition Jira issue {}: {}", task.origin_ref, exc)
 
     base_xp = calculate_points(task)
     xp_boost = await get_setting("active_loot_xp_boost", "false", db=db)
@@ -484,6 +547,26 @@ def get_attribute(task: Task) -> str:
     return "strategy"
 
 
+def calculate_level(total_xp: int) -> int:
+    """Level based on exponential XP progression: level N requires N*100 XP."""
+    level = 1
+    xp_needed = 100
+    remaining = total_xp
+    while remaining >= xp_needed:
+        remaining -= xp_needed
+        level += 1
+        xp_needed = level * 100
+    return level
+
+
+def xp_progress_in_level(total_xp: int, level: int) -> tuple[int, int]:
+    """Returns (xp_current_in_level, xp_needed_for_next)."""
+    spent = sum(i * 100 for i in range(1, level))
+    current_in_level = total_xp - spent
+    needed = level * 100
+    return current_in_level, needed
+
+
 async def grant_xp(attribute: str, xp_amount: int, db: AsyncSession) -> PlayerStat:
     result = await db.execute(select(PlayerStat).where(PlayerStat.attribute == attribute))
     stat = result.scalar_one_or_none()
@@ -498,7 +581,7 @@ async def grant_xp(attribute: str, xp_amount: int, db: AsyncSession) -> PlayerSt
 
     final_xp = int(xp_amount * prestige_mult * day_off_mult)
     stat.xp += final_xp
-    stat.level = max(1, stat.xp // 100)
+    stat.level = calculate_level(stat.xp)
     await db.commit()
     logger.info("XP granted: {} +{} XP (prestige x{:.1f}, day_off x{:.1f}) → total {} (nível {})", attribute, final_xp, prestige_mult, day_off_mult, stat.xp, stat.level)
     return stat

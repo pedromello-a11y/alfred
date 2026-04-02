@@ -32,6 +32,8 @@ _ITEM_TYPE_MAP = {
     "chat": "idea",
 }
 
+_RESET_PATTERNS = re.compile(r"(?i)(zere os dados|reset sistema|limpar tudo|apagar todas as tarefas)")
+
 _UNSTUCK_PATTERNS = re.compile(
     r"(?i)(tô travado|to travado|travei|tô bloqueado|to bloqueado|bloqueado|não consigo|nao consigo|"
     r"tá difícil|ta difícil|não tô conseguindo|nao to conseguindo)"
@@ -93,6 +95,18 @@ async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | Non
 
     if db is not None:
         await task_manager.set_setting("ritual_answered", "true", db)
+
+    # Bug 1.4: reset command
+    if db is not None and _RESET_PATTERNS.search(raw_stripped):
+        from sqlalchemy import select as _select
+        from app.models import Task as _Task
+        result = await db.execute(_select(_Task).where(_Task.status.in_(("pending", "in_progress"))))
+        tasks_to_reset = list(result.scalars().all())
+        for t in tasks_to_reset:
+            t.status = "cancelled"
+        await db.commit()
+        item = InboundItem(item_type="update", origin=origin, raw_text=raw_text, extracted_title="reset")
+        return item, f"Pronto. {len(tasks_to_reset)} tarefas foram canceladas. Tela limpa.", "command"
 
     rename_match = _RENAME_HINTS.match(raw_stripped)
     if db is not None and rename_match:
@@ -486,7 +500,13 @@ async def _handle_active_tasks(db: AsyncSession) -> str:
 
 
 async def _build_jira_active_lines(db: AsyncSession) -> list[str]:
-    return []
+    try:
+        from app.services.jira_client import _is_configured, build_active_lines
+        if not _is_configured():
+            return []
+        return await build_active_lines(db)
+    except Exception:
+        return []
 
 
 async def _extract_status_updates(raw_text: str, db: AsyncSession) -> list[dict]:
