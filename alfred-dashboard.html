@@ -94,7 +94,7 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 0 40px;
+  padding: 0 60px;
   position: relative;
   min-width: 0;
 }
@@ -109,33 +109,34 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 }
 
 .focus-task-name {
-  font-size: clamp(28px, 4.5vw, 56px);
+  font-size: clamp(32px, 5vw, 60px);
   font-weight: 700;
   letter-spacing: -0.03em;
   color: #e8e8ed;
   text-align: center;
-  max-width: 600px;
-  line-height: 1.1;
+  max-width: 650px;
+  line-height: 1.05;
   word-wrap: break-word;
+  margin: 20px 0;
 }
 
 .focus-project-label {
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.15em;
   text-transform: uppercase;
   color: #555568;
   font-family: 'JetBrains Mono', monospace;
-  margin-bottom: 12px;
+  margin-bottom: 4px;
 }
 
 .focus-actions-bar {
-  margin-top: 24px;
+  margin-top: 32px;
   display: flex;
   gap: 8px;
-  opacity: 0.35;
+  opacity: 0.3;
   transition: opacity 0.3s;
 }
-.focus-actions-bar:hover { opacity: 0.95; }
+.focus-actions-bar:hover { opacity: 0.9; }
 .focus-actions-bar button {
   background: transparent;
   border: 1px solid #ffffff08;
@@ -429,20 +430,20 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 
         <!-- Centered content -->
         <div class="focus-center">
-          <div id="focus-urgent-dot" style="display:none;margin-bottom:12px;">
+          <div id="focus-urgent-dot" style="display:none;margin-bottom:16px;">
             <span style="display:inline-block;width:10px;height:10px;background:#f87171;border-radius:50%;animation:pulse-dot 1.5s ease-in-out infinite;vertical-align:middle;"></span>
             <span style="font-size:11px;color:#f87171;font-family:monospace;margin-left:6px;letter-spacing:0.08em;">ENTREGA URGENTE</span>
           </div>
 
-          <div id="focus-project" style="font-size:12px;font-weight:600;letter-spacing:0.15em;text-transform:uppercase;color:#555568;font-family:monospace;margin-bottom:8px;"></div>
+          <div id="focus-project" class="focus-project-label"></div>
 
-          <div id="focus-task" style="font-size:clamp(28px,4.5vw,56px);font-weight:700;letter-spacing:-0.03em;color:#e8e8ed;line-height:1.1;text-align:center;max-width:600px;"></div>
+          <div id="focus-task" class="focus-task-name"></div>
 
-          <div id="focus-progress" style="margin-top:16px;opacity:0.6;">
+          <div id="focus-progress" style="margin-top:12px;opacity:0.5;">
             <div class="focus-progress-bar"><div class="focus-progress-fill" id="focus-progress-fill" style="width:0%"></div></div>
           </div>
 
-          <div id="focus-actions" style="margin-top:24px;display:flex;gap:8px;align-items:center;opacity:0.4;transition:opacity 0.2s;position:relative;">
+          <div id="focus-actions" style="margin-top:32px;display:flex;gap:8px;align-items:center;opacity:0.3;transition:opacity 0.2s;position:relative;" onmouseenter="this.style.opacity='0.9'" onmouseleave="this.style.opacity='0.3'">
             <button onclick="completeCurrentTask()" style="background:transparent;color:#4ade80;border:1px solid #4ade8020;padding:6px 14px;border-radius:5px;cursor:pointer;font-size:12px;font-family:monospace;">✓ entregar</button>
             <button onclick="togglePauseMenu()" style="background:transparent;color:#8888a0;border:1px solid #ffffff08;padding:6px 14px;border-radius:5px;cursor:pointer;font-size:12px;font-family:monospace;">☕ pausa ▾</button>
             <button onclick="enterTunnel()" style="background:transparent;color:#8888a0;border:1px solid #ffffff08;padding:6px 14px;border-radius:5px;cursor:pointer;font-size:12px;font-family:monospace;">◼ túnel</button>
@@ -453,7 +454,7 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
             </div>
           </div>
 
-          <div id="focus-deadline-info" style="margin-top:12px;font-size:12px;color:#555568;font-family:monospace;"></div>
+          <div id="focus-deadline-info" style="margin-top:16px;font-size:12px;color:#555568;font-family:monospace;"></div>
         </div>
 
       </div><!-- /focus-main -->
@@ -894,7 +895,7 @@ function renderFocus(focus, next) {
     urgentDot.style.display = 'none';
     projectEl.textContent = '';
     taskEl.textContent = 'tudo limpo por agora ✨';
-    taskEl.style.fontSize = '28px';
+    taskEl.style.fontSize = 'clamp(24px, 3vw, 36px)';
     taskEl.style.color = '#555568';
     if (actionsEl) actionsEl.style.display = 'none';
     if (progressEl) progressEl.style.display = 'none';
@@ -905,7 +906,7 @@ function renderFocus(focus, next) {
   projectEl.textContent = focus.project || '';
   taskEl.textContent = focus.taskName || '';
   taskEl.style.fontSize = '';
-  taskEl.style.color = '#e8e8ed';
+  taskEl.style.color = '';
 
   if (focus.status === 'urgent') {
     urgentDot.style.display = 'block';
