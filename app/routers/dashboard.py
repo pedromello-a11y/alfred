@@ -670,26 +670,21 @@ async def confirm_smart_task(body: dict, db: AsyncSession = Depends(get_db)) -> 
 async def get_personal_items(db: AsyncSession = Depends(get_db)) -> dict:
     result = await db.execute(
         select(Task)
-        .where(Task.status.in_(("pending", "in_progress")))
         .where(Task.category.like("personal%"))
-        .order_by(Task.priority.asc().nulls_last(), Task.created_at.asc())
+        .order_by(Task.created_at.desc())
     )
     tasks = result.scalars().all()
-    grouped: dict[str, list] = {}
-    for task in tasks:
-        cat = task.category or "personal"
-        label = cat.replace("personal_", "").replace("_", " ").title() if "_" in cat else "Geral"
-        grouped.setdefault(label, [])
-        checklist = getattr(task, "checklist_json", None) or []
-        grouped[label].append({
-            "id": str(task.id),
-            "title": task.title,
-            "deadline": task.deadline.isoformat() if task.deadline else None,
-            "deadlineHuman": _humanize_deadline(task.deadline),
-            "checklistTotal": len(checklist),
-            "checklistDone": sum(1 for i in checklist if i.get("done")),
+    items = []
+    for t in tasks:
+        items.append({
+            "id": str(t.id),
+            "title": t.title or "",
+            "text": t.title or "",
+            "category": t.category or "personal_ideias",
+            "status": t.status or "pending",
+            "deadline": t.deadline.isoformat() if t.deadline else None,
         })
-    return {"categories": [{"name": k, "items": v} for k, v in grouped.items()]}
+    return {"items": items}
 
 
 @router.post("/personal")
@@ -709,6 +704,29 @@ async def create_personal_item(body: dict, db: AsyncSession = Depends(get_db)) -
     await db.commit()
     await db.refresh(new_task)
     return {"status": "ok", "id": str(new_task.id)}
+
+
+@router.post("/personal/{item_id}/toggle")
+async def toggle_personal_item(item_id: str, body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    result = await db.execute(select(Task).where(Task.id == item_id))
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"error": "not found"}
+    done = body.get("done", False)
+    task.status = "done" if done else "pending"
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/personal/{item_id}/delete")
+async def delete_personal_item(item_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    result = await db.execute(select(Task).where(Task.id == item_id))
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"error": "not found"}
+    await db.delete(task)
+    await db.commit()
+    return {"ok": True}
 
 
 @router.post("/dump")
@@ -914,3 +932,66 @@ async def sync_gcal(db: AsyncSession = Depends(get_db)) -> dict:
         return {"status": "error", "message": "gcal not configured", "deleted_junk": len(junk_to_delete)}
     synced = await gcal_client.sync_to_agenda_blocks(db)
     return {"status": "ok", "synced": synced, "deleted_junk": len(junk_to_delete)}
+
+
+@router.get("/night-summary")
+async def night_summary(db: AsyncSession = Depends(get_db)) -> dict:
+    from app.services.time_utils import now_brt
+    from datetime import timedelta, date, time
+
+    agora = now_brt()
+    hoje = agora.date()
+
+    # Tasks concluídas hoje
+    result = await db.execute(
+        select(Task).where(Task.status.in_(["done", "completed"]))
+    )
+    all_done = result.scalars().all()
+    done_today = []
+    for t in all_done:
+        updated = getattr(t, 'updated_at', None)
+        if updated:
+            try:
+                up_date = updated.date() if callable(getattr(updated, 'date', None)) else updated
+                if up_date == hoje:
+                    done_today.append(t)
+            except:
+                pass
+
+    # Tasks pendentes
+    result2 = await db.execute(
+        select(Task).where(
+            Task.status.in_(["pending", "in_progress", "active"]) & (Task.category != "personal")
+        )
+    )
+    pendentes = result2.scalars().all()
+
+    # Amanhã
+    amanha = hoje + timedelta(days=1)
+    if amanha.weekday() >= 5:
+        amanha = amanha + timedelta(days=(7 - amanha.weekday()))
+
+    amanha_tasks = []
+    for t in pendentes:
+        dl = getattr(t, 'deadline', None)
+        if dl:
+            try:
+                dl_date = dl.date() if callable(getattr(dl, 'date', None)) else dl
+                if dl_date <= amanha:
+                    project = getattr(t, 'project', '') or ''
+                    title = getattr(t, 'title', '') or ''
+                    name = f"{project} | {title}" if project else title
+                    amanha_tasks.append(name)
+            except:
+                pass
+
+    summary = f"✅ {len(done_today)} task{'s' if len(done_today) != 1 else ''} concluída{'s' if len(done_today) != 1 else ''} hoje<br>"
+    summary += f"⏳ {len(pendentes)} pendente{'s' if len(pendentes) != 1 else ''}"
+
+    tomorrow = ""
+    if amanha_tasks:
+        tomorrow = "📋 amanhã:<br>" + "<br>".join(["• " + n for n in amanha_tasks[:5]])
+    else:
+        tomorrow = "✨ nada urgente amanhã"
+
+    return {"summary": summary, "tomorrow": tomorrow}
