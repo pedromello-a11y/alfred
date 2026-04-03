@@ -1442,40 +1442,8 @@ function closeEverything() {
   var pmenu = document.getElementById('pause-menu'); if (pmenu) pmenu.style.display = 'none';
 }
 
-// ── Personal view ──────────────────────────────────────
-async function loadPersonal() {
-  var data = await apiGet('/dashboard/personal');
-  if (!data) return;
-  var el = document.getElementById('personal-categories');
-  el.innerHTML = '';
-  var cats = data.categories || [];
-  if (!cats.length) {
-    el.innerHTML = '<div class="personal-empty">nenhum item pessoal</div>';
-    return;
-  }
-  cats.forEach(function(cat) {
-    var div = document.createElement('div');
-    div.className = 'personal-category';
-    div.innerHTML = '<div class="cat-header">' + esc(cat.name||'Geral') + '</div>';
-    (cat.items||[]).forEach(function(item) {
-      var row = document.createElement('div');
-      row.className = 'personal-item';
-      row.innerHTML = '<input type="checkbox" ' + (item.status==='done'?'checked':'') + '> ' + esc(item.title||'') +
-        (item.deadlineHuman ? '<span class="personal-deadline">' + esc(item.deadlineHuman) + '</span>' : '');
-      div.appendChild(row);
-    });
-    el.appendChild(div);
-  });
-}
-
-function openNewPersonalItem() {
-  var text = prompt('Nova demanda pessoal:');
-  if (!text) return;
-  var cat = prompt('Categoria (ex: saude, casa, admin, lazer, ideia):', 'geral');
-  apiPost('/dashboard/personal', {text: text.trim(), category: (cat||'geral').trim()}).then(function(r) {
-    if (r && r.status === 'ok') loadPersonal();
-  });
-}
+// ── Personal view (old) ────────────────────────────────
+// REMOVED: duplicated by new functions below
 
 // ── Dumps view ─────────────────────────────────────────
 async function loadDumps() {
