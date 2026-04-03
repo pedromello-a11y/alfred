@@ -1500,7 +1500,7 @@ async def jira_list_issues(db: AsyncSession = Depends(get_db)) -> dict:
     linked_keys = {row[0] for row in linked_result.all()}
 
     jql = "assignee = currentUser() AND status != Done ORDER BY duedate ASC"
-    url = f"{settings.jira_base_url.rstrip('/')}/rest/api/3/search"
+    url = f"{settings.jira_base_url.rstrip('/')}/rest/api/2/search"
     params = {
         "jql": jql,
         "maxResults": 50,
@@ -1537,7 +1537,7 @@ async def jira_link_task(payload: JiraLinkPayload, db: AsyncSession = Depends(ge
     if not task:
         return {"status": "error", "message": "task not found"}
 
-    url = f"{settings.jira_base_url.rstrip('/')}/rest/api/3/issue/{payload.jira_key}"
+    url = f"{settings.jira_base_url.rstrip('/')}/rest/api/2/issue/{payload.jira_key}"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(url, headers=_jira_auth_headers())
@@ -1599,7 +1599,7 @@ async def jira_import_issues(payload: JiraImportPayload, db: AsyncSession = Depe
 
     imported_tasks = []
     for key in payload.keys:
-        url = f"{settings.jira_base_url.rstrip('/')}/rest/api/3/issue/{key}"
+        url = f"{settings.jira_base_url.rstrip('/')}/rest/api/2/issue/{key}"
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(
