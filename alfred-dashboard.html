@@ -287,6 +287,9 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
       <div class="focus-next" id="focus-next"></div>
     </div>
 
+    <!-- Risk alert bar (hidden by default) -->
+    <div class="risk-alert" id="risk-alert-bar" style="display:none"></div>
+
     <!-- Middle zone -->
     <div class="middle-zone">
 
@@ -297,6 +300,11 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
           <span class="agenda-week-label" id="agenda-week-label">carregando...</span>
           <button class="agenda-nav-btn" onclick="changeWeek(1)">próxima →</button>
           <button class="agenda-nav-btn" onclick="changeWeek(0)">hoje</button>
+          <span style="margin-left:8px;display:flex;gap:10px;align-items:center;font-size:10px;color:var(--t-dim);font-family:'JetBrains Mono',monospace">
+            <span><span style="display:inline-block;width:8px;height:8px;border-radius:1px;background:var(--purple-bg);border-left:2px solid var(--purple);margin-right:3px"></span>gcal</span>
+            <span><span style="display:inline-block;width:8px;height:8px;border-radius:1px;background:var(--green-bg);border-left:2px solid var(--green);margin-right:3px"></span>alfred</span>
+            <span><span style="display:inline-block;width:8px;height:8px;border-radius:1px;background:var(--red-bg);border-left:2px solid var(--red);margin-right:3px"></span>prazo</span>
+          </span>
         </div>
         <div class="cal-container" id="cal-container">
           <div class="cal-day-header-row" id="cal-day-headers"></div>
@@ -867,7 +875,14 @@ function renderProjects(projects) {
 
 // ── Render: Risk alert ─────────────────────────────────
 function renderRiskAlert(alert) {
-  // Not rendering — placeholder for future use
+  var el = document.getElementById('risk-alert-bar');
+  if (!el) return;
+  if (!alert || alert.deficit <= 0) { el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+  el.innerHTML =
+    '⚠️ <strong>Déficit de ' + alert.deficit + 'h esta semana</strong> &nbsp;—&nbsp; ' +
+    'precisas de ' + alert.totalHoursNeeded + 'h, tens ' + alert.totalHoursAvailable + 'h livres. ' +
+    '<span style="color:var(--t-muted);margin-left:4px">' + esc(alert.suggestion||'') + '</span>';
 }
 
 // ── Active panel ───────────────────────────────────────

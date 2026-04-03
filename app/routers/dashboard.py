@@ -15,6 +15,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import AgendaBlock, DumpItem, PlayerStat, Streak, Task
 from app.services import task_manager
+from app.services.block_engine import build_suggested_blocks, find_next_block_for_task
 from app.services.focus_snapshot import build_focus_snapshot
 from app.services.task_manager import calculate_level, xp_progress_in_level
 from app.services.text_utils import sanitize_json_strings
@@ -281,13 +282,21 @@ async def _build_agenda_payload(db: AsyncSession, week_offset: int = 0) -> dict:
 
     deadlines = await _build_agenda_deadlines(db, monday, friday)
 
+    # Motor de blocos sugeridos (apenas semana atual; navegar pra semanas futuras
+    # ainda exibe sugestões mas sem "agora" como referência de corte)
+    try:
+        suggested, risk_alert = await build_suggested_blocks(db, monday, friday)
+    except Exception:
+        suggested, risk_alert = [], None
+
     return {
         "days": [{"day": d, "events": events} for d, events in days.items()],
-        "suggestedBlocks": [],
+        "suggestedBlocks": suggested,
         "pauses": [],
         "deadlines": deadlines,
         "weekStart": monday.isoformat(),
         "weekEnd": friday.isoformat(),
+        "_riskAlert": risk_alert,  # passado para cima pelo /state
     }
 
 
@@ -430,6 +439,14 @@ async def dashboard_state(db: AsyncSession = Depends(get_db), week_offset: int =
     agenda_data = await _build_agenda_payload(db, week_offset)
     projects = await _get_project_names(db)
 
+    # Preenche startTime do nextTask com o próximo bloco sugerido
+    suggested = agenda_data.get("suggestedBlocks", [])
+    if next_task and suggested:
+        next_task["startTime"] = find_next_block_for_task(suggested, next_task["taskId"])
+
+    # Extrai riskAlert que veio embutido no agenda_data
+    risk_alert = agenda_data.pop("_riskAlert", None)
+
     state = {
         "focus": focus,
         "nextTask": next_task,
@@ -437,8 +454,7 @@ async def dashboard_state(db: AsyncSession = Depends(get_db), week_offset: int =
         "activeQueue": active_queue,
         "agenda": agenda_data,
         "projects": projects,
-        "riskAlert": None,
-        # Backward compat fields for old HTML (can be removed after v3 HTML is deployed)
+        "riskAlert": risk_alert,
         "xp": await _build_xp_payload(db),
         "dumpLibrary": await _build_dump_library(db),
     }
