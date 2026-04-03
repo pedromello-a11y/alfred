@@ -942,27 +942,27 @@ async def night_summary(db: AsyncSession = Depends(get_db)) -> dict:
     agora = now_brt()
     hoje = agora.date()
 
-    # Tasks concluídas hoje
+    # Tasks concluídas hoje — usa completed_at (campo existente no modelo)
     result = await db.execute(
         select(Task).where(Task.status.in_(["done", "completed"]))
     )
     all_done = result.scalars().all()
     done_today = []
     for t in all_done:
-        updated = getattr(t, 'updated_at', None)
-        if updated:
+        completed = t.completed_at
+        if completed:
             try:
-                up_date = updated.date() if callable(getattr(updated, 'date', None)) else updated
+                up_date = completed.date() if hasattr(completed, 'date') else completed
                 if up_date == hoje:
                     done_today.append(t)
-            except:
+            except Exception:
                 pass
 
-    # Tasks pendentes
+    # Tasks pendentes — dois .where() separados (& bitwise não funciona em SQLAlchemy)
     result2 = await db.execute(
-        select(Task).where(
-            Task.status.in_(["pending", "in_progress", "active"]) & (Task.category != "personal")
-        )
+        select(Task)
+        .where(Task.status.in_(["pending", "in_progress", "active"]))
+        .where(Task.category.not_like("personal%"))
     )
     pendentes = result2.scalars().all()
 
@@ -973,16 +973,20 @@ async def night_summary(db: AsyncSession = Depends(get_db)) -> dict:
 
     amanha_tasks = []
     for t in pendentes:
-        dl = getattr(t, 'deadline', None)
+        dl = t.deadline
         if dl:
             try:
-                dl_date = dl.date() if callable(getattr(dl, 'date', None)) else dl
+                dl_date = dl.date() if hasattr(dl, 'date') else dl
                 if dl_date <= amanha:
-                    project = getattr(t, 'project', '') or ''
-                    title = getattr(t, 'title', '') or ''
-                    name = f"{project} | {title}" if project else title
+                    # project não existe no modelo — extrai do título "PROJ | task"
+                    title = t.title or ''
+                    if ' | ' in title:
+                        parts = title.split(' | ', 1)
+                        name = f"{parts[0]} | {parts[1]}"
+                    else:
+                        name = title
                     amanha_tasks.append(name)
-            except:
+            except Exception:
                 pass
 
     summary = f"✅ {len(done_today)} task{'s' if len(done_today) != 1 else ''} concluída{'s' if len(done_today) != 1 else ''} hoje<br>"
