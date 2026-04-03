@@ -30,9 +30,16 @@ class Settings(BaseSettings):
     wa_bridge_shared_secret: str = ""
     wa_gateway_url: str = ""
 
+    # Chat ID permitido para processar mensagens (ex: "120363XXXXXXXXXX@g.us" para grupo,
+    # ou "5521999999999@s.whatsapp.net" para DM). Se vazio, todas as mensagens são processadas.
+    allowed_chat_id: str = ""
+
     # Whapi: chat_id permitido para mensagens from_me de grupos (ex: "5521999999999-1234567890@g.us")
     # Se vazio, mensagens from_me de grupos são rejeitadas pelo webhook Whapi.
     alfred_whapi_chat_id: str = ""
+
+    # Chave de admin para endpoints destrutivos (ex: POST /admin/dumps/clear-all)
+    admin_secret_key: str = ""
 
     # Modelos Claude
     model_fast: str = "claude-haiku-4-5-20251001"

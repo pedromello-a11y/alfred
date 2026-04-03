@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 
 from app.cron.scheduler import scheduler, setup_jobs
 from app.database import init_db
+from app.routers.admin import router as admin_router
 from app.routers.auth_google import router as auth_google_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.health import router as health_router
@@ -45,6 +46,7 @@ app.include_router(internal_whatsapp_router)
 app.include_router(whatsapp_router)
 app.include_router(dashboard_router)
 app.include_router(auth_google_router)
+app.include_router(admin_router)
 
 
 @app.get("/")
