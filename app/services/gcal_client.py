@@ -9,6 +9,7 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services.text_utils import fix_likely_mojibake
 from app.services.time_utils import today_brt, to_brt_naive
 
 _GCAL_API = "https://www.googleapis.com/calendar/v3"
@@ -92,10 +93,10 @@ def _parse_event(event: dict) -> dict:
 
     return {
         "id": event.get("id", ""),
-        "title": event.get("summary", "(sem título)"),
+        "title": fix_likely_mojibake(event.get("summary", "(sem título)")),
         "start": _parse_dt(start_raw),
         "end": _parse_dt(end_raw),
-        "description": event.get("description", ""),
+        "description": fix_likely_mojibake(event.get("description", "")),
     }
 
 
