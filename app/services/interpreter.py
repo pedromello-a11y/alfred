@@ -149,6 +149,7 @@ def _sanitize(data: dict[str, Any], raw_text: str) -> dict[str, Any] | None:
         "correction_new_type": (data.get("correction_new_type") or "").strip(),
         "time_blocks": blocks,
         "note": (data.get("note") or "").strip(),
+        "deadline_type": (data.get("deadline_type") or "soft").strip() or "soft",
         "raw_text": raw_text,
     }
 
@@ -191,6 +192,7 @@ Regras obrigatórias:
 - Em correction, preencha correction_new_type com dump, task, agenda_block ou note.
 - Use deadline_iso e time_blocks.start_at/end_at em ISO 8601 completo no timezone America/Sao_Paulo.
 - Se não tiver confiança, use intent=unknown e confidence baixo.
+- Quando a intenção for new_task, infira "deadline_type": "hard" se a mensagem mencionar cliente, entrega, apresentação ou reunião com data; caso contrário use "soft".
 
 Contexto atual:
 {ctx}
@@ -212,7 +214,8 @@ Schema:
   "time_blocks": [
     {{"title": "", "start_at": "", "end_at": "", "block_type": "focus|meeting|break|personal|admin"}}
   ],
-  "note": ""
+  "note": "",
+  "deadline_type": "soft|hard"
 }}
 """.strip()
 

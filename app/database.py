@@ -56,6 +56,16 @@ async def _migrate_v3_columns() -> None:
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS checklist_json JSONB DEFAULT '[]'::jsonb",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS notes_json JSONB DEFAULT '[]'::jsonb",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deadline_type VARCHAR(10) DEFAULT 'soft'",
+        """
+        CREATE TABLE IF NOT EXISTS work_days (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            date DATE NOT NULL UNIQUE,
+            started_at TIMESTAMPTZ,
+            ended_at TIMESTAMPTZ,
+            summary_json JSONB DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
     ]
     try:
         async with engine.begin() as conn:

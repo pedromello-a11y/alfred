@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 
 from app.cron.scheduler import scheduler, setup_jobs
 from app.database import init_db
+from app.services.alert_scheduler import start_scheduler
 from app.routers.admin import router as admin_router
 from app.routers.auth_google import router as auth_google_router
 from app.routers.dashboard import router as dashboard_router
@@ -22,6 +23,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     setup_jobs()
     scheduler.start()
+    start_scheduler()
     # Sync GCal on startup so calendar is populated immediately
     try:
         from app.cron.gcal_sync import run as gcal_sync_run

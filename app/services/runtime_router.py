@@ -7,8 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AgendaBlock, DumpItem, Task
+from app.models_work_day import WorkDay
 from app.services import agenda_manager, brain, dump_manager, interpreter, task_manager
 from app.services.time_utils import now_brt, now_brt_naive, to_brt_naive, today_brt
+from app.services.daily_briefing import generate_morning_briefing, generate_evening_summary
 
 _PRIORITY_MAP = {"high": 1, "medium": 3, "low": 5}
 _AGENDA_QUESTION_HINTS = (
@@ -459,6 +461,7 @@ async def _create_task_from_interpretation(decision: dict[str, Any], origin: str
         deadline=deadline,
         category=decision.get("category") or "work",
         effort_type="project",
+        deadline_type=decision.get("deadline_type") or "soft",
     )
     db.add(task)
     await db.commit()
@@ -862,9 +865,84 @@ def _make_item(origin: str, raw_text: str, item_type: str, extracted_title: str)
     return InboundItem(item_type=item_type, origin=origin, raw_text=raw_text, extracted_title=extracted_title)
 
 
+_BOM_DIA_TRIGGERS = ("bom dia", "bdia", "começando", "comecando", "start", "inicio", "início")
+_FIM_TRIGGERS = ("vou parar", "acabou", "fim do dia", "boa noite", "fui", "encerrar", "stop", "parando")
+
+
+async def _check_day_commands(text: str, db: AsyncSession) -> str | None:
+    """Checa se é comando de bom dia / vou parar. Retorna resposta ou None."""
+    text_lower = text.strip().lower()
+    is_bom_dia = any(t in text_lower for t in _BOM_DIA_TRIGGERS)
+    is_fim = any(t in text_lower for t in _FIM_TRIGGERS)
+    if not is_bom_dia and not is_fim:
+        return None
+
+    agora = now_brt()
+    hoje = agora.date()
+
+    result = await db.execute(select(WorkDay).where(WorkDay.date == hoje))
+    work_day = result.scalar_one_or_none()
+    if not work_day:
+        work_day = WorkDay(date=hoje)
+        db.add(work_day)
+
+    if is_bom_dia:
+        work_day.started_at = agora
+        await db.commit()
+        return await generate_morning_briefing(db, agora)
+
+    if is_fim:
+        work_day.ended_at = agora
+        await db.commit()
+        return await generate_evening_summary(db, agora)
+
+    return None
+
+
+async def _check_note_command(text: str, db: AsyncSession) -> str | None:
+    """Checa se é comando de nota: 'nota [task]: texto'"""
+    text_lower = text.strip().lower()
+    if not text_lower.startswith("nota ") and not text_lower.startswith("note "):
+        return None
+
+    rest = text[5:].strip()
+    if ":" not in rest:
+        return "Formato: nota [nome da task]: texto da nota"
+
+    task_hint, note_text = rest.split(":", 1)
+    task_hint = task_hint.strip()
+    note_text = note_text.strip()
+    if not task_hint or not note_text:
+        return "Formato: nota [nome da task]: texto da nota"
+
+    task = await task_manager.find_task_by_title_like(task_hint, db)
+    if not task:
+        return f"❌ Não encontrei task com '{task_hint}'. Tenta outro nome."
+
+    from sqlalchemy.orm.attributes import flag_modified
+    notes = task.notes_json or []
+    notes.insert(0, {"text": note_text, "created_at": now_brt().isoformat()})
+    task.notes_json = notes
+    flag_modified(task, "notes_json")
+    await db.commit()
+
+    _, task_name = (task.title.split(" | ", 1) if " | " in (task.title or "") else ("", task.title or ""))
+    return f"✅ Nota adicionada à *{task_name or task.title}*:\n\"{note_text}\""
+
+
 async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | None = None):
     if db is None:
         return await _legacy_fallback(raw_text, origin, db)
+
+    # ── Checar comandos de dia (bom dia / vou parar) ─────────────────
+    _day_response = await _check_day_commands(raw_text, db)
+    if _day_response:
+        return _make_item(origin, raw_text, "idea", "day_command"), _day_response, "day_command"
+
+    # ── Checar comando de nota ────────────────────────────────────────
+    _note_response = await _check_note_command(raw_text, db)
+    if _note_response:
+        return _make_item(origin, raw_text, "update", "note_command"), _note_response, "note_command"
 
     # ── Checar se estamos aguardando prazo de task recém-criada ───────
     _awaiting_dl = await task_manager.get_setting("awaiting_deadline_for_task_id", db=db)
