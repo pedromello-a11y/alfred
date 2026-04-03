@@ -1525,15 +1525,18 @@ async def jira_list_issues(db: AsyncSession = Depends(get_db)) -> dict:
     linked_keys = {row[0] for row in linked_result.all()}
 
     jql = "assignee = currentUser() AND status != Done ORDER BY duedate ASC"
-    url = f"{settings.jira_base_url.rstrip('/')}/rest/api/2/search"
-    params = {
-        "jql": jql,
-        "maxResults": 50,
-        "fields": "summary,status,duedate,priority,description",
-    }
+    url = f"{settings.jira_base_url.rstrip('/')}/rest/api/3/search/jql"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(url, headers=_jira_auth_headers(), params=params)
+            resp = await client.post(
+                url,
+                headers=_jira_auth_headers(),
+                json={
+                    "jql": jql,
+                    "maxResults": 50,
+                    "fields": ["summary", "status", "duedate", "priority", "description"],
+                },
+            )
             resp.raise_for_status()
             data = resp.json()
     except Exception as e:

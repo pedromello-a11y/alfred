@@ -33,16 +33,16 @@ async def fetch_my_issues() -> list[dict]:
         "assignee = currentUser() AND status NOT IN (Done, Closed, Resolved) "
         "ORDER BY priority ASC, updated DESC"
     )
-    url = f"{settings.jira_base_url}/rest/api/3/search"
+    url = f"{settings.jira_base_url}/rest/api/3/search/jql"
 
     async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(
+        resp = await client.post(
             url,
-            headers={"Authorization": _auth_header(), "Accept": "application/json"},
-            params={
+            headers={"Authorization": _auth_header(), "Accept": "application/json", "Content-Type": "application/json"},
+            json={
                 "jql": jql,
                 "maxResults": 50,
-                "fields": "summary,status,priority,duedate,project,description",
+                "fields": ["summary", "status", "priority", "duedate", "project", "description"],
             },
         )
         if resp.status_code != 200:

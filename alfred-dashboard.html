@@ -109,13 +109,13 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 }
 
 .focus-task-name {
-  font-size: clamp(32px, 5vw, 60px);
-  font-weight: 700;
-  letter-spacing: -0.03em;
+  font-size: clamp(36px, 6vw, 72px) !important;
+  font-weight: 800;
+  letter-spacing: -0.04em;
   color: #e8e8ed;
   text-align: center;
-  max-width: 650px;
-  line-height: 1.05;
+  max-width: 700px;
+  line-height: 1.0;
   word-wrap: break-word;
   margin: 20px 0;
 }
@@ -185,6 +185,8 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 .timeline-item.done { opacity: 0.3; }
 .timeline-item.done .tl-name { text-decoration: line-through; }
 .timeline-item.future { opacity: 0.6; }
+.timeline-item.gcal { border-left: 2px solid #a78bfa40; padding-left: 8px; opacity: 0.5; }
+.timeline-item.gcal .tl-name { font-size: 11px; color: #a78bfa; }
 
 .tl-marker {
   flex-shrink: 0;
@@ -931,7 +933,7 @@ function renderFocus(focus, next) {
     urgentDot.style.display = 'none';
     projectEl.textContent = '';
     taskEl.textContent = 'tudo limpo por agora ✨';
-    taskEl.style.fontSize = 'clamp(24px, 3vw, 36px)';
+    taskEl.style.fontSize = '';
     taskEl.style.color = '#555568';
     if (actionsEl) actionsEl.style.display = 'none';
     if (progressEl) progressEl.style.display = 'none';
@@ -981,69 +983,118 @@ function renderDayTimeline(today, focus) {
   var summary = document.getElementById('day-summary');
   if (!container) return;
 
-  var items = today || [];
   var focusId = focus && !focus.blocked && focus.status !== 'empty' ? focus.taskId : null;
 
-  if (!items.length) {
+  // Coletar eventos GCal de hoje da agenda
+  var todayISO = new Date().toISOString().slice(0, 10);
+  var gcalEvents = [];
+  if (currentState && currentState.agenda) {
+    var agendaDays = currentState.agenda.days || [];
+    var weekStart = currentState.agenda.weekStart;
+    for (var di = 0; di < 5; di++) {
+      if (weekStart && addDays(weekStart, di) === todayISO) {
+        var dayData = agendaDays.find(function(d) { return d.day === di; });
+        if (dayData) {
+          gcalEvents = (dayData.events || []).filter(function(ev) { return ev.source === 'gcal'; });
+        }
+        break;
+      }
+    }
+  }
+
+  // Montar array unificado
+  var dayItems = [];
+
+  gcalEvents.forEach(function(ev) {
+    dayItems.push({
+      type: 'gcal',
+      title: ev.title || ev.shortTitle || '',
+      start: ev.start || ev.time || '',
+      end: ev.end || '',
+      id: null
+    });
+  });
+
+  (today || []).forEach(function(t) {
+    dayItems.push({
+      type: 'task',
+      title: (t.project ? t.project + ' · ' : '') + (t.taskName || ''),
+      start: t.scheduledTime || t.scheduled_time || t.scheduledStart || '',
+      end: t.scheduledEnd || '',
+      id: t.id,
+      status: t.status,
+      jira_key: t.jira_key || t.jiraKey || '',
+      estimatedMinutes: t.estimatedMinutes || t.estimated_minutes || 0,
+      checklistDone: t.checklistDone || 0,
+      checklistTotal: t.checklistTotal || 0,
+      isCurrent: t.id === focusId
+    });
+  });
+
+  // Ordenar cronologicamente
+  dayItems.sort(function(a, b) {
+    return (a.start || '99:99').localeCompare(b.start || '99:99');
+  });
+
+  if (!dayItems.length) {
     container.innerHTML = '<div style="padding:16px 8px;text-align:center;font-size:12px;color:#555568;">nenhuma tarefa hoje ✨</div>';
     if (summary) summary.innerHTML = '';
     return;
   }
 
   container.innerHTML = '';
-
   var totalTasks = 0;
   var doneTasks = 0;
   var remainingMins = 0;
 
-  items.forEach(function(item) {
-    totalTasks++;
-    var isDone = item.status === 'done' || item.status === 'completed';
-    var isCurrent = item.id === focusId;
-    if (isDone) doneTasks++;
-
-    var cls = isDone ? 'done' : (isCurrent ? 'current' : 'future');
-    var marker = isDone ? '✓' : (isCurrent ? '▶' : '·');
-
-    if (!isDone) {
-      remainingMins += item.estimatedMinutes || item.estimated_minutes || 0;
-    }
-
+  dayItems.forEach(function(item) {
     var el = document.createElement('div');
-    el.className = 'timeline-item ' + cls;
-    el.onclick = function() { openTaskModal(item.id); };
 
-    var nameHTML = item.project
-      ? '<strong>' + esc(item.project) + '</strong> · ' + esc(item.taskName || '')
-      : esc(item.taskName || '');
+    if (item.type === 'gcal') {
+      el.className = 'timeline-item gcal';
+      var timeInfo = item.start + (item.end ? '–' + item.end : '');
+      el.innerHTML =
+        '<span class="tl-marker" style="color:#a78bfa;">📅</span>' +
+        '<div class="tl-info">' +
+          '<div class="tl-name">' + esc(item.title) + '</div>' +
+          (timeInfo ? '<div class="tl-time">' + esc(timeInfo) + '</div>' : '') +
+        '</div>';
+    } else {
+      totalTasks++;
+      var isDone = item.status === 'done' || item.status === 'completed';
+      var isCurrent = item.isCurrent;
+      if (isDone) doneTasks++;
+      if (!isDone) remainingMins += item.estimatedMinutes;
 
-    var timeStr = item.scheduledTime || item.scheduled_time || '';
-    var estStr = item.estimatedMinutes || item.estimated_minutes || 0;
-    var timeInfo = '';
-    if (timeStr) timeInfo += timeStr;
-    if (estStr) timeInfo += (timeStr ? ' · ' : '') + fmt_time(estStr);
+      var cls = isDone ? 'done' : (isCurrent ? 'current' : 'future');
+      var marker = isDone ? '✓' : (isCurrent ? '▶' : '·');
+      var markerColor = isCurrent ? 'color:#4ade80;' : (isDone ? '' : 'color:#555568;');
 
-    var checklistHTML = '';
-    var clTotal = item.checklistTotal || 0;
-    var clDone = item.checklistDone || 0;
-    if (clTotal > 0) {
-      checklistHTML = ' <span style="font-size:10px;color:#555568;font-family:monospace;">' + clDone + '/' + clTotal + '</span>';
+      var timeInfo = '';
+      if (item.start) timeInfo += item.start;
+      if (item.estimatedMinutes) timeInfo += (timeInfo ? ' · ' : '') + fmt_time(item.estimatedMinutes);
+
+      var checklistHTML = '';
+      if (item.checklistTotal > 0) {
+        checklistHTML = ' <span style="font-size:10px;color:#555568;font-family:monospace;">' + item.checklistDone + '/' + item.checklistTotal + '</span>';
+      }
+
+      var jiraHTML = '';
+      if (item.jira_key) {
+        jiraHTML = '<span class="tl-jira" onclick="event.stopPropagation();window.open((JIRA_BASE||\'https://hotmart.atlassian.net\')+\'/browse/' + esc(item.jira_key) + '\',\'_blank\')">' + esc(item.jira_key) + '</span>';
+      }
+
+      el.className = 'timeline-item ' + cls;
+      el.onclick = function() { openTaskModal(item.id); };
+      el.innerHTML =
+        '<span class="tl-marker" style="' + markerColor + '">' + marker + '</span>' +
+        '<div class="tl-info">' +
+          '<div class="tl-name">' + esc(item.title) + checklistHTML + '</div>' +
+          (timeInfo || jiraHTML
+            ? '<div class="tl-time">' + esc(timeInfo) + (jiraHTML ? (timeInfo ? ' · ' : '') + jiraHTML : '') + '</div>'
+            : '') +
+        '</div>';
     }
-
-    var jiraHTML = '';
-    var jiraKey = item.jira_key || item.jiraKey || '';
-    if (jiraKey) {
-      jiraHTML = '<span class="tl-jira" onclick="event.stopPropagation();window.open((JIRA_BASE||\'https://hotmart.atlassian.net\')+\'/browse/' + esc(jiraKey) + '\',\'_blank\')">' + esc(jiraKey) + '</span>';
-    }
-
-    el.innerHTML =
-      '<span class="tl-marker">' + marker + '</span>' +
-      '<div class="tl-info">' +
-        '<div class="tl-name">' + nameHTML + checklistHTML + '</div>' +
-        (timeInfo || jiraHTML
-          ? '<div class="tl-time">' + esc(timeInfo) + (jiraHTML ? (timeInfo ? ' · ' : '') + jiraHTML : '') + '</div>'
-          : '') +
-      '</div>';
 
     container.appendChild(el);
   });
