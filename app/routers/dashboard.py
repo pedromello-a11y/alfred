@@ -1213,6 +1213,31 @@ async def agenda_resize(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
     return await _build_agenda_response(db, week_offset)
 
 
+@router.post("/agenda/block/{block_id}/delete")
+async def agenda_block_delete(block_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    try:
+        block_uuid = UUID(block_id)
+    except Exception:
+        return {"status": "error", "message": "invalid block_id"}
+
+    block_result = await db.execute(select(AgendaBlock).where(AgendaBlock.id == block_uuid))
+    block = block_result.scalar_one_or_none()
+    if not block:
+        return {"status": "error", "message": "block not found"}
+
+    if block.source == "gcal":
+        return {"status": "error", "message": "não é possível remover evento do Google Calendar"}
+
+    week_start = block.start_at.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = week_start - timedelta(days=week_start.weekday())
+    week_end = week_start + timedelta(days=7)
+
+    await db.delete(block)
+    await db.commit()
+    await recalculate_suggestions(db, week_start, week_end)
+    return {"status": "ok"}
+
+
 @router.post("/agenda/reorganize")
 async def agenda_reorganize(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
     week_offset = int(body.get("week_offset", 0))
