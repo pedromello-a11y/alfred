@@ -33,6 +33,9 @@ class Task(Base):
     is_boss_fight: Mapped[bool] = mapped_column(BOOLEAN, default=False)
     importance: Mapped[int | None] = mapped_column(INTEGER)  # 1-5, impacto na vida/carreira
     effort_type: Mapped[str | None] = mapped_column(VARCHAR(20))  # 'quick', 'logistics', 'project'
+    checklist_json: Mapped[list | None] = mapped_column(JSONB, nullable=True)  # [{text: str, done: bool}]
+    notes_json: Mapped[list | None] = mapped_column(JSONB, nullable=True)  # [{text: str, created_at: str}]
+    deadline_type: Mapped[str | None] = mapped_column(VARCHAR(10), nullable=True)  # 'hard' or 'soft'
 
     __table_args__ = (
         Index("idx_tasks_status_priority", "status", "priority"),
