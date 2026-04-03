@@ -96,9 +96,11 @@ def _task_to_queue_item(task: Task, today: date) -> dict:
         "taskName": task_name,
         "fullTitle": task.title,
         "deadline": task.deadline.isoformat() if task.deadline else None,
+        "deadlineRaw": task.deadline.isoformat() if task.deadline else None,
         "deadlineHuman": _humanize_deadline(task.deadline),
         "deadlineType": dl_type,
         "status": task.status,
+        "category": getattr(task, "category", "work") or "work",
         "estimate": task.estimated_minutes or 120,
         "group": _get_task_group(task, today),
         "checklistTotal": len(checklist),
@@ -724,6 +726,56 @@ async def create_quick_dump(body: dict, db: AsyncSession = Depends(get_db)) -> d
     await db.commit()
     await db.refresh(new_dump)
     return {"status": "ok", "id": str(new_dump.id)}
+
+
+@router.post("/task/{task_id}/deadline-type")
+async def update_deadline_type(task_id: str, body: dict, db: AsyncSession = Depends(get_db)):
+    try:
+        task_uuid = UUID(task_id)
+    except ValueError:
+        return {"error": "not found"}
+    result = await db.execute(select(Task).where(Task.id == task_uuid))
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"error": "not found"}
+    task.deadline_type = body.get("deadline_type", "soft")
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/task/{task_id}/deadline")
+async def update_deadline(task_id: str, body: dict, db: AsyncSession = Depends(get_db)):
+    try:
+        task_uuid = UUID(task_id)
+    except ValueError:
+        return {"error": "not found"}
+    result = await db.execute(select(Task).where(Task.id == task_uuid))
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"error": "not found"}
+    dl_str = body.get("deadline", "")
+    if dl_str:
+        try:
+            task.deadline = datetime.fromisoformat(dl_str)
+        except Exception:
+            pass
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/task/{task_id}/estimate")
+async def update_estimate(task_id: str, body: dict, db: AsyncSession = Depends(get_db)):
+    try:
+        task_uuid = UUID(task_id)
+    except ValueError:
+        return {"error": "not found"}
+    result = await db.execute(select(Task).where(Task.id == task_uuid))
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"error": "not found"}
+    task.estimated_minutes = body.get("estimated_minutes", 120)
+    await db.commit()
+    return {"ok": True}
 
 
 # ── legacy endpoints (kept for backward compat) ────────────────────────────
