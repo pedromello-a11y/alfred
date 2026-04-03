@@ -45,7 +45,26 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    await _migrate_v3_columns()
     await _seed_data()
+
+
+async def _migrate_v3_columns() -> None:
+    """Adiciona colunas v3 na tabela tasks — idempotente via IF NOT EXISTS."""
+    from sqlalchemy import text
+    stmts = [
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS checklist_json JSONB DEFAULT '[]'::jsonb",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS notes_json JSONB DEFAULT '[]'::jsonb",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deadline_type VARCHAR(10) DEFAULT 'soft'",
+    ]
+    try:
+        async with engine.begin() as conn:
+            for sql in stmts:
+                await conn.execute(text(sql))
+    except Exception as exc:
+        # Não interrompe o startup se o banco não suportar (ex: SQLite em testes)
+        import logging
+        logging.getLogger(__name__).warning("_migrate_v3_columns: %s", exc)
 
 
 async def _seed_data() -> None:
