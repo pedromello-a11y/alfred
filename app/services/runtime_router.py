@@ -110,20 +110,20 @@ async def _append_setting_log(key: str, value: str, db: AsyncSession, limit: int
 
 # ── Parser de datas naturais PT-BR + fluxo de prazo ──────────────────
 _NL_DATE_PATTERNS = [
-    (_re_mod.compile(r"(?i)(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?"), "dmy"),
-    (_re_mod.compile(r"(?i)dia\s+(\d{1,2})"), "day_only"),
-    (_re_mod.compile(r"(?i)amanh[aã]"), "tomorrow"),
-    (_re_mod.compile(r"(?i)hoje"), "today"),
-    (_re_mod.compile(r"(?i)segunda"), "wd_0"),
-    (_re_mod.compile(r"(?i)ter[cç]a"), "wd_1"),
-    (_re_mod.compile(r"(?i)quarta"), "wd_2"),
-    (_re_mod.compile(r"(?i)quinta"), "wd_3"),
-    (_re_mod.compile(r"(?i)sexta"), "wd_4"),
-    (_re_mod.compile(r"(?i)s[aá]bado"), "wd_5"),
-    (_re_mod.compile(r"(?i)domingo"), "wd_6"),
+    (re.compile(r"(?i)(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?"), "dmy"),
+    (re.compile(r"(?i)dia\s+(\d{1,2})"), "day_only"),
+    (re.compile(r"(?i)amanh[aã]"), "tomorrow"),
+    (re.compile(r"(?i)hoje"), "today"),
+    (re.compile(r"(?i)segunda"), "wd_0"),
+    (re.compile(r"(?i)ter[cç]a"), "wd_1"),
+    (re.compile(r"(?i)quarta"), "wd_2"),
+    (re.compile(r"(?i)quinta"), "wd_3"),
+    (re.compile(r"(?i)sexta"), "wd_4"),
+    (re.compile(r"(?i)s[aá]bado"), "wd_5"),
+    (re.compile(r"(?i)domingo"), "wd_6"),
 ]
-_NL_TIME_RE = _re_mod.compile(r"(?i)(?:às?|as|ate|até)\s*(\d{1,2})(?::(\d{2}))?\s*h?")
-_NL_EOD_RE = _re_mod.compile(r"(?i)(fim do dia|final do dia|eod)")
+_NL_TIME_RE = re.compile(r"(?i)(?:às?|as|ate|até)\s*(\d{1,2})(?::(\d{2}))?\s*h?")
+_NL_EOD_RE = re.compile(r"(?i)(fim do dia|final do dia|eod)")
 _DIAS_SEMANA_PT = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"]
 
 
