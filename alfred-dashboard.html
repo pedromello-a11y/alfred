@@ -39,8 +39,9 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 
 /* ── Focus panel ── */
 .focus-panel{padding:24px 28px 20px;border-bottom:1px solid var(--b1);flex-shrink:0;position:relative;transition:border-color .3s}
-.focus-panel.urgent{border-color:var(--red);box-shadow:0 0 0 1px var(--red)20 inset;animation:pulse-red 2s infinite}
-@keyframes pulse-red{0%,100%{box-shadow:0 0 0 1px #f8717120 inset}50%{box-shadow:0 0 0 2px #f8717130 inset}}
+.focus-panel.urgent{border:none !important;box-shadow:none !important;animation:none}
+.focus-panel.urgent #focus-deadline-info::before{content:'';display:inline-block;width:10px;height:10px;background:#f87171;border-radius:50%;margin-right:8px;animation:pulse-dot 1.5s ease-in-out infinite;vertical-align:middle}
+@keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(0.8)}}
 
 .night-mode .focus-panel {
   opacity: 0.3;
@@ -148,7 +149,7 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 .today-checklist{font-size:10px;color:var(--t-dim);margin-top:2px}
 
 /* ── Bottom bar ── */
-.bottom-bar{border-top:1px solid var(--b1);padding:8px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;background:var(--bg)}
+.bottom-bar{border-top:1px solid var(--b1);padding:6px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0;background:var(--bg)}
 .bottom-toggle{cursor:pointer;font-size:12px;color:var(--t-muted);white-space:nowrap;transition:color .15s;font-family:'JetBrains Mono',monospace}
 .bottom-toggle:hover{color:var(--t-primary)}
 .bottom-create{display:flex;gap:6px;flex:1}
@@ -295,9 +296,9 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
   <div class="view active" id="view-work">
 
     <!-- Focus panel -->
-    <div class="focus-panel" id="focus-panel" style="padding:40px 32px 24px 32px;min-height:200px;display:flex;flex-direction:column;justify-content:center;position:relative;">
-      <div id="focus-project" style="font-size:12px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:#8888a0;margin-bottom:8px;font-family:monospace;"></div>
-      <div id="focus-task" style="font-size:42px;font-weight:700;letter-spacing:-0.02em;color:#e8e8ed;line-height:1.1;margin-bottom:12px;"></div>
+    <div class="focus-panel" id="focus-panel" style="padding:20px 24px 16px 24px;min-height:auto;display:flex;flex-direction:column;justify-content:center;position:relative;">
+      <div id="focus-project" style="font-size:12px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:#8888a0;margin-bottom:4px;font-family:monospace;"></div>
+      <div id="focus-task" style="font-size:42px;font-weight:700;letter-spacing:-0.02em;color:#e8e8ed;line-height:1.1;margin-bottom:6px;"></div>
       <div id="focus-deadline-info" style="font-size:13px;color:#555568;font-family:monospace;margin-bottom:0;"></div>
       <div id="focus-actions" style="position:absolute;top:16px;right:24px;display:flex;gap:6px;align-items:center;">
         <button onclick="completeCurrentTask()" style="background:transparent;color:#4ade80;border:1px solid #4ade8020;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px;font-family:monospace;opacity:0.6;transition:opacity 0.2s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0.6'">✓ entregar</button>
@@ -825,15 +826,46 @@ function renderCalBlock(dayIdx, block, type) {
   var col = document.querySelector('.day-col[data-day="' + dayIdx + '"]');
   if (!col) return;
 
+  // Deadlines renderizados como barra horizontal
+  if (type === 'deadline' || type === 'prazo') {
+    renderCalDeadline(Object.assign({ day: dayIdx }, block));
+    return;
+  }
+
   var startTime = block.start || block.time || '09:00';
   var endTime = block.end || '';
   var top = timeToPx(startTime);
   var height = endTime ? Math.max(timeToPx(endTime) - top, 20) : 40;
 
+  // Detectar colisão com blocos existentes na mesma coluna
+  var existingBlocks = col.querySelectorAll('.cal-block');
+  var column = 0;
+  var totalColumns = 1;
+  var myBottom = top + height;
+
+  existingBlocks.forEach(function(existing) {
+    var exTop = parseInt(existing.style.top) || 0;
+    var exHeight = parseInt(existing.style.height) || 0;
+    var exBottom = exTop + exHeight;
+    if (top < exBottom && myBottom > exTop) {
+      totalColumns++;
+      var exCol = parseInt(existing.dataset.col || '0');
+      if (exCol >= column) column = exCol + 1;
+      // Ajustar largura dos blocos existentes
+      existing.style.width = (100 / totalColumns) + '%';
+      existing.style.left = (parseInt(existing.dataset.col || '0') * (100 / totalColumns)) + '%';
+    }
+  });
+
   var el = document.createElement('div');
   el.className = 'cal-block cal-' + type;
+  el.style.position = 'absolute';
   el.style.top = top + 'px';
   el.style.height = height + 'px';
+  el.style.left = (column * (100 / totalColumns)) + '%';
+  el.style.width = (100 / totalColumns) + '%';
+  el.style.boxSizing = 'border-box';
+  el.dataset.col = column;
 
   // Project color on border
   if (block.project) {
@@ -869,16 +901,16 @@ function renderCalBlock(dayIdx, block, type) {
 function renderCalDeadline(dl) {
   var col = document.querySelector('.day-col[data-day="' + dl.day + '"]');
   if (!col) return;
-  var deadlineTime = dl.label ? dl.label.split(' ')[1] : '17:00';
+  var deadlineTime = dl.time || dl.start || (dl.label ? dl.label.split(' ')[1] : '17:00');
   if (!deadlineTime || !deadlineTime.includes(':')) deadlineTime = '17:00';
   var top = timeToPx(deadlineTime);
 
   var marker = document.createElement('div');
-  marker.className = 'cal-deadline-marker';
-  marker.style.top = top + 'px';
+  marker.style.cssText = 'position:absolute;left:0;right:0;top:' + top + 'px;height:3px;background:#f87171;z-index:10;border-radius:2px;box-shadow:0 0 8px #f8717160;';
+
   var label = document.createElement('div');
-  label.className = 'cal-deadline-label';
-  label.textContent = dl.taskName || dl.title || '';
+  label.style.cssText = 'position:absolute;right:4px;top:-14px;font-size:9px;color:#f87171;font-family:monospace;font-weight:600;white-space:nowrap;';
+  label.textContent = '⚠ ' + (dl.taskName || dl.shortTitle || dl.title || 'DEADLINE') + ' ' + (dl.time || dl.start || '');
   marker.appendChild(label);
   col.appendChild(marker);
 }
@@ -1085,15 +1117,80 @@ function closeModal() {
 function renderChecklist(items) {
   var container = document.getElementById('modal-checklist');
   container.innerHTML = '';
-  items.forEach(function(item, idx) {
+  items.forEach(function(item, index) {
     var el = document.createElement('div');
-    el.className = 'check-item' + (item.done ? ' done' : '');
-    el.innerHTML = '<input type="checkbox" ' + (item.done ? 'checked' : '') +
-      ' onchange="toggleCheckItem(' + idx + ',this.checked)"> ' + esc(item.text || '');
+    el.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0;';
+
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = item.done;
+    cb.style.cssText = 'cursor:pointer;accent-color:#4ade80;flex-shrink:0;';
+    cb.onchange = function() { toggleCheckItem(index, this.checked); };
+
+    var text = document.createElement('span');
+    text.style.cssText = 'flex:1;font-size:13px;color:#e8e8ed;' + (item.done ? 'text-decoration:line-through;opacity:0.4;' : '');
+    text.textContent = item.text;
+    text.id = 'check-text-' + index;
+
+    var editBtn = document.createElement('span');
+    editBtn.style.cssText = 'cursor:pointer;font-size:11px;opacity:0.2;transition:opacity 0.2s;';
+    editBtn.textContent = '✏️';
+    editBtn.onmouseenter = function(){ this.style.opacity='0.8'; };
+    editBtn.onmouseleave = function(){ this.style.opacity='0.2'; };
+    editBtn.onclick = function() { editCheckItem(index, item.text); };
+
+    var delBtn = document.createElement('span');
+    delBtn.style.cssText = 'cursor:pointer;font-size:11px;opacity:0.15;transition:opacity 0.2s;color:#f87171;';
+    delBtn.textContent = '✕';
+    delBtn.onmouseenter = function(){ this.style.opacity='0.8'; };
+    delBtn.onmouseleave = function(){ this.style.opacity='0.15'; };
+    delBtn.onclick = function() { removeCheckItem(index); };
+
+    el.appendChild(cb);
+    el.appendChild(text);
+    el.appendChild(editBtn);
+    el.appendChild(delBtn);
     container.appendChild(el);
   });
-  var done = items.filter(function(i){return i.done;}).length;
-  document.getElementById('check-count').textContent = done + '/' + items.length;
+
+  var done = items.filter(function(i){ return i.done; }).length;
+  var countEl = document.querySelector('.check-count');
+  if (countEl) countEl.textContent = done + '/' + items.length;
+}
+
+function editCheckItem(index, currentText) {
+  var textEl = document.getElementById('check-text-' + index);
+  if (!textEl) return;
+  var input = document.createElement('input');
+  input.type = 'text';
+  input.value = currentText;
+  input.style.cssText = 'flex:1;background:#1a1a25;color:#e8e8ed;border:1px solid #ffffff20;border-radius:4px;padding:3px 8px;font-size:13px;outline:none;width:100%;';
+  input.onkeydown = function(e) {
+    if (e.key === 'Enter') saveCheckItemEdit(index, this.value);
+    if (e.key === 'Escape') openTaskModal(currentModalTaskId);
+  };
+  input.onblur = function() { saveCheckItemEdit(index, this.value); };
+  textEl.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
+async function saveCheckItemEdit(index, newText) {
+  if (!newText.trim()) return;
+  await apiPost('/dashboard/task/' + currentModalTaskId + '/checklist', {
+    action: 'edit',
+    index: index,
+    text: newText.trim()
+  });
+  openTaskModal(currentModalTaskId);
+}
+
+async function removeCheckItem(index) {
+  await apiPost('/dashboard/task/' + currentModalTaskId + '/checklist', {
+    action: 'remove',
+    index: index
+  });
+  openTaskModal(currentModalTaskId);
 }
 
 function showChecklistCompletePrompt() {
@@ -1347,11 +1444,46 @@ async function createTaskSmart() {
   var text = (input.value||'').trim();
   if (!text) return;
   var btn = document.querySelector('.bottom-create button');
-  if (btn) btn.textContent = '...';
-  var result = await apiPost('/dashboard/task/create-smart', {raw_text: text});
-  if (btn) btn.textContent = '+ criar';
-  if (!result || !result.needs_confirmation) return;
-  showCreatePreview(result.parsed);
+  if (btn) { btn.textContent = '...'; btn.disabled = true; }
+
+  try {
+    var result = await apiPost('/dashboard/task/create-smart', { raw_text: text });
+
+    if (result && result.needs_confirmation) {
+      showCreatePreview(result.parsed, text);
+    } else if (result && result.ok) {
+      input.value = '';
+      await loadState();
+    } else {
+      // Fallback: criar task simples direto
+      await apiPost('/dashboard/task/create-smart/confirm', {
+        project: '',
+        title: text,
+        deadline: null,
+        deadline_type: 'soft',
+        estimate: 120
+      });
+      input.value = '';
+      await loadState();
+    }
+  } catch(e) {
+    try {
+      await apiPost('/dashboard/task/create-smart/confirm', {
+        project: '',
+        title: text,
+        deadline: null,
+        deadline_type: 'soft',
+        estimate: 120
+      });
+      input.value = '';
+      await loadState();
+    } catch(e2) {
+      console.error('Erro ao criar task:', e2);
+      alert('Erro ao criar demanda. Tente novamente.');
+    }
+  } finally {
+    if (btn) { btn.textContent = '+ criar'; btn.disabled = false; }
+  }
 }
 
 function showCreatePreview(parsed) {
@@ -1602,8 +1734,22 @@ function renderPersonal(items) {
       cb.onchange = function() { togglePersonalItem(item.id, this.checked); };
 
       var text = document.createElement('span');
-      text.style.cssText = 'flex:1;font-size:14px;color:#e8e8ed;' + (cb.checked ? 'text-decoration:line-through;opacity:0.4;' : '');
+      text.style.cssText = 'flex:1;font-size:14px;color:#e8e8ed;cursor:text;' + (cb.checked ? 'text-decoration:line-through;opacity:0.4;' : '');
       text.textContent = item.title || item.text || '';
+      text.ondblclick = function() {
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.value = item.title || item.text || '';
+        input.style.cssText = 'flex:1;background:#1a1a25;color:#e8e8ed;border:1px solid #ffffff20;border-radius:4px;padding:4px 8px;font-size:14px;outline:none;width:100%;';
+        input.onkeydown = function(e) {
+          if (e.key === 'Enter') savePersonalEdit(item.id, this.value);
+          if (e.key === 'Escape') loadPersonal();
+        };
+        input.onblur = function() { savePersonalEdit(item.id, this.value); };
+        text.replaceWith(input);
+        input.focus();
+        input.select();
+      };
 
       var deadline = document.createElement('span');
       deadline.style.cssText = 'font-size:11px;color:#555568;font-family:monospace;';
@@ -1649,6 +1795,12 @@ async function togglePersonalItem(id, done) {
 
 async function deletePersonalItem(id) {
   await apiPost('/dashboard/personal/' + id + '/delete', {});
+  loadPersonal();
+}
+
+async function savePersonalEdit(id, newText) {
+  if (!newText.trim()) return;
+  await apiPost('/dashboard/personal/' + id + '/edit', { title: newText.trim() });
   loadPersonal();
 }
 

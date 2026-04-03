@@ -549,6 +549,11 @@ async def manage_checklist(task_id: str, body: dict, db: AsyncSession = Depends(
         idx = body.get("index")
         if idx is not None and 0 <= idx < len(checklist):
             checklist.pop(idx)
+    elif action == "edit":
+        idx = body.get("index", 0)
+        new_text = body.get("text", "")
+        if 0 <= idx < len(checklist):
+            checklist[idx]["text"] = new_text
 
     task.checklist_json = checklist
     await db.commit()
@@ -704,6 +709,17 @@ async def create_personal_item(body: dict, db: AsyncSession = Depends(get_db)) -
     await db.commit()
     await db.refresh(new_task)
     return {"status": "ok", "id": str(new_task.id)}
+
+
+@router.post("/personal/{item_id}/edit")
+async def edit_personal_item(item_id: str, body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    result = await db.execute(select(Task).where(Task.id == item_id))
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"error": "not found"}
+    task.title = body.get("title", task.title)
+    await db.commit()
+    return {"ok": True}
 
 
 @router.post("/personal/{item_id}/toggle")

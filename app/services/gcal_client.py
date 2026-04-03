@@ -207,13 +207,13 @@ async def delete_event(event_id: str, db: AsyncSession | None = None) -> dict:
 
 
 async def sync_to_agenda_blocks(db: AsyncSession) -> int:
-    """Sincroniza eventos seg-sex da semana atual (BRT) na tabela AgendaBlock. Retorna contagem."""
+    """Sincroniza eventos das próximas 3 semanas (BRT) na tabela AgendaBlock. Retorna contagem."""
     from app.services.agenda_manager import upsert_agenda_block
     from app.services.time_utils import BRT
 
     today = today_brt()
     monday = today - timedelta(days=today.weekday())
-    friday = monday + timedelta(days=4)
+    friday = monday + timedelta(days=4, weeks=2)  # 3 semanas à frente
     week_start = datetime(monday.year, monday.month, monday.day, 0, 0, 0, tzinfo=BRT)
     week_end = datetime(friday.year, friday.month, friday.day, 23, 59, 59, tzinfo=BRT)
 
