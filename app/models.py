@@ -222,3 +222,18 @@ class Achievement(Base):
     __table_args__ = (
         UniqueConstraint("code", name="uq_achievements_code"),
     )
+
+
+class OAuthToken(Base):
+    __tablename__ = "oauth_tokens"
+
+    id: Mapped[int] = mapped_column(INTEGER, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(VARCHAR(30), unique=True, nullable=False)  # 'google'
+    refresh_token: Mapped[str] = mapped_column(TEXT, nullable=False)
+    is_valid: Mapped[bool] = mapped_column(BOOLEAN, default=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("provider", name="uq_oauth_tokens_provider"),
+    )

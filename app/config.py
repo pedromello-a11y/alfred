@@ -2,6 +2,8 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    model_config = {"env_file": ".env", "protected_namespaces": ()}
+
     database_url: str
 
     # Whapi legado — opcional quando o Alfred roda via gateway whatsapp-web.js
@@ -16,10 +18,13 @@ class Settings(BaseSettings):
     jira_email: str = ""
     jira_api_token: str = ""
 
-    # Google Calendar — opcional para rodar localmente sem agenda
-    google_refresh_token: str = ""
+    # Google Calendar — credenciais OAuth2 (obrigatório para o fluxo /auth/google)
     google_client_id: str = ""
     google_client_secret: str = ""
+    # URL de callback cadastrada no Google Cloud Console
+    google_redirect_uri: str = "https://web-production-62584.up.railway.app/auth/google/callback"
+    # Deprecated: refresh_token direto por env var (substituído pelo fluxo OAuth no banco)
+    google_refresh_token: str = ""
 
     # Gateway WhatsApp Web
     wa_bridge_shared_secret: str = ""
@@ -33,8 +38,10 @@ class Settings(BaseSettings):
     model_fast: str = "claude-haiku-4-5-20251001"
     model_smart: str = "claude-sonnet-4-6"
 
-    class Config:
-        env_file = ".env"
+    @property
+    def is_gcal_configured(self) -> bool:
+        """True se as credenciais OAuth2 do Google estão presentes."""
+        return bool(self.google_client_id and self.google_client_secret)
 
 
 settings = Settings()
