@@ -385,3 +385,113 @@ def find_next_block_for_task(suggested: list[dict], task_id: str) -> str:
         if block.get("taskId") == task_id:
             return block["start"]
     return ""
+
+
+async def recalculate_suggestions(
+    db: AsyncSession,
+    week_start: date,
+    week_end: date,
+) -> list[dict]:
+    """
+    Recalcula blocos sugeridos (pinned=False, source=alfred) para a semana,
+    respeitando blocos pinned (usuário) e GCal. Deleta suggested existentes e cria novos.
+    """
+    from sqlalchemy import delete as sa_delete
+    import uuid as _uuid
+
+    today = today_brt()
+    now_naive = now_brt_naive()
+
+    monday_dt = datetime.combine(week_start, datetime.min.time())
+    friday_dt = datetime.combine(week_end, datetime.max.time().replace(microsecond=0))
+
+    # Deletar blocos sugeridos existentes
+    await db.execute(
+        sa_delete(AgendaBlock).where(
+            AgendaBlock.start_at >= monday_dt,
+            AgendaBlock.start_at <= friday_dt,
+            AgendaBlock.pinned == False,  # noqa: E712
+            AgendaBlock.source.in_(["alfred", "system"]),
+        )
+    )
+    await db.flush()
+
+    # Blocos restantes (pinned + gcal)
+    blocks_result = await db.execute(
+        select(AgendaBlock)
+        .where(AgendaBlock.start_at >= monday_dt)
+        .where(AgendaBlock.start_at <= friday_dt)
+        .where(AgendaBlock.status != "cancelled")
+    )
+    existing_blocks = list(blocks_result.scalars().all())
+
+    # Tasks de trabalho ativas
+    result = await db.execute(
+        select(Task)
+        .where(Task.status.in_(("pending", "in_progress")))
+        .where(Task.category != "personal")
+        .limit(30)
+    )
+    raw_tasks = result.scalars().all()
+    work_tasks = [t for t in raw_tasks if not (t.category or "").startswith("personal")]
+
+    from datetime import date as _date
+    today_d = _date.today()
+
+    def _is_available(t: Task) -> bool:
+        if not getattr(t, "blocked", False):
+            return True
+        until = getattr(t, "blocked_until", None)
+        return bool(until and until <= today_d)
+
+    work_tasks = [t for t in work_tasks if _is_available(t)]
+    work_tasks.sort(key=lambda t: _task_priority_key(t, today))
+
+    # Tasks já com bloco pinned na semana — não re-alocar
+    pinned_task_ids = {str(b.task_id) for b in existing_blocks if b.pinned and b.task_id}
+    unallocated = [t for t in work_tasks if str(t.id) not in pinned_task_ids]
+
+    days: list[tuple[int, date]] = [
+        (i, week_start + timedelta(days=i)) for i in range(5)
+        if (week_start + timedelta(days=i)) <= week_end
+    ]
+
+    suggested_dicts = _allocate(unallocated, days, existing_blocks, now_naive)
+
+    for day_idx, day_date in days:
+        quick = _find_quick_tasks_for_gaps(suggested_dicts, existing_blocks, unallocated, day_idx, day_date)
+        suggested_dicts.extend(quick)
+
+    # Persistir novos blocos no banco
+    for b in suggested_dicts:
+        if not b.get("start") or not b.get("end"):
+            continue
+        day_idx = b["day"]
+        day_date = week_start + timedelta(days=day_idx)
+        try:
+            start_dt = datetime.combine(day_date, datetime.strptime(b["start"], "%H:%M").time())
+            end_dt = datetime.combine(day_date, datetime.strptime(b["end"], "%H:%M").time())
+        except Exception:
+            continue
+
+        task_id_val = None
+        if b.get("taskId"):
+            try:
+                task_id_val = _uuid.UUID(b["taskId"])
+            except Exception:
+                pass
+
+        block_type = "quick" if b.get("type") == "quick" else "suggested"
+        db.add(AgendaBlock(
+            title=b.get("fullTitle") or b.get("title") or "",
+            start_at=start_dt,
+            end_at=end_dt,
+            block_type=block_type,
+            source="alfred",
+            status="planned",
+            task_id=task_id_val,
+            pinned=False,
+        ))
+
+    await db.commit()
+    return suggested_dicts

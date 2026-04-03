@@ -15,7 +15,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import AgendaBlock, DumpItem, PlayerStat, Streak, Task
 from app.services import task_manager
-from app.services.block_engine import build_suggested_blocks, find_next_block_for_task
+from app.services.block_engine import build_suggested_blocks, find_next_block_for_task, recalculate_suggestions
 from app.services.focus_snapshot import build_focus_snapshot
 from app.services.task_manager import calculate_level, xp_progress_in_level
 from app.services.text_utils import sanitize_json_strings
@@ -325,29 +325,62 @@ async def _build_agenda_payload(db: AsyncSession, week_offset: int = 0) -> dict:
 
     type_map = {"meeting": "meeting", "break": "break", "focus": "focus", "personal": "personal", "admin": "meeting"}
     days: dict[int, list] = {i: [] for i in range(5)}
+    alfred_blocks: list[dict] = []
+
     for block in blocks:
         if not block.start_at:
             continue
         dow = block.start_at.weekday()
         if dow > 4:
             continue
-        days[dow].append({
-            "title": block.title,
-            "start": block.start_at.strftime("%H:%M"),
-            "time": block.start_at.strftime("%H:%M"),
-            "end": block.end_at.strftime("%H:%M") if block.end_at else "",
-            "type": type_map.get(block.block_type or "focus", "focus"),
-            "source": block.source or "manual",
-        })
+        source = block.source or "manual"
+        btype = block.block_type or "focus"
+
+        # Blocos alfred (suggested/quick/pinned) → vão em suggestedBlocks com blockId
+        if source in ("alfred", "system") or btype in ("suggested", "quick"):
+            project, task_name = _parse_project_task(block.title)
+            alfred_blocks.append({
+                "blockId": str(block.id),
+                "taskId": str(block.task_id) if block.task_id else None,
+                "day": dow,
+                "title": task_name or block.title,
+                "shortTitle": (task_name or block.title or "")[:30],
+                "fullTitle": block.title,
+                "project": project,
+                "start": block.start_at.strftime("%H:%M"),
+                "time": block.start_at.strftime("%H:%M"),
+                "end": block.end_at.strftime("%H:%M") if block.end_at else "",
+                "type": "quick" if btype == "quick" else "suggested",
+                "source": "alfred",
+                "pinned": bool(getattr(block, "pinned", False)),
+            })
+        else:
+            # GCal/manual → vão em days.events
+            days[dow].append({
+                "title": block.title,
+                "start": block.start_at.strftime("%H:%M"),
+                "time": block.start_at.strftime("%H:%M"),
+                "end": block.end_at.strftime("%H:%M") if block.end_at else "",
+                "type": type_map.get(btype, "focus"),
+                "source": source,
+            })
 
     deadlines = await _build_agenda_deadlines(db, monday, friday)
 
-    # Motor de blocos sugeridos (apenas semana atual; navegar pra semanas futuras
-    # ainda exibe sugestões mas sem "agora" como referência de corte)
-    try:
-        suggested, risk_alert = await build_suggested_blocks(db, monday, friday)
-    except Exception:
-        suggested, risk_alert = [], None
+    # Motor de blocos sugeridos ao vivo (fallback se banco estiver vazio de alfred blocks)
+    if not alfred_blocks:
+        try:
+            suggested, risk_alert = await build_suggested_blocks(db, monday, friday)
+        except Exception:
+            suggested, risk_alert = [], None
+    else:
+        suggested = alfred_blocks
+        risk_alert = None
+        # Calcular risco manualmente
+        try:
+            _, risk_alert = await build_suggested_blocks(db, monday, friday)
+        except Exception:
+            risk_alert = None
 
     return {
         "days": [{"day": d, "events": events} for d, events in days.items()],
@@ -491,6 +524,59 @@ async def _parse_task_with_ai(raw_text: str) -> dict:
 
 # ── endpoints ──────────────────────────────────────────────────────────────
 
+def _calc_deficit(active_queue: list[dict], agenda_data: dict, week_offset: int) -> dict:
+    """Calcula déficit de horas para a semana exibida."""
+    from app.services.time_utils import today_brt as _tb
+    today = _tb() + timedelta(weeks=week_offset)
+    monday = today - timedelta(days=today.weekday())
+    friday = monday + timedelta(days=4)
+
+    # Horas necessárias: tasks com deadline até friday
+    total_needed = 0
+    movable: list[dict] = []
+    for item in active_queue:
+        dl = item.get("deadline")
+        if not dl:
+            continue
+        try:
+            dl_date = datetime.fromisoformat(dl).date()
+        except Exception:
+            continue
+        if dl_date <= friday:
+            est = item.get("estimate", 120)
+            total_needed += est
+            if item.get("deadlineType") != "hard":
+                movable.append(item)
+
+    # Horas disponíveis: slots livres estimados via blocos sugeridos
+    suggested = agenda_data.get("suggestedBlocks", [])
+    total_available = 0
+    for b in suggested:
+        try:
+            s = datetime.strptime(b["start"], "%H:%M")
+            e = datetime.strptime(b["end"], "%H:%M")
+            total_available += int((e - s).total_seconds() / 60)
+        except Exception:
+            pass
+    # Fallback: horas úteis brutas se sem sugestões
+    if total_available == 0:
+        total_available = 5 * 10 * 60  # 5 dias × 10h
+
+    needed_h = round(total_needed / 60, 1)
+    available_h = round(total_available / 60, 1)
+    overflow_h = round(max(0, needed_h - available_h), 1)
+
+    # Ordenar movable por deadline mais distante
+    movable.sort(key=lambda i: i.get("deadline") or "9999", reverse=True)
+
+    return {
+        "totalNeeded": needed_h,
+        "totalAvailable": available_h,
+        "overflow": overflow_h,
+        "movableTasks": movable[:5],
+    }
+
+
 @router.get("/state")
 async def dashboard_state(db: AsyncSession = Depends(get_db), week_offset: int = 0) -> dict:
     focus, next_task = await _build_focus_v3(db)
@@ -507,6 +593,9 @@ async def dashboard_state(db: AsyncSession = Depends(get_db), week_offset: int =
     # Extrai riskAlert que veio embutido no agenda_data
     risk_alert = agenda_data.pop("_riskAlert", None)
 
+    # Calcular deficit para aba agenda
+    deficit = _calc_deficit(active_queue, agenda_data, week_offset)
+
     import os
     state = {
         "focus": focus,
@@ -516,6 +605,7 @@ async def dashboard_state(db: AsyncSession = Depends(get_db), week_offset: int =
         "agenda": agenda_data,
         "projects": projects,
         "riskAlert": risk_alert,
+        "deficit": deficit,
         "xp": await _build_xp_payload(db),
         "dumpLibrary": await _build_dump_library(db),
         "jiraUrl": os.getenv("JIRA_URL", settings.jira_base_url or ""),
@@ -989,6 +1079,146 @@ async def update_estimate(task_id: str, body: dict, db: AsyncSession = Depends(g
     task.estimated_minutes = body.get("estimated_minutes", 120)
     await db.commit()
     return {"ok": True}
+
+
+# ── agenda endpoints ──────────────────────────────────────────────────────────
+
+def _week_bounds_from_offset(week_offset: int) -> tuple[date, date]:
+    from app.services.time_utils import today_brt as _today_brt_fn
+    ref = _today_brt_fn() + timedelta(weeks=week_offset)
+    monday = ref - timedelta(days=ref.weekday())
+    return monday, monday + timedelta(days=4)
+
+
+async def _build_agenda_response(db: AsyncSession, week_offset: int) -> dict:
+    """Retorna o payload completo da agenda após recalcular sugestões."""
+    week_start, week_end = _week_bounds_from_offset(week_offset)
+    suggested = await recalculate_suggestions(db, week_start, week_end)
+    agenda = await _build_agenda_payload(db, week_offset)
+    risk = agenda.pop("_riskAlert", None)
+    return {"ok": True, "agenda": agenda, "riskAlert": risk}
+
+
+@router.post("/agenda/allocate")
+async def agenda_allocate(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    task_id_str = (body.get("task_id") or "").strip()
+    day_idx = int(body.get("day", 0))
+    start_str = body.get("start", "09:00")
+    duration_min = int(body.get("duration_minutes", 120))
+    week_offset = int(body.get("week_offset", 0))
+    pinned = bool(body.get("pinned", True))
+
+    try:
+        task_uuid = UUID(task_id_str)
+    except Exception:
+        return {"error": "invalid task_id"}
+
+    task_result = await db.execute(select(Task).where(Task.id == task_uuid))
+    task = task_result.scalar_one_or_none()
+    if not task:
+        return {"error": "task not found"}
+
+    week_start, week_end = _week_bounds_from_offset(week_offset)
+    day_date = week_start + timedelta(days=day_idx)
+
+    try:
+        start_dt = datetime.combine(day_date, datetime.strptime(start_str, "%H:%M").time())
+        end_dt = start_dt + timedelta(minutes=duration_min)
+    except Exception:
+        return {"error": "invalid start time"}
+
+    # Remover bloco alfred pinned anterior desta task nesta semana
+    monday_dt = datetime.combine(week_start, datetime.min.time())
+    friday_dt = datetime.combine(week_end, datetime.max.time().replace(microsecond=0))
+    from sqlalchemy import delete as _sa_delete
+    await db.execute(
+        _sa_delete(AgendaBlock).where(
+            AgendaBlock.task_id == task_uuid,
+            AgendaBlock.start_at >= monday_dt,
+            AgendaBlock.start_at <= friday_dt,
+            AgendaBlock.pinned == True,  # noqa: E712
+        )
+    )
+
+    new_block = AgendaBlock(
+        title=task.title or "",
+        start_at=start_dt,
+        end_at=end_dt,
+        block_type="suggested",
+        source="alfred",
+        status="planned",
+        task_id=task_uuid,
+        pinned=pinned,
+    )
+    db.add(new_block)
+    await db.commit()
+
+    return await _build_agenda_response(db, week_offset)
+
+
+@router.post("/agenda/move")
+async def agenda_move(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    block_id_str = (body.get("block_id") or "").strip()
+    new_day = int(body.get("new_day", 0))
+    new_start_str = body.get("new_start", "09:00")
+    week_offset = int(body.get("week_offset", 0))
+
+    try:
+        block_uuid = UUID(block_id_str)
+    except Exception:
+        return {"error": "invalid block_id"}
+
+    block_result = await db.execute(select(AgendaBlock).where(AgendaBlock.id == block_uuid))
+    block = block_result.scalar_one_or_none()
+    if not block:
+        return {"error": "block not found"}
+
+    week_start, _ = _week_bounds_from_offset(week_offset)
+    day_date = week_start + timedelta(days=new_day)
+    duration = int((block.end_at - block.start_at).total_seconds() / 60)
+
+    try:
+        new_start_dt = datetime.combine(day_date, datetime.strptime(new_start_str, "%H:%M").time())
+    except Exception:
+        return {"error": "invalid new_start"}
+
+    block.start_at = new_start_dt
+    block.end_at = new_start_dt + timedelta(minutes=duration)
+    block.pinned = True
+    await db.commit()
+
+    return await _build_agenda_response(db, week_offset)
+
+
+@router.post("/agenda/resize")
+async def agenda_resize(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    block_id_str = (body.get("block_id") or "").strip()
+    new_duration = int(body.get("new_duration_minutes", 60))
+    week_offset = int(body.get("week_offset", 0))
+
+    try:
+        block_uuid = UUID(block_id_str)
+    except Exception:
+        return {"error": "invalid block_id"}
+
+    block_result = await db.execute(select(AgendaBlock).where(AgendaBlock.id == block_uuid))
+    block = block_result.scalar_one_or_none()
+    if not block:
+        return {"error": "block not found"}
+
+    block.end_at = block.start_at + timedelta(minutes=max(15, new_duration))
+    block.pinned = True
+    await db.commit()
+
+    return await _build_agenda_response(db, week_offset)
+
+
+@router.post("/agenda/reorganize")
+async def agenda_reorganize(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    week_offset = int(body.get("week_offset", 0))
+    week_start, week_end = _week_bounds_from_offset(week_offset)
+    suggested = await recalculate_suggestions(db, week_start, week_end)
+    return {"ok": True, "blocksCreated": len(suggested)}
 
 
 # ── legacy endpoints (kept for backward compat) ────────────────────────────

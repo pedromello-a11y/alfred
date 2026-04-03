@@ -56,16 +56,19 @@ class AgendaBlock(Base):
     title: Mapped[str] = mapped_column(VARCHAR(300), nullable=False)
     start_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
     end_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
-    block_type: Mapped[str] = mapped_column(VARCHAR(30), default="focus")  # focus/meeting/break/admin/personal
-    source: Mapped[str | None] = mapped_column(VARCHAR(30))  # manual/gcal/system
+    block_type: Mapped[str] = mapped_column(VARCHAR(30), default="focus")  # focus/meeting/break/admin/personal/suggested
+    source: Mapped[str | None] = mapped_column(VARCHAR(30))  # manual/gcal/system/alfred
     status: Mapped[str] = mapped_column(VARCHAR(20), default="planned")  # planned/done/cancelled
     linked_task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)  # alias mais claro
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)  # fixado pelo usuário via drag
     notes: Mapped[str | None] = mapped_column(TEXT)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (
         Index("idx_agenda_blocks_start_at", "start_at"),
         Index("idx_agenda_blocks_block_type", "block_type"),
+        Index("idx_agenda_blocks_task_id", "task_id"),
     )
 
 
