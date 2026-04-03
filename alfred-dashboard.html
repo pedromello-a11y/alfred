@@ -375,7 +375,7 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
   </div><!-- /view-work -->
 
   <!-- ── PERSONAL view ── -->
-  <div id="view-personal" style="display:none;padding:32px;max-width:800px;margin:0 auto;">
+  <div class="view" id="view-personal" style="padding:32px;max-width:800px;margin:0 auto;">
 
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:32px;">
     <h2 style="font-size:24px;font-weight:700;color:#e8e8ed;margin:0;">backlog pessoal</h2>
@@ -581,10 +581,9 @@ function updateClock() {
 // ── Tab switching ──────────────────────────────────────
 function switchTab(tab) {
   currentTab = tab;
-  ['work','personal','dumps'].forEach(function(t) {
-    var v = document.getElementById('view-' + t);
-    if (v) v.classList.toggle('active', t === tab);
-  });
+  document.getElementById('view-work').style.display = (tab === 'work') ? 'flex' : 'none';
+  document.getElementById('view-personal').style.display = (tab === 'personal') ? 'flex' : 'none';
+  document.getElementById('view-dumps').style.display = (tab === 'dumps') ? 'flex' : 'none';
   document.querySelectorAll('.tab').forEach(function(el) {
     el.classList.toggle('active', el.dataset.tab === tab);
   });
