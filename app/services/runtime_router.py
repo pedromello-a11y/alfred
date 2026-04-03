@@ -1,4 +1,5 @@
-from datetime import datetime, time, timedelta
+import re
+from datetime import date, datetime, time, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -104,6 +105,132 @@ async def _append_setting_log(key: str, value: str, db: AsyncSession, limit: int
     if len(merged) > limit:
         merged = merged[-limit:]
     await task_manager.set_setting(key, merged, db)
+
+
+
+# ── Parser de datas naturais PT-BR + fluxo de prazo ──────────────────
+_NL_DATE_PATTERNS = [
+    (_re_mod.compile(r"(?i)(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?"), "dmy"),
+    (_re_mod.compile(r"(?i)dia\s+(\d{1,2})"), "day_only"),
+    (_re_mod.compile(r"(?i)amanh[aã]"), "tomorrow"),
+    (_re_mod.compile(r"(?i)hoje"), "today"),
+    (_re_mod.compile(r"(?i)segunda"), "wd_0"),
+    (_re_mod.compile(r"(?i)ter[cç]a"), "wd_1"),
+    (_re_mod.compile(r"(?i)quarta"), "wd_2"),
+    (_re_mod.compile(r"(?i)quinta"), "wd_3"),
+    (_re_mod.compile(r"(?i)sexta"), "wd_4"),
+    (_re_mod.compile(r"(?i)s[aá]bado"), "wd_5"),
+    (_re_mod.compile(r"(?i)domingo"), "wd_6"),
+]
+_NL_TIME_RE = _re_mod.compile(r"(?i)(?:às?|as|ate|até)\s*(\d{1,2})(?::(\d{2}))?\s*h?")
+_NL_EOD_RE = _re_mod.compile(r"(?i)(fim do dia|final do dia|eod)")
+_DIAS_SEMANA_PT = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"]
+
+
+def _parse_natural_date(text: str) -> datetime | None:
+    """Parseia datas naturais em português. Retorna datetime naive BRT."""
+    from app.services.time_utils import today_brt
+    today = today_brt()
+    target_date = None
+
+    for pattern, kind in _NL_DATE_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        if kind == "today":
+            target_date = today
+        elif kind == "tomorrow":
+            target_date = today + timedelta(days=1)
+        elif kind.startswith("wd_"):
+            target_wd = int(kind.split("_")[1])
+            days_ahead = target_wd - today.weekday()
+            if days_ahead <= 0:
+                days_ahead += 7
+            target_date = today + timedelta(days=days_ahead)
+        elif kind == "day_only":
+            day_num = int(match.group(1))
+            try:
+                from datetime import date as _date_type
+                target_date = today.replace(day=day_num)
+                if target_date < today:
+                    m = today.month + 1
+                    y = today.year
+                    if m > 12:
+                        m, y = 1, y + 1
+                    target_date = _date_type(y, m, day_num)
+            except ValueError:
+                continue
+        elif kind == "dmy":
+            day_num = int(match.group(1))
+            month_num = int(match.group(2))
+            yr = match.group(3)
+            year_num = int(yr) if yr else today.year
+            if year_num < 100:
+                year_num += 2000
+            try:
+                from datetime import date as _date_type
+                target_date = _date_type(year_num, month_num, day_num)
+            except ValueError:
+                continue
+        if target_date:
+            break
+
+    if not target_date:
+        return None
+
+    hour, minute = 23, 59
+    tm = _NL_TIME_RE.search(text)
+    if tm:
+        hour = int(tm.group(1))
+        minute = int(tm.group(2) or 0)
+    elif _NL_EOD_RE.search(text):
+        hour, minute = 23, 59
+
+    return datetime(target_date.year, target_date.month, target_date.day, hour, minute)
+
+
+async def _handle_deadline_response(raw_text: str, task_id_str: str, db: AsyncSession) -> tuple[str, bool]:
+    """Tenta interpretar a mensagem como um prazo para a task pendente."""
+    from uuid import UUID as _UUID
+
+    parsed = _parse_natural_date(raw_text)
+    if not parsed:
+        await task_manager.set_setting("awaiting_deadline_for_task_id", "", db)
+        return "", False
+
+    try:
+        task_uuid = _UUID(task_id_str)
+    except ValueError:
+        await task_manager.set_setting("awaiting_deadline_for_task_id", "", db)
+        return "", False
+
+    result = await db.execute(select(Task).where(Task.id == task_uuid))
+    task = result.scalar_one_or_none()
+    if not task:
+        await task_manager.set_setting("awaiting_deadline_for_task_id", "", db)
+        return "", False
+
+    task.deadline = parsed
+    await db.commit()
+    await db.refresh(task)
+    await task_manager.set_setting("awaiting_deadline_for_task_id", "", db)
+
+    dia = _DIAS_SEMANA_PT[parsed.weekday()]
+    data_fmt = parsed.strftime("%d/%m/%Y")
+    hora_fmt = parsed.strftime("%H:%M") if not (parsed.hour == 23 and parsed.minute == 59) else "fim do dia"
+
+    lines = [
+        f"\u2705 Prazo definido: *{data_fmt}* ({dia})",
+        "",
+        f"*{task.title}*",
+        f"Prazo: {data_fmt} — {hora_fmt}",
+    ]
+    hint = await _current_or_next_focus_hint(db)
+    if hint:
+        lines.append("")
+        lines.append(hint)
+    return "\n".join(lines), True
+
 
 
 def _compose_title(task_title: str, project: str | None = None) -> str:
@@ -254,9 +381,13 @@ async def _build_new_task_response(task: Task, db: AsyncSession) -> str:
     deadline = _format_deadline_brief(task.deadline)
     if deadline:
         lines.append(f"Prazo: {deadline}.")
-    hint = await _current_or_next_focus_hint(db)
-    if hint:
-        lines.append(hint)
+        hint = await _current_or_next_focus_hint(db)
+        if hint:
+            lines.append(hint)
+    else:
+        await task_manager.set_setting("awaiting_deadline_for_task_id", str(task.id), db)
+        lines.append("")
+        lines.append("Qual o prazo de entrega? (ex: \\"dia 07\\", \\"sexta\\", \\"07/04\\")")
     return "\n".join(lines)
 
 
@@ -734,6 +865,14 @@ def _make_item(origin: str, raw_text: str, item_type: str, extracted_title: str)
 async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | None = None):
     if db is None:
         return await _legacy_fallback(raw_text, origin, db)
+
+    # ── Checar se estamos aguardando prazo de task recém-criada ───────
+    _awaiting_dl = await task_manager.get_setting("awaiting_deadline_for_task_id", db=db)
+    if _awaiting_dl:
+        _dl_response, _dl_handled = await _handle_deadline_response(raw_text, _awaiting_dl, db)
+        if _dl_handled:
+            return _make_item(origin, raw_text, "update", "deadline_set"), _dl_response, "deadline_set"
+    # ── Fim check prazo ──────────────────────────────────────────────
 
     decision = await interpreter.interpret_message(raw_text, db)
     if not decision or decision.get("confidence", 0) < 0.6:

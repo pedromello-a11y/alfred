@@ -1,5 +1,5 @@
 """Router do dashboard — estado, foco, amanhã e ações."""
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -13,19 +13,23 @@ from app.services import task_manager
 from app.services.active_tasks_view import get_unified_active_view
 from app.services.focus_snapshot import build_focus_snapshot
 from app.services.task_manager import calculate_level, xp_progress_in_level
+from app.services.text_utils import sanitize_json_strings
 from app.services.tomorrow_board import build_tomorrow_board
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
-# ── Leitura ──────────────────────────────────────────────────────────────
-
 @router.get("/state")
-async def dashboard_state(db: AsyncSession = Depends(get_db)) -> dict:
+async def dashboard_state(
+    db: AsyncSession = Depends(get_db),
+    week_offset: int = 0,
+) -> dict:
     focus = await build_focus_snapshot(db)
     tomorrow = await build_tomorrow_board(db)
     unified = await get_unified_active_view(db)
-    return {
+    week_start, week_end = _current_calendar_week_bounds()
+
+    state = {
         "focus": {
             "title": (focus.get("focusTask") or {}).get("title", "nenhuma tarefa ativa"),
         },
@@ -51,11 +55,19 @@ async def dashboard_state(db: AsyncSession = Depends(get_db)) -> dict:
             "priorityTask": (unified.get("top3") or [None])[0] or focus.get("focusTask"),
             "overdueTasks": unified.get("overdue", []),
         },
+        "agendaWeekStart": week_start.isoformat(),
+        "agendaWeekEnd": week_end.isoformat(),
+        "agendaDeadlines": await _build_agenda_deadlines(db, week_start, week_end),
         "xp": await _build_xp_payload(db),
-        "agenda": await _build_agenda_payload(db),
+        _agenda_data = await _build_agenda_payload(db, week_offset)
+        "agenda": _agenda_data.get("days", []),
+        "agendaDeadlines": _agenda_data.get("deadlines", []),
+        "agendaWeekStart": _agenda_data.get("weekStart", ""),
+        "agendaWeekEnd": _agenda_data.get("weekEnd", ""),
         "dumpLibrary": await _build_dump_library(db),
         "projects": await _get_project_names(db),
     }
+    return sanitize_json_strings(state)
 
 
 async def _build_xp_payload(db: AsyncSession) -> dict:
@@ -75,14 +87,26 @@ async def _build_xp_payload(db: AsyncSession) -> dict:
     return {"level": level, "current": total_xp, "percent": percent, "streak": streak}
 
 
+def _today_brt() -> date:
+    from app.services.time_utils import today_brt
+
+    return today_brt()
+
+
+def _current_calendar_week_bounds(today: date | None = None) -> tuple[date, date]:
+    today = today or _today_brt()
+    week_start = today - timedelta(days=today.weekday())
+    return week_start, week_start + timedelta(days=6)
+
+
+def _current_workweek_bounds(today: date | None = None) -> tuple[date, date]:
+    week_start, _ = _current_calendar_week_bounds(today)
+    return week_start, week_start + timedelta(days=4)
+
+
 async def _build_agenda_payload(db: AsyncSession) -> list:
     """Returns week calendar grouped by day (0=Mon..4=Fri) for the frontend."""
-    from datetime import timedelta
-    from app.services.time_utils import today_brt
-    today = today_brt()
-    # Get Monday of current week
-    monday = today - timedelta(days=today.weekday())
-    friday = monday + timedelta(days=4)
+    monday, friday = _current_workweek_bounds()
     monday_dt = datetime.combine(monday, datetime.min.time())
     friday_dt = datetime.combine(friday, datetime.max.time().replace(microsecond=0))
 
@@ -95,7 +119,7 @@ async def _build_agenda_payload(db: AsyncSession) -> list:
     )
     blocks = result.scalars().all()
 
-    _type_map = {
+    type_map = {
         "meeting": "meeting",
         "break": "break",
         "focus": "focus",
@@ -110,32 +134,68 @@ async def _build_agenda_payload(db: AsyncSession) -> list:
         dow = block.start_at.weekday()
         if dow > 4:
             continue
-        days[dow].append({
-            "title": block.title,
-            "time": block.start_at.strftime("%H:%M"),
-            "end": block.end_at.strftime("%H:%M") if block.end_at else "",
-            "type": _type_map.get(block.block_type or "focus", "focus"),
-        })
+        days[dow].append(
+            {
+                "title": block.title,
+                "time": block.start_at.strftime("%H:%M"),
+                "end": block.end_at.strftime("%H:%M") if block.end_at else "",
+                "type": type_map.get(block.block_type or "focus", "focus"),
+            }
+        )
 
     return [{"day": d, "events": events} for d, events in days.items()]
+
+
+async def _build_agenda_deadlines(db: AsyncSession, week_start: date, week_end: date) -> list[dict]:
+    result = await db.execute(
+        select(Task)
+        .where(Task.status.in_(("pending", "in_progress")))
+        .where(Task.deadline.is_not(None))
+        .order_by(Task.deadline.asc())
+    )
+    tasks = result.scalars().all()
+
+    deadlines = []
+    for task in tasks:
+        if not task.deadline:
+            continue
+
+        deadline_day = task.deadline.date()
+        if not (week_start <= deadline_day <= week_end):
+            continue
+
+        project = ""
+        task_name = task.title or ""
+        if "|" in task_name:
+            project, task_name = [part.strip() for part in task_name.split("|", 1)]
+
+        deadlines.append(
+            {
+                "id": str(task.id),
+                "title": task.title,
+                "project": project,
+                "taskName": task_name,
+                "date": deadline_day.isoformat(),
+                "label": task.deadline.strftime("%d/%m %H:%M"),
+                "day": deadline_day.weekday(),
+                "priority": task.priority,
+            }
+        )
+
+    return deadlines
 
 
 async def _build_dump_library(db: AsyncSession) -> dict:
     """Returns dump library grouped by category with needs-review and recent items."""
     from sqlalchemy import func
 
-    # Count by category
     cat_result = await db.execute(
         select(DumpItem.category, func.count(DumpItem.id))
         .where(DumpItem.status != "archived")
         .group_by(DumpItem.category)
     )
-    categories = [
-        {"name": cat or "outros", "count": cnt}
-        for cat, cnt in cat_result.all()
-    ]
+    categories = [{"name": cat or "outros", "count": cnt} for cat, cnt in cat_result.all()]
 
-    # Items needing review (unknown status or low confidence)
     review_result = await db.execute(
         select(DumpItem)
         .where(DumpItem.status.in_(("unknown", "categorized")))
@@ -145,7 +205,6 @@ async def _build_dump_library(db: AsyncSession) -> dict:
     )
     needs_review = [_dump_to_dict(d) for d in review_result.scalars().all()]
 
-    # Recent items
     recent_result = await db.execute(
         select(DumpItem)
         .where(DumpItem.status != "archived")
@@ -192,8 +251,6 @@ async def dashboard_focus(db: AsyncSession = Depends(get_db)) -> dict:
 async def dashboard_tomorrow(db: AsyncSession = Depends(get_db)) -> dict:
     return await build_tomorrow_board(db)
 
-
-# ── Ações ────────────────────────────────────────────────────────────────
 
 class ActionPayload(BaseModel):
     task_id: str
@@ -334,10 +391,6 @@ async def dashboard_task_edit(
 @router.post("/sync-gcal")
 async def sync_gcal(db: AsyncSession = Depends(get_db)) -> dict:
     """Triggers a manual Google Calendar sync and cleans up junk agenda blocks."""
-    from sqlalchemy import delete as sql_delete
-
-    # Remove junk blocks: those not sourced from gcal with suspicious titles
-    # (long titles that look like chat messages)
     junk_result = await db.execute(
         select(AgendaBlock).where(
             (AgendaBlock.source != "gcal") | (AgendaBlock.source == None)
@@ -349,8 +402,8 @@ async def sync_gcal(db: AsyncSession = Depends(get_db)) -> dict:
         await db.delete(b)
     await db.commit()
 
-    # Trigger gcal sync
     from app.services import gcal_client
+
     if not gcal_client._is_configured():
         return {"status": "error", "message": "gcal not configured", "deleted_junk": len(junk_to_delete)}
 

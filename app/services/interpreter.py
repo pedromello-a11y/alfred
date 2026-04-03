@@ -186,6 +186,7 @@ Regras obrigatórias:
 - Se a mensagem estiver criando uma demanda nova, use intent=new_task.
 - Se a mensagem estiver falando do comportamento do próprio Alfred/sistema/bot, use intent=system_feedback.
 - Se a mensagem for só contexto, observação ou nota que não deve virar task nem agenda, use intent=context_note.
+- Se o usuário mencionar prazo ou deadline (ex: "até dia 07", "pra sexta", "até amanhã", "segunda até fim do dia", "entregar dia 10"), EXTRAIA a data em deadline_iso no formato ISO 8601 com timezone -03:00. "dia 07" = dia 07 do mês atual (ou próximo mês se já passou). "segunda"/"sexta" = próximo dia da semana. "amanhã" = dia seguinte. "fim do dia" = 23:59.
 - Só preencha time_blocks quando a intenção principal for agenda_add.
 - Em correction, preencha correction_new_type com dump, task, agenda_block ou note.
 - Use deadline_iso e time_blocks.start_at/end_at em ISO 8601 completo no timezone America/Sao_Paulo.
