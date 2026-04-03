@@ -387,7 +387,7 @@ async def _build_new_task_response(task: Task, db: AsyncSession) -> str:
     else:
         await task_manager.set_setting("awaiting_deadline_for_task_id", str(task.id), db)
         lines.append("")
-        lines.append("Qual o prazo de entrega? (ex: \\"dia 07\\", \\"sexta\\", \\"07/04\\")")
+        lines.append('Qual o prazo de entrega? (ex: "dia 07", "sexta", "07/04")')
     return "\n".join(lines)
 
 
