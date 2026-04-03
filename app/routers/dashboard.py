@@ -27,7 +27,7 @@ async def dashboard_state(
     focus = await build_focus_snapshot(db)
     tomorrow = await build_tomorrow_board(db)
     unified = await get_unified_active_view(db)
-    week_start, week_end = _current_calendar_week_bounds()
+    _agenda_data = await _build_agenda_payload(db, week_offset)
 
     state = {
         "focus": {
@@ -55,11 +55,7 @@ async def dashboard_state(
             "priorityTask": (unified.get("top3") or [None])[0] or focus.get("focusTask"),
             "overdueTasks": unified.get("overdue", []),
         },
-        "agendaWeekStart": week_start.isoformat(),
-        "agendaWeekEnd": week_end.isoformat(),
-        "agendaDeadlines": await _build_agenda_deadlines(db, week_start, week_end),
         "xp": await _build_xp_payload(db),
-        _agenda_data = await _build_agenda_payload(db, week_offset)
         "agenda": _agenda_data.get("days", []),
         "agendaDeadlines": _agenda_data.get("deadlines", []),
         "agendaWeekStart": _agenda_data.get("weekStart", ""),
@@ -104,9 +100,10 @@ def _current_workweek_bounds(today: date | None = None) -> tuple[date, date]:
     return week_start, week_start + timedelta(days=4)
 
 
-async def _build_agenda_payload(db: AsyncSession) -> list:
-    """Returns week calendar grouped by day (0=Mon..4=Fri) for the frontend."""
-    monday, friday = _current_workweek_bounds()
+async def _build_agenda_payload(db: AsyncSession, week_offset: int = 0) -> dict:
+    """Returns week calendar + deadlines for the frontend, supporting week navigation."""
+    today = _today_brt() + timedelta(weeks=week_offset)
+    monday, friday = _current_workweek_bounds(today)
     monday_dt = datetime.combine(monday, datetime.min.time())
     friday_dt = datetime.combine(friday, datetime.max.time().replace(microsecond=0))
 
@@ -143,7 +140,14 @@ async def _build_agenda_payload(db: AsyncSession) -> list:
             }
         )
 
-    return [{"day": d, "events": events} for d, events in days.items()]
+    deadlines = await _build_agenda_deadlines(db, monday, friday)
+
+    return {
+        "days": [{"day": d, "events": events} for d, events in days.items()],
+        "deadlines": deadlines,
+        "weekStart": monday.isoformat(),
+        "weekEnd": friday.isoformat(),
+    }
 
 
 async def _build_agenda_deadlines(db: AsyncSession, week_start: date, week_end: date) -> list[dict]:
