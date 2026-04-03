@@ -233,6 +233,19 @@ async def build_suggested_blocks(
     )
     raw_tasks = result.scalars().all()
     work_tasks = [t for t in raw_tasks if not (t.category or "").startswith("personal")]
+
+    from datetime import date as date_type
+    today_d = date_type.today()
+
+    def is_task_available(t):
+        if not getattr(t, 'blocked', False):
+            return True
+        until = getattr(t, 'blocked_until', None)
+        if until and until <= today_d:
+            return True  # desbloqueio previsto já passou ou é hoje
+        return False
+
+    work_tasks = [t for t in work_tasks if is_task_available(t)]
     work_tasks.sort(key=lambda t: _task_priority_key(t, today))
 
     if not work_tasks:

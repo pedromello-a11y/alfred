@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ':*)",
+      "Bash(python -m py_compile app/routers/dashboard.py)",
+      "Bash(python -c \"from app.routers import dashboard; print\\('✓ Dashboard router imported successfully'\\)\")",
+      "Bash(python -c \"from app.routers import dashboard; print\\('Dashboard router imported OK'\\)\")",
+      "Bash(python -c \"from app.routers import dashboard; routes = [r for r in dashboard.router.routes if 'personal' in str\\(r.path\\)]; [print\\(f'{r.methods} {r.path}'\\) for r in routes]\")",
+      "Skill(update-config)",
+      "Skill(update-config:*)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\pedro.mello_hotmart\\.claude"
+    ]
+  }
+}

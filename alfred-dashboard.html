@@ -39,9 +39,10 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 
 /* ── Focus panel ── */
 .focus-panel{padding:24px 28px 20px;border-bottom:1px solid var(--b1);flex-shrink:0;position:relative;transition:border-color .3s}
-.focus-panel.urgent{border:none !important;box-shadow:none !important;animation:none}
-.focus-panel.urgent #focus-deadline-info::before{content:'';display:inline-block;width:10px;height:10px;background:#f87171;border-radius:50%;margin-right:8px;animation:pulse-dot 1.5s ease-in-out infinite;vertical-align:middle}
-@keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(0.8)}}
+.focus-panel.urgent {
+  /* Nenhuma borda — urgência é mostrada pela bolinha pulsante acima */
+}
+@keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(0.7)}}
 
 .night-mode .focus-panel {
   opacity: 0.3;
@@ -296,10 +297,14 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
   <div class="view active" id="view-work">
 
     <!-- Focus panel -->
-    <div class="focus-panel" id="focus-panel" style="padding:20px 24px 16px 24px;min-height:auto;display:flex;flex-direction:column;justify-content:center;position:relative;">
-      <div id="focus-project" style="font-size:12px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:#8888a0;margin-bottom:4px;font-family:monospace;"></div>
-      <div id="focus-task" style="font-size:42px;font-weight:700;letter-spacing:-0.02em;color:#e8e8ed;line-height:1.1;margin-bottom:6px;"></div>
-      <div id="focus-deadline-info" style="font-size:13px;color:#555568;font-family:monospace;margin-bottom:0;"></div>
+    <div class="focus-panel" id="focus-panel" style="padding:20px 24px 16px 24px;position:relative;min-height:140px;display:flex;flex-direction:column;justify-content:center;">
+      <div id="focus-urgent-dot" style="display:none;margin-bottom:8px;">
+        <span style="display:inline-block;width:12px;height:12px;background:#f87171;border-radius:50%;animation:pulse-dot 1.5s ease-in-out infinite;vertical-align:middle;"></span>
+        <span style="font-size:11px;color:#f87171;font-family:monospace;margin-left:6px;">ENTREGA URGENTE</span>
+      </div>
+      <div id="focus-project" style="font-size:11px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:#555568;margin-bottom:4px;font-family:monospace;"></div>
+      <div id="focus-task" style="font-size:52px;font-weight:700;letter-spacing:-0.03em;color:#e8e8ed;line-height:1.05;margin-bottom:6px;"></div>
+      <div id="focus-deadline-info" style="font-size:13px;color:#555568;font-family:monospace;"></div>
       <div id="focus-actions" style="position:absolute;top:16px;right:24px;display:flex;gap:6px;align-items:center;">
         <button onclick="completeCurrentTask()" style="background:transparent;color:#4ade80;border:1px solid #4ade8020;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px;font-family:monospace;opacity:0.6;transition:opacity 0.2s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0.6'">✓ entregar</button>
         <button onclick="togglePauseMenu()" style="background:transparent;color:#8888a0;border:1px solid #ffffff08;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px;font-family:monospace;opacity:0.4;transition:opacity 0.2s;" onmouseenter="this.style.opacity='0.8'" onmouseleave="this.style.opacity='0.4'">☕ pausa ▾</button>
@@ -444,6 +449,25 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 
         <span id="modal-status" style="font-size:11px;color:#555568;font-family:monospace;"></span>
       </div>
+      <div id="modal-block-section" style="margin:16px 0;padding:12px 16px;border-radius:8px;border:1px solid #ffffff08;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+          <span style="font-size:11px;color:#555568;font-family:monospace;letter-spacing:0.06em;">STATUS:</span>
+          <button id="btn-unblocked" onclick="setTaskBlocked(false)" style="padding:4px 14px;border-radius:4px;font-size:12px;cursor:pointer;font-family:monospace;border:1px solid;transition:all 0.15s;">● pronta</button>
+          <button id="btn-blocked" onclick="setTaskBlocked(true)" style="padding:4px 14px;border-radius:4px;font-size:12px;cursor:pointer;font-family:monospace;border:1px solid;transition:all 0.15s;">⏸ bloqueada</button>
+        </div>
+        <div id="block-details" style="display:none;margin-top:10px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <label style="font-size:11px;color:#555568;font-family:monospace;">motivo:</label>
+            <input id="block-reason" placeholder="ex: esperando Divoom chegar..." onblur="saveBlockDetails()" style="flex:1;background:#12121a;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:5px 10px;font-size:12px;font-family:monospace;outline:none;" />
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <label style="font-size:11px;color:#555568;font-family:monospace;">previsão:</label>
+            <input type="date" id="block-until" onchange="saveBlockDetails()" style="background:#12121a;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:5px 10px;font-size:12px;font-family:monospace;outline:none;" />
+            <span style="font-size:11px;color:#555568;">ou</span>
+            <button onclick="clearBlockUntil()" style="background:transparent;color:#8888a0;border:1px solid #ffffff08;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-family:monospace;">sem data</button>
+          </div>
+        </div>
+      </div>
       <div class="modal-section">
         <div class="section-label">CHECKLIST <span class="check-count" id="check-count">0/0</span></div>
         <div class="checklist" id="modal-checklist"></div>
@@ -516,6 +540,7 @@ var API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:8000
 var currentWeekOffset = 0;
 var currentTab = 'work';
 var currentModalTaskId = null;
+var currentTaskBlocked = false;
 var isMuted = false;
 var isTunnelMode = false;
 var tunnelInterval = null;
@@ -636,33 +661,43 @@ async function loadState() {
 // ── Render: Focus ──────────────────────────────────────
 function renderFocus(focus, next) {
   var panel = document.getElementById('focus-panel');
+  var urgentDot = document.getElementById('focus-urgent-dot');
+
+  if (focus && focus.blocked) focus = null;
 
   if (!focus || focus.status === 'empty') {
+    urgentDot.style.display = 'none';
     document.getElementById('focus-project').textContent = '';
     document.getElementById('focus-task').textContent = 'tudo limpo por agora ✨';
     document.getElementById('focus-task').style.fontSize = '28px';
     document.getElementById('focus-task').style.color = '#555568';
+    document.getElementById('focus-deadline-info').textContent = '';
     document.getElementById('focus-actions').style.display = 'none';
-    // Sugerir item pessoal
-    loadPersonalSuggestion();
     panel.classList.remove('urgent');
+    loadPersonalSuggestion();
     return;
   }
 
   document.getElementById('focus-actions').style.display = 'flex';
-  document.getElementById('focus-task').style.fontSize = '42px';
+  document.getElementById('focus-task').style.fontSize = '52px';
   document.getElementById('focus-task').style.color = '#e8e8ed';
 
   document.getElementById('focus-project').textContent = focus.project || '';
   document.getElementById('focus-task').textContent = focus.taskName || '';
+
+  if (focus.status === 'urgent') {
+    urgentDot.style.display = 'block';
+    panel.classList.add('urgent');
+  } else {
+    urgentDot.style.display = 'none';
+    panel.classList.remove('urgent');
+  }
 
   var info = '';
   if (focus.deadlineType === 'hard') info += '🔴 ';
   else info += '🟡 ';
   info += focus.deadlineHuman || 'sem prazo';
   document.getElementById('focus-deadline-info').textContent = info;
-
-  panel.classList.toggle('urgent', focus.status === 'urgent');
 }
 
 function fmt_time(mins) {
@@ -1010,11 +1045,16 @@ function renderActiveQueue(items) {
     return activeProjectFilter === 'ALL' || i.project === activeProjectFilter;
   });
 
-  // Atualizar contador
-  document.getElementById('active-count').textContent = workItems.length;
+  // Atualizar contador (não conta bloqueadas)
+  var activeCount = workItems.filter(function(i) { return !i.blocked; }).length;
+  document.getElementById('active-count').textContent = activeCount;
 
-  var groups = {overdue:[], thisWeek:[], nextWeek:[], noPrazo:[]};
+  var groups = {overdue:[], thisWeek:[], nextWeek:[], noPrazo:[], blocked:[]};
   filtered.forEach(function(item) {
+    if (item.blocked) {
+      groups.blocked.push(item);
+      return;
+    }
     var g = item.group || 'noPrazo';
     if (groups[g]) groups[g].push(item);
   });
@@ -1023,7 +1063,8 @@ function renderActiveQueue(items) {
     overdue: '⚠️ ATRASADAS',
     thisWeek: '📅 ESTA SEMANA',
     nextWeek: '📋 PRÓXIMA SEMANA',
-    noPrazo: '📦 SEM PRAZO'
+    noPrazo: '📦 SEM PRAZO',
+    blocked: '⏸ BLOQUEADAS'
   };
 
   Object.keys(groups).forEach(function(g) {
@@ -1039,10 +1080,24 @@ function renderActiveQueue(items) {
       el.onmouseenter = function(){ this.style.background='#ffffff06'; };
       el.onmouseleave = function(){ this.style.background='transparent'; };
 
-      var dotColor = (item.deadlineType === 'hard') ? '#f87171' : '#fbbf24';
+      var dotColor = (g === 'blocked') ? '#fbbf24' : ((item.deadlineType === 'hard') ? '#f87171' : '#fbbf24');
+      if (g === 'blocked') dotColor = '#fbbf2480';
+
+      var extraInfo = '';
+      if (g === 'blocked') {
+        var reason = item.blocked_reason || '';
+        var until = item.blocked_until || '';
+        if (reason) extraInfo = '⏸ ' + reason;
+        if (until) extraInfo += ' · prev ~' + until;
+        if (!reason && !until) extraInfo = '⏸ bloqueada';
+      }
+
       el.innerHTML =
         '<span style="width:8px;height:8px;border-radius:50%;background:' + dotColor + ';flex-shrink:0;"></span>' +
-        '<span style="flex:1;font-size:14px;color:#e8e8ed;">' + (item.project ? '<strong>' + esc(item.project) + '</strong> | ' : '') + esc(item.taskName) + '</span>' +
+        '<span style="flex:1;font-size:14px;color:' + (g === 'blocked' ? '#8888a0' : '#e8e8ed') + ';">' +
+          (item.project ? '<strong>' + esc(item.project) + '</strong> | ' : '') + esc(item.taskName) +
+          (extraInfo ? '<div style="font-size:11px;color:#fbbf2480;font-family:monospace;margin-top:2px;">' + esc(extraInfo) + '</div>' : '') +
+        '</span>' +
         '<span style="font-size:12px;color:#555568;font-family:monospace;">' + esc(item.deadlineHuman || 'sem prazo') + '</span>';
       section.appendChild(el);
     });
@@ -1105,6 +1160,7 @@ async function openTaskModal(taskId) {
   renderChecklist(task.checklist || []);
   renderNotes(task.notes || []);
   renderRelatedDumps(task.relatedDumps || []);
+  renderBlockStatus(task);
 
   document.getElementById('modal-overlay').classList.add('open');
 }
@@ -1112,6 +1168,62 @@ async function openTaskModal(taskId) {
 function closeModal() {
   document.getElementById('modal-overlay').classList.remove('open');
   currentModalTaskId = null;
+}
+
+// ── Block/Unblock ──────────────────────────────────────
+function renderBlockStatus(task) {
+  var blocked = task.blocked || false;
+  currentTaskBlocked = blocked;
+
+  var btnUnblocked = document.getElementById('btn-unblocked');
+  var btnBlocked = document.getElementById('btn-blocked');
+  var details = document.getElementById('block-details');
+
+  if (blocked) {
+    btnBlocked.style.background = '#3a2a1a';
+    btnBlocked.style.color = '#fbbf24';
+    btnBlocked.style.borderColor = '#fbbf2430';
+    btnUnblocked.style.background = 'transparent';
+    btnUnblocked.style.color = '#555568';
+    btnUnblocked.style.borderColor = '#ffffff08';
+    details.style.display = 'block';
+    document.getElementById('block-reason').value = task.blocked_reason || '';
+    document.getElementById('block-until').value = task.blocked_until || '';
+  } else {
+    btnUnblocked.style.background = '#1a2a1a';
+    btnUnblocked.style.color = '#4ade80';
+    btnUnblocked.style.borderColor = '#4ade8030';
+    btnBlocked.style.background = 'transparent';
+    btnBlocked.style.color = '#555568';
+    btnBlocked.style.borderColor = '#ffffff08';
+    details.style.display = 'none';
+  }
+}
+
+async function setTaskBlocked(blocked) {
+  if (blocked) {
+    await apiPost('/dashboard/task/' + currentModalTaskId + '/block', {
+      reason: document.getElementById('block-reason').value || '',
+      blocked_until: document.getElementById('block-until').value || null
+    });
+  } else {
+    await apiPost('/dashboard/task/' + currentModalTaskId + '/unblock', {});
+  }
+  openTaskModal(currentModalTaskId);
+  loadState();
+}
+
+async function saveBlockDetails() {
+  if (!currentTaskBlocked) return;
+  await apiPost('/dashboard/task/' + currentModalTaskId + '/block', {
+    reason: document.getElementById('block-reason').value || '',
+    blocked_until: document.getElementById('block-until').value || null
+  });
+}
+
+function clearBlockUntil() {
+  document.getElementById('block-until').value = '';
+  saveBlockDetails();
 }
 
 function renderChecklist(items) {

@@ -56,6 +56,10 @@ async def _migrate_v3_columns() -> None:
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS checklist_json JSONB DEFAULT '[]'::jsonb",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS notes_json JSONB DEFAULT '[]'::jsonb",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deadline_type VARCHAR(10) DEFAULT 'soft'",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS blocked BOOLEAN DEFAULT false",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS blocked_reason VARCHAR",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS blocked_until DATE",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS blocked_at TIMESTAMPTZ",
         """
         CREATE TABLE IF NOT EXISTS work_days (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -2,7 +2,8 @@ import uuid
 from datetime import datetime, date
 
 from sqlalchemy import (
-    UUID, VARCHAR, TEXT, BOOLEAN, INTEGER, FLOAT, TIMESTAMP, DATE, Index, UniqueConstraint
+    UUID, VARCHAR, TEXT, BOOLEAN, INTEGER, FLOAT, TIMESTAMP, DATE, Index, UniqueConstraint,
+    Boolean, String, DateTime
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -36,6 +37,10 @@ class Task(Base):
     checklist_json: Mapped[list | None] = mapped_column(JSONB, nullable=True)  # [{text: str, done: bool}]
     notes_json: Mapped[list | None] = mapped_column(JSONB, nullable=True)  # [{text: str, created_at: str}]
     deadline_type: Mapped[str | None] = mapped_column(VARCHAR(10), nullable=True)  # 'hard' or 'soft'
+    blocked: Mapped[bool] = mapped_column(Boolean, default=False)
+    blocked_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    blocked_until: Mapped[date | None] = mapped_column(DATE, nullable=True)
+    blocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("idx_tasks_status_priority", "status", "priority"),

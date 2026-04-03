@@ -105,6 +105,9 @@ def _task_to_queue_item(task: Task, today: date) -> dict:
         "group": _get_task_group(task, today),
         "checklistTotal": len(checklist),
         "checklistDone": sum(1 for i in checklist if i.get("done")),
+        "blocked": getattr(task, 'blocked', False) or False,
+        "blocked_reason": getattr(task, 'blocked_reason', None) or "",
+        "blocked_until": task.blocked_until.isoformat() if getattr(task, 'blocked_until', None) else None,
     }
 
 
@@ -520,6 +523,9 @@ async def get_task_detail(task_id: str, db: AsyncSession = Depends(get_db)) -> d
         "notes": notes_list,
         "relatedDumps": related_dumps,
         "history": " · ".join(history_parts),
+        "blocked": getattr(task, 'blocked', False) or False,
+        "blocked_reason": getattr(task, 'blocked_reason', None) or "",
+        "blocked_until": task.blocked_until.isoformat() if getattr(task, 'blocked_until', None) else None,
     }
 
 
@@ -793,6 +799,46 @@ async def update_deadline(task_id: str, body: dict, db: AsyncSession = Depends(g
             task.deadline = datetime.fromisoformat(dl_str)
         except Exception:
             pass
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/task/{task_id}/block")
+async def block_task(task_id: str, body: dict, db: AsyncSession = Depends(get_db)):
+    from sqlalchemy import select
+    from datetime import datetime, date
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"error": "not found"}
+
+    task.blocked = True
+    task.blocked_reason = body.get("reason", "")
+    until = body.get("blocked_until", None)
+    if until:
+        try:
+            task.blocked_until = datetime.strptime(until, "%Y-%m-%d").date()
+        except:
+            task.blocked_until = None
+    else:
+        task.blocked_until = None
+    task.blocked_at = datetime.now()
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/task/{task_id}/unblock")
+async def unblock_task(task_id: str, db: AsyncSession = Depends(get_db)):
+    from sqlalchemy import select
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"error": "not found"}
+
+    task.blocked = False
+    task.blocked_reason = None
+    task.blocked_until = None
+    task.blocked_at = None
     await db.commit()
     return {"ok": True}
 

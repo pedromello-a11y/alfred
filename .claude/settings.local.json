@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \":*)",
+      "Bash(git -C /c/PEDRO/CODE/ALFRED/Alfred status)",
+      "Bash(git -C /c/PEDRO/CODE/ALFRED/Alfred add app/cron/morning_briefing.py app/cron/scheduler.py app/database.py app/models.py app/services/message_handler.py app/services/task_manager.py app/cron/jira_sync.py app/services/gcal_client.py app/services/jira_client.py)",
+      "Bash(git -C:*)",
+      "Bash(powershell.exe -Command 'Add-Content $PROFILE \"`n`$env:NODE_TLS_REJECT_UNAUTHORIZED=0\"')"
+    ]
+  }
+}
