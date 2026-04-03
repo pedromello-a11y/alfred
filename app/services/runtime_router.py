@@ -930,6 +930,115 @@ async def _check_note_command(text: str, db: AsyncSession) -> str | None:
     return f"✅ Nota adicionada à *{task_name or task.title}*:\n\"{note_text}\""
 
 
+async def _check_block_command(text: str, db: AsyncSession) -> str | None:
+    """Checa comandos de bloquear/desbloquear task via WhatsApp."""
+    from sqlalchemy import and_, or_
+    text_lower = text.strip().lower()
+
+    block_triggers = ["bloquear ", "block ", "travar "]
+    unblock_triggers = ["desbloquear ", "unblock ", "destravar ", "liberar "]
+
+    is_block = any(text_lower.startswith(t) for t in block_triggers)
+    is_unblock = any(text_lower.startswith(t) for t in unblock_triggers)
+
+    if is_block or is_unblock:
+        task_hint = ""
+        for trigger in (block_triggers + unblock_triggers):
+            if text_lower.startswith(trigger):
+                task_hint = text_lower[len(trigger):].strip()
+                break
+
+        result = await db.execute(
+            select(Task).where(
+                and_(
+                    Task.status.in_(["pending", "in_progress"]),
+                    or_(
+                        Task.title.ilike(f"%{task_hint}%"),
+                    )
+                )
+            )
+        )
+        task = result.scalars().first()
+
+        if not task:
+            return f"❌ Não encontrei task com '{task_hint}'."
+
+        project = ""
+        if task.title and "|" in task.title:
+            project = task.title.split("|")[0].strip()
+        title_part = task.title.split("|")[1].strip() if task.title and "|" in task.title else (task.title or "")
+        name = f"{project} | {title_part}" if project else title_part
+
+        agora = now_brt()
+
+        if is_unblock:
+            task.blocked = False
+            task.blocked_reason = None
+            task.blocked_until = None
+            task.blocked_at = None
+            await db.commit()
+            return f"✅ *{name}* desbloqueada! Já reajustei sua agenda."
+
+        if is_block:
+            task.blocked = True
+            task.blocked_at = agora
+            await db.commit()
+            return (
+                f"⏸ *{name}* bloqueada.\n\n"
+                f"Qual o motivo?\n(responda com: motivo {title_part}: razão)\n\n"
+                f"Tem previsão de desbloqueio?\n(responda com: previsão {title_part}: dd/mm)"
+            )
+
+    # Checar motivo de bloqueio
+    if text_lower.startswith("motivo "):
+        rest = text[7:].strip()
+        if ":" in rest:
+            task_hint, reason = rest.split(":", 1)
+            task_hint = task_hint.strip()
+            reason = reason.strip()
+            result = await db.execute(
+                select(Task).where(
+                    and_(
+                        Task.blocked == True,
+                        Task.title.ilike(f"%{task_hint}%"),
+                    )
+                )
+            )
+            task = result.scalars().first()
+            if task:
+                task.blocked_reason = reason
+                await db.commit()
+                return f"✅ Motivo registrado: {reason}"
+
+    # Checar previsão de desbloqueio
+    if text_lower.startswith("previsão ") or text_lower.startswith("previsao "):
+        rest = text.split(" ", 1)[1].strip() if " " in text else ""
+        if ":" in rest:
+            task_hint, date_str = rest.split(":", 1)
+            task_hint = task_hint.strip()
+            date_str = date_str.strip()
+            result = await db.execute(
+                select(Task).where(
+                    and_(
+                        Task.blocked == True,
+                        Task.title.ilike(f"%{task_hint}%"),
+                    )
+                )
+            )
+            task = result.scalars().first()
+            if task:
+                agora = now_brt()
+                try:
+                    d = datetime.strptime(date_str, "%d/%m").date().replace(year=agora.year)
+                    task.blocked_until = d
+                    await db.commit()
+                    return f"✅ Previsão de desbloqueio: {d.strftime('%d/%m')}"
+                except Exception:
+                    return "❌ Formato de data inválido. Use dd/mm"
+
+    return None
+
+
 async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | None = None):
     if db is None:
         return await _legacy_fallback(raw_text, origin, db)
@@ -943,6 +1052,11 @@ async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | Non
     _note_response = await _check_note_command(raw_text, db)
     if _note_response:
         return _make_item(origin, raw_text, "update", "note_command"), _note_response, "note_command"
+
+    # ── Checar comandos de bloqueio ───────────────────────────────────
+    _block_response = await _check_block_command(raw_text, db)
+    if _block_response:
+        return _make_item(origin, raw_text, "update", "block_command"), _block_response, "block_command"
 
     # ── Checar se estamos aguardando prazo de task recém-criada ───────
     _awaiting_dl = await task_manager.get_setting("awaiting_deadline_for_task_id", db=db)

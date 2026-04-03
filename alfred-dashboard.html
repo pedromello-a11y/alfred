@@ -403,18 +403,27 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 </div>
 
   <!-- ── DUMPS view ── -->
-  <div class="view" id="view-dumps">
-    <div class="dumps-view">
-      <div class="dumps-header">
-        <input class="dumps-search" id="dump-search" placeholder="🔍 buscar dumps..." oninput="filterDumps(this.value)" />
-      </div>
-      <div class="dumps-filters" id="dumps-filters">
-        <span class="filter-chip active" onclick="filterDumpCategory('ALL',this)">TODOS</span>
-      </div>
-      <div class="dumps-list" id="dumps-list">
-        <div class="dumps-empty">carregando...</div>
+  <div class="view" id="view-dumps" style="display:none;padding:32px;max-width:900px;margin:0 auto;flex-direction:column;">
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:24px;">
+      <input id="dump-search" placeholder="🔍 buscar dumps..." oninput="filterDumps()" style="flex:1;background:#12121a;color:#e8e8ed;border:1px solid #ffffff12;border-radius:6px;padding:10px 16px;font-size:14px;font-family:monospace;outline:none;" />
+      <button onclick="openNewDump()" style="background:#1a1a25;color:#8888a0;border:1px solid #ffffff12;border-radius:6px;padding:10px 16px;cursor:pointer;font-size:12px;font-family:monospace;">+ novo dump</button>
+    </div>
+
+    <div id="dump-new-form" style="display:none;margin-bottom:24px;padding:16px;background:#12121a;border:1px solid #ffffff08;border-radius:8px;">
+      <input id="dump-new-text" placeholder="conteúdo do dump..." style="width:100%;background:#0a0a0f;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:8px 12px;font-size:13px;margin-bottom:8px;outline:none;box-sizing:border-box;" />
+      <div style="display:flex;gap:8px;align-items:center;">
+        <select id="dump-new-type" style="background:#0a0a0f;color:#8888a0;border:1px solid #ffffff12;border-radius:4px;padding:6px 10px;font-size:12px;font-family:monospace;">
+          <option value="referencia">📎 referência</option>
+          <option value="ideia">💡 ideia</option>
+          <option value="link">🔗 link</option>
+          <option value="anotacao">📝 anotação</option>
+        </select>
+        <button onclick="saveDump()" style="background:#1a1a25;color:#4ade80;border:1px solid #4ade8020;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:12px;font-family:monospace;">salvar</button>
+        <button onclick="closeDumpForm()" style="background:transparent;color:#555568;border:none;cursor:pointer;font-size:12px;">cancelar</button>
       </div>
     </div>
+
+    <div id="dumps-list" style="display:flex;flex-direction:column;gap:6px;"></div>
   </div>
 
   <!-- ── Modal overlay ── -->
@@ -610,6 +619,7 @@ function switchTab(tab) {
   document.getElementById('view-work').style.display = (tab === 'work') ? 'flex' : 'none';
   document.getElementById('view-personal').style.display = (tab === 'personal') ? 'flex' : 'none';
   document.getElementById('view-dumps').style.display = (tab === 'dumps') ? 'flex' : 'none';
+  document.getElementById('view-dumps').style.flexDirection = (tab === 'dumps') ? 'column' : '';
   document.querySelectorAll('.tab').forEach(function(el) {
     el.classList.toggle('active', el.dataset.tab === tab);
   });
@@ -902,8 +912,15 @@ function renderCalBlock(dayIdx, block, type) {
   el.style.boxSizing = 'border-box';
   el.dataset.col = column;
 
+  // Quick task gap suggestion — cor azul
+  if (type === 'quick') {
+    el.style.background = '#60a5fa10';
+    el.style.borderLeft = '3px solid #60a5fa';
+    el.style.opacity = '0.75';
+  }
+
   // Project color on border
-  if (block.project) {
+  if (block.project && type !== 'quick') {
     el.style.borderLeftColor = projectColor(block.project);
   }
 
@@ -1690,64 +1707,91 @@ function closeEverything() {
 
 // ── Dumps view ─────────────────────────────────────────
 async function loadDumps() {
-  var data = await apiGet('/dashboard/state');
-  if (!data || !data.dumpLibrary) return;
-  allDumps = data.dumpLibrary.recent || [];
-  renderDumps(allDumps);
-  renderDumpFilters(data.dumpLibrary.categories || []);
-}
-
-function renderDumps(dumps) {
-  var list = document.getElementById('dumps-list');
-  list.innerHTML = '';
-  if (!dumps.length) { list.innerHTML = '<div class="dumps-empty">nenhum dump encontrado</div>'; return; }
-  dumps.forEach(function(d) {
-    var el = document.createElement('div');
-    el.className = 'dump-card';
-    var icon = d.category === 'referencia' ? '📎' : d.category === 'ideia' ? '💡' : d.category === 'link' ? '🔗' : '📝';
-    el.innerHTML =
-      '<div class="dump-icon">' + icon + '</div>' +
-      '<div><div class="dump-title">' + esc(d.title||'') + '</div>' +
-      '<div class="dump-meta">' + esc(d.category||'') + (d.createdAt ? ' · ' + esc(d.createdAt) : '') + (d.confidence ? ' · ' + Math.round(d.confidence*100) + '%' : '') + '</div></div>';
-    list.appendChild(el);
-  });
-}
-
-function renderDumpFilters(cats) {
-  var filtersEl = document.getElementById('dumps-filters');
-  filtersEl.innerHTML = '';
-  var allChip = document.createElement('span');
-  allChip.className = 'filter-chip active';
-  allChip.textContent = 'TODOS';
-  allChip.onclick = function() { filterDumpCategory('ALL', allChip); };
-  filtersEl.appendChild(allChip);
-  cats.forEach(function(c) {
-    var chip = document.createElement('span');
-    chip.className = 'filter-chip';
-    chip.textContent = (c.name||'outros').toUpperCase() + ' (' + (c.count||0) + ')';
-    chip.onclick = function() { filterDumpCategory(c.name, chip); };
-    filtersEl.appendChild(chip);
-  });
-}
-
-function filterDumpCategory(cat, chipEl) {
-  dumpCategoryFilter = cat;
-  document.querySelectorAll('#dumps-filters .filter-chip').forEach(function(c){ c.classList.remove('active'); });
-  if (chipEl) chipEl.classList.add('active');
-  var filtered = cat === 'ALL' ? allDumps : allDumps.filter(function(d){ return d.category === cat; });
-  renderDumps(filtered);
-}
-
-function filterDumps(query) {
-  var q = (query||'').toLowerCase().trim();
-  var filtered = allDumps.filter(function(d) {
-    return !q || (d.title||'').toLowerCase().includes(q) || (d.rawText||'').toLowerCase().includes(q);
-  });
-  if (dumpCategoryFilter !== 'ALL') {
-    filtered = filtered.filter(function(d){ return d.category === dumpCategoryFilter; });
+  try {
+    var data = await apiGet('/dashboard/dumps');
+    allDumps = (data && data.items) ? data.items : [];
+    renderDumps(allDumps);
+  } catch(e) {
+    var list = document.getElementById('dumps-list');
+    if (list) list.innerHTML = '<div style="color:#555568;font-size:13px;padding:20px 0;text-align:center;">Erro ao carregar dumps.</div>';
   }
+}
+
+function renderDumps(items) {
+  var container = document.getElementById('dumps-list');
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (!items || !items.length) {
+    container.innerHTML = '<div style="color:#555568;font-size:13px;padding:20px 0;text-align:center;">Nenhum dump encontrado.</div>';
+    return;
+  }
+
+  var typeIcons = { referencia: '📎', ideia: '💡', link: '🔗', anotacao: '📝' };
+
+  items.forEach(function(item) {
+    var el = document.createElement('div');
+    el.style.cssText = 'display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-radius:6px;transition:background 0.15s;cursor:default;';
+    el.onmouseenter = function(){ this.style.background='#ffffff06'; };
+    el.onmouseleave = function(){ this.style.background='transparent'; };
+
+    var icon = typeIcons[item.type || item.category] || '📝';
+    var dateStr = '';
+    if (item.created_at) {
+      try {
+        var d = new Date(item.created_at);
+        dateStr = d.toLocaleDateString('pt-BR', {day:'2-digit',month:'2-digit'});
+      } catch(e) {}
+    }
+
+    el.innerHTML =
+      '<span style="font-size:16px;flex-shrink:0;margin-top:1px;">' + icon + '</span>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:14px;color:#e8e8ed;word-break:break-word;">' + esc(item.text || item.content || '') + '</div>' +
+        '<div style="font-size:11px;color:#555568;font-family:monospace;margin-top:3px;">' + esc(item.type || '') + (dateStr ? ' · ' + dateStr : '') + '</div>' +
+      '</div>' +
+      '<span onclick="deleteDump(\'' + esc(item.id) + '\')" style="cursor:pointer;font-size:11px;opacity:0.15;transition:opacity 0.2s;color:#f87171;flex-shrink:0;" onmouseenter="this.style.opacity=\'0.8\'" onmouseleave="this.style.opacity=\'0.15\'">✕</span>';
+
+    container.appendChild(el);
+  });
+}
+
+function filterDumps() {
+  var q = (document.getElementById('dump-search') ? document.getElementById('dump-search').value : '').toLowerCase();
+  if (!q) { renderDumps(allDumps); return; }
+  var filtered = allDumps.filter(function(d) {
+    return (d.text || d.content || '').toLowerCase().includes(q) ||
+           (d.type || '').toLowerCase().includes(q);
+  });
   renderDumps(filtered);
 }
+
+function openNewDump() {
+  document.getElementById('dump-new-form').style.display = 'block';
+  document.getElementById('dump-new-text').focus();
+}
+
+function closeDumpForm() {
+  document.getElementById('dump-new-form').style.display = 'none';
+  document.getElementById('dump-new-text').value = '';
+}
+
+async function saveDump() {
+  var text = document.getElementById('dump-new-text').value.trim();
+  if (!text) return;
+  var type = document.getElementById('dump-new-type').value;
+  await apiPost('/dashboard/dump', { text: text, type: type });
+  closeDumpForm();
+  loadDumps();
+}
+
+async function deleteDump(id) {
+  await apiPost('/dashboard/dump/' + id + '/delete', {});
+  loadDumps();
+}
+
+// Keep legacy filterDumpCategory for backward compat (no-op)
+function filterDumpCategory(cat, chipEl) {}
 
 // ── Keyboard shortcuts ─────────────────────────────────
 document.addEventListener('keydown', function(e) {

@@ -58,6 +58,62 @@ async def check_and_send_alerts(db: AsyncSession, send_fn) -> None:
                 pass
 
 
+async def check_blocked_reminders(db: AsyncSession, send_fn) -> None:
+    """A cada 3 dias, lembra de tasks bloqueadas sem data. No dia previsto, avisa sobre desbloqueio."""
+    from datetime import date as date_type
+    today = now_brt().date()
+
+    result = await db.execute(
+        select(Task).where(
+            and_(
+                Task.blocked == True,
+                Task.status.in_(["pending", "in_progress"]),
+            )
+        )
+    )
+    blocked_tasks = result.scalars().all()
+
+    for t in blocked_tasks:
+        blocked_at = getattr(t, "blocked_at", None)
+        until = getattr(t, "blocked_until", None)
+
+        project = ""
+        if t.title and "|" in t.title:
+            project = t.title.split("|")[0].strip()
+        title_part = t.title.split("|")[1].strip() if t.title and "|" in t.title else (t.title or "")
+        name = f"{project} | {title_part}" if project else title_part
+        reason = getattr(t, "blocked_reason", "") or ""
+
+        # Se tem data prevista e é hoje
+        if until and until == today:
+            msg = f"📦 *{name}* — previsão de desbloqueio é hoje!"
+            if reason:
+                msg += f"\nMotivo: {reason}"
+            msg += "\n\nJá desbloqueou?\n1️⃣ Sim, pode agendar!\n2️⃣ Ainda não, mover +3 dias"
+            try:
+                await send_fn(msg)
+            except Exception:
+                pass
+            continue
+
+        # Se sem data, lembrar a cada 3 dias
+        if not until and blocked_at:
+            ba_date = blocked_at.date() if hasattr(blocked_at, "date") and callable(blocked_at.date) else blocked_at
+            try:
+                days_blocked = (today - ba_date).days
+            except Exception:
+                continue
+            if days_blocked > 0 and days_blocked % 3 == 0:
+                msg = f"⏸ *{name}* está bloqueada há {days_blocked} dias."
+                if reason:
+                    msg += f"\nMotivo: {reason}"
+                msg += "\n\nAinda bloqueada?\n1️⃣ Sim\n2️⃣ Desbloqueou!"
+                try:
+                    await send_fn(msg)
+                except Exception:
+                    pass
+
+
 async def send_pre_meeting_alert(event: dict, send_fn) -> None:
     """Envia alerta 5min antes de reunião."""
     title = event.get("summary", "Reunião")

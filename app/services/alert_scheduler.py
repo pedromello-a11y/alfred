@@ -6,7 +6,7 @@ from datetime import time as dt_time
 
 from app.database import AsyncSessionLocal
 from app.services.time_utils import now_brt
-from app.services.whatsapp_alerts import check_and_send_alerts, send_pre_meeting_alert
+from app.services.whatsapp_alerts import check_and_send_alerts, send_pre_meeting_alert, check_blocked_reminders
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,14 @@ async def run_periodic_checks() -> None:
                 if send_fn:
                     async with AsyncSessionLocal() as db:
                         await check_and_send_alerts(db, send_fn)
+
+                    # Check bloqueadas (só uma vez por dia, às 10h)
+                    if dt_time(10, 0) <= hora <= dt_time(10, 30):
+                        try:
+                            async with AsyncSessionLocal() as db:
+                                await check_blocked_reminders(db, send_fn)
+                        except Exception:
+                            pass
 
                     # Check reuniões nos próximos 6 minutos
                     try:

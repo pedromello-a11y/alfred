@@ -608,6 +608,25 @@ async def complete_task_v3(task_id: str, body: dict, db: AsyncSession = Depends(
         task.actual_minutes = int(actual)
 
     await db.commit()
+
+    # Log média do projeto para uso futuro
+    project = getattr(task, "project", None) or (task.title.split("|")[0].strip() if task.title and "|" in task.title else "")
+    if project and task.actual_minutes:
+        from sqlalchemy import and_
+        import logging as _logging
+        completed = await db.execute(
+            select(Task).where(
+                and_(
+                    Task.status.in_(["done", "completed"]),
+                    Task.actual_minutes.isnot(None),
+                )
+            )
+        )
+        done_tasks = [t for t in completed.scalars().all() if (t.title or "").startswith(project)]
+        if len(done_tasks) >= 3:
+            avg = sum(t.actual_minutes for t in done_tasks) / len(done_tasks)
+            _logging.getLogger(__name__).info(f"Projeto {project}: média real {avg:.0f}min ({len(done_tasks)} tasks)")
+
     return {"status": "ok", "title": task.title}
 
 
@@ -656,11 +675,28 @@ async def confirm_smart_task(body: dict, db: AsyncSession = Depends(get_db)) -> 
         except ValueError:
             pass
 
+    # Sugerir estimativa baseada no histórico do projeto
+    estimate = body.get("estimate") or 120
+    if project:
+        from sqlalchemy import and_
+        completed_hist = await db.execute(
+            select(Task).where(
+                and_(
+                    Task.status.in_(["done", "completed"]),
+                    Task.actual_minutes.isnot(None),
+                )
+            )
+        )
+        hist_tasks = [t for t in completed_hist.scalars().all() if (t.title or "").startswith(project)]
+        if len(hist_tasks) >= 3:
+            avg = sum(t.actual_minutes for t in hist_tasks) / len(hist_tasks)
+            estimate = int(avg)
+
     new_task = Task(
         title=full_title,
         origin="dashboard",
         status="pending",
-        estimated_minutes=body.get("estimate") or 120,
+        estimated_minutes=estimate,
         deadline=deadline,
         category="work",
     )
@@ -751,21 +787,61 @@ async def delete_personal_item(item_id: str, db: AsyncSession = Depends(get_db))
     return {"ok": True}
 
 
+@router.get("/dumps")
+async def get_dumps(db: AsyncSession = Depends(get_db)) -> dict:
+    result = await db.execute(
+        select(DumpItem)
+        .where(DumpItem.status != "archived")
+        .order_by(DumpItem.created_at.desc())
+        .limit(100)
+    )
+    items = result.scalars().all()
+    return {"items": [
+        {
+            "id": str(d.id),
+            "text": d.rewritten_title or d.raw_text or "",
+            "content": d.rewritten_title or d.raw_text or "",
+            "type": d.category or "anotacao",
+            "category": d.category or "anotacao",
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+        }
+        for d in items
+    ]}
+
+
 @router.post("/dump")
 async def create_quick_dump(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
     text = (body.get("text") or "").strip()
     if not text:
         return {"status": "error", "message": "text required"}
+    category = (body.get("type") or body.get("category") or "anotacao").strip()
     new_dump = DumpItem(
         raw_text=text,
         rewritten_title=text[:100],
         status="categorized",
         source="dashboard",
+        category=category,
     )
     db.add(new_dump)
     await db.commit()
     await db.refresh(new_dump)
     return {"status": "ok", "id": str(new_dump.id)}
+
+
+@router.post("/dump/{dump_id}/delete")
+async def delete_dump_item(dump_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    try:
+        from uuid import UUID as _UUID
+        dump_uuid = _UUID(dump_id)
+    except ValueError:
+        return {"error": "invalid id"}
+    result = await db.execute(select(DumpItem).where(DumpItem.id == dump_uuid))
+    item = result.scalar_one_or_none()
+    if not item:
+        return {"error": "not found"}
+    await db.delete(item)
+    await db.commit()
+    return {"ok": True}
 
 
 @router.post("/task/{task_id}/deadline-type")

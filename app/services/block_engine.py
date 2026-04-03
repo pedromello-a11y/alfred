@@ -166,10 +166,25 @@ def _calc_risk(
     today: date,
     week_end: date,
 ) -> dict | None:
-    """Calcula risco: horas necessárias vs disponíveis esta semana."""
-    # Horas necessárias = tasks com deadline até fim da semana
+    """Calcula risco da semana considerando bloqueadas e datas de desbloqueio."""
     needed_min = 0
+    risky_tasks: list[dict] = []
+
     for t in tasks:
+        if getattr(t, "blocked", False):
+            until = getattr(t, "blocked_until", None)
+            if until and until <= week_end:
+                # Desbloqueada essa semana — contar
+                est = (getattr(t, "estimated_minutes", 120) or 120)
+                needed_min += est
+                risky_tasks.append({
+                    "name": t.title,
+                    "hours": est / 60,
+                    "deadline_type": getattr(t, "deadline_type", "soft") or "soft",
+                    "note": f"desbloqueada a partir de {until}",
+                })
+            continue
+
         if not t.deadline:
             continue
         try:
@@ -177,12 +192,18 @@ def _calc_risk(
         except Exception:
             continue
         if dl <= week_end:
-            needed_min += t.estimated_minutes or 120
+            est = t.estimated_minutes or 120
+            needed_min += est
+            risky_tasks.append({
+                "name": t.title,
+                "hours": est / 60,
+                "deadline_type": getattr(t, "deadline_type", "soft") or "soft",
+            })
 
     if needed_min == 0:
         return None
 
-    # Horas disponíveis = soma de todos os blocos sugeridos até fim da semana
+    # Horas disponíveis = soma de todos os blocos sugeridos (excluindo quick)
     available_min = sum(
         int(
             (
@@ -190,6 +211,7 @@ def _calc_risk(
             ).total_seconds() / 60
         )
         for b in suggested
+        if b.get("type") != "quick"
     )
 
     needed_h = round(needed_min / 60, 1)
@@ -199,17 +221,94 @@ def _calc_risk(
     if deficit <= 0:
         return None
 
-    suggestion = (
-        f"Déficit de {deficit}h esta semana. "
-        f"Considere adiar tarefas ou trabalhar além do horário padrão."
-    )
+    # Sugerir qual task mover (menor, prazo soft)
+    suggestion = ""
+    soft_tasks = [rt for rt in risky_tasks if rt.get("deadline_type") != "hard"]
+    if soft_tasks:
+        easiest = min(soft_tasks, key=lambda x: x["hours"])
+        name = easiest["name"]
+        if "|" in name:
+            _, name = name.split("|", 1)
+        name = name.strip()
+        suggestion = f"Considere mover '{name}' ({easiest['hours']:.0f}h) pra próxima semana."
+    else:
+        suggestion = f"Déficit de {deficit}h esta semana. Considere adiar tarefas ou trabalhar além do horário padrão."
 
     return {
         "totalHoursNeeded": needed_h,
         "totalHoursAvailable": available_h,
         "deficit": deficit,
         "suggestion": suggestion,
+        "taskCount": len(risky_tasks),
     }
+
+
+def _find_quick_tasks_for_gaps(
+    suggested_blocks: list[dict],
+    existing_blocks: list[AgendaBlock],
+    tasks: list[Task],
+    day_idx: int,
+    day_date: date,
+) -> list[dict]:
+    """Encontra gaps de 20-45min entre blocos e sugere tasks rápidas."""
+    quick_suggestions: list[dict] = []
+
+    # Juntar todos os blocos do dia (gcal + sugeridos) e ordenar por hora
+    all_blocks: list[dict] = []
+    for b in suggested_blocks:
+        if b.get("day") == day_idx:
+            try:
+                s = int(datetime.strptime(b["start"], "%H:%M").hour * 60 + datetime.strptime(b["start"], "%H:%M").minute)
+                e = int(datetime.strptime(b["end"], "%H:%M").hour * 60 + datetime.strptime(b["end"], "%H:%M").minute)
+                all_blocks.append({"start": s, "end": e})
+            except Exception:
+                pass
+    for ev in existing_blocks:
+        if ev.start_at and ev.end_at and ev.start_at.date() == day_date and ev.status != "cancelled":
+            sa = ev.start_at.replace(tzinfo=None) if ev.start_at.tzinfo else ev.start_at
+            ea = ev.end_at.replace(tzinfo=None) if ev.end_at.tzinfo else ev.end_at
+            all_blocks.append({"start": sa.hour * 60 + sa.minute, "end": ea.hour * 60 + ea.minute})
+
+    all_blocks.sort(key=lambda x: x["start"])
+
+    # Encontrar gaps de 20-45min
+    for i in range(len(all_blocks) - 1):
+        gap_start = all_blocks[i]["end"]
+        gap_end = all_blocks[i + 1]["start"]
+        gap_minutes = gap_end - gap_start
+
+        if 20 <= gap_minutes <= 45:
+            # Buscar task com estimativa <= gap_minutes
+            for t in tasks:
+                est = getattr(t, "estimated_minutes", 120) or 120
+                if est <= gap_minutes and not getattr(t, "blocked", False):
+                    # Não sugerir tasks que já têm bloco sugerido neste dia
+                    already = any(
+                        b.get("day") == day_idx and b.get("taskId") == str(t.id)
+                        for b in suggested_blocks
+                    )
+                    if already:
+                        continue
+                    gap_start_dt = datetime(day_date.year, day_date.month, day_date.day, gap_start // 60, gap_start % 60)
+                    gap_end_dt = gap_start_dt + timedelta(minutes=est)
+                    project, task_name = _parse_project_task(t.title)
+                    quick_suggestions.append({
+                        "day": day_idx,
+                        "title": task_name,
+                        "start": gap_start_dt.strftime("%H:%M"),
+                        "time": gap_start_dt.strftime("%H:%M"),
+                        "end": gap_end_dt.strftime("%H:%M"),
+                        "type": "quick",
+                        "source": "alfred",
+                        "project": project,
+                        "taskId": str(t.id),
+                        "fullTitle": t.title,
+                        "shortTitle": (t.title or "")[:30],
+                        "deadlineHuman": "",
+                    })
+                    break  # Só uma sugestão por gap
+
+    return quick_suggestions
 
 
 async def build_suggested_blocks(
@@ -269,6 +368,12 @@ async def build_suggested_blocks(
     ]
 
     suggested = _allocate(work_tasks, days, existing_blocks, now_naive)
+
+    # Adicionar sugestões rápidas para gaps entre blocos
+    for day_idx, day_date in days:
+        quick = _find_quick_tasks_for_gaps(suggested, existing_blocks, work_tasks, day_idx, day_date)
+        suggested.extend(quick)
+
     risk = _calc_risk(work_tasks, suggested, today, week_end)
 
     return suggested, risk
