@@ -177,6 +177,7 @@ async def _build_focus_v3(db: AsyncSession) -> tuple[dict, dict | None]:
     else:
         status = "free"
 
+    checklist = getattr(focus_task, "checklist_json", None) or []
     focus = {
         "taskId": str(focus_task.id),
         "project": project,
@@ -188,6 +189,8 @@ async def _build_focus_v3(db: AsyncSession) -> tuple[dict, dict | None]:
         "estimate": focus_task.estimated_minutes or 120,
         "currentBlock": block_payload,
         "status": status,
+        "checklistTotal": len(checklist),
+        "checklistDone": sum(1 for i in checklist if i.get("done")),
     }
 
     next_task_obj = work_tasks[1] if len(work_tasks) > 1 else None
@@ -210,18 +213,56 @@ async def _build_focus_v3(db: AsyncSession) -> tuple[dict, dict | None]:
 async def _build_today_tasks(db: AsyncSession) -> list[dict]:
     today = _today_brt()
     tomorrow = today + timedelta(days=1)
+    now_dt = _now_brt().replace(tzinfo=None) if _now_brt().tzinfo else _now_brt()
+    today_start = datetime.combine(today, datetime.min.time())
+    today_end = datetime.combine(tomorrow, datetime.min.time())
+
+    # Tasks com deadline hoje
     result = await db.execute(
         select(Task)
-        .where(Task.status.in_(("pending", "in_progress")))
-        .where(Task.deadline >= datetime.combine(today, datetime.min.time()))
-        .where(Task.deadline < datetime.combine(tomorrow, datetime.min.time()))
+        .where(Task.status.in_(("pending", "in_progress", "done", "completed")))
+        .where(Task.deadline >= today_start)
+        .where(Task.deadline < today_end)
         .order_by(Task.deadline.asc())
     )
     tasks = result.scalars().all()
+
+    # AgendaBlocks de hoje (excluindo gcal puro sem task_id)
+    blocks_result = await db.execute(
+        select(AgendaBlock)
+        .where(AgendaBlock.start_at >= today_start)
+        .where(AgendaBlock.start_at < today_end)
+        .where(AgendaBlock.status != "cancelled")
+        .order_by(AgendaBlock.start_at.asc())
+    )
+    blocks = blocks_result.scalars().all()
+
+    # Mapear task_id -> bloco
+    task_block_map: dict[str, AgendaBlock] = {}
+    for b in blocks:
+        if b.task_id:
+            task_block_map[str(b.task_id)] = b
+
+    # Calcular horas livres restantes (entre agora e 20h)
+    end_of_day = datetime.combine(today, datetime.min.time().replace(hour=20))
+    busy_mins = 0
+    for b in blocks:
+        if not b.start_at or not b.end_at:
+            continue
+        b_start = max(b.start_at, now_dt)
+        b_end = min(b.end_at, end_of_day)
+        if b_end > b_start:
+            busy_mins += int((b_end - b_start).total_seconds() / 60)
+    total_remaining_mins = max(0, int((end_of_day - now_dt).total_seconds() / 60))
+    available_hours = round((total_remaining_mins - busy_mins) / 60, 1)
+
     items = []
     for task in tasks:
         project, task_name = _parse_project_task(task.title)
         checklist = getattr(task, "checklist_json", None) or []
+        blk = task_block_map.get(str(task.id))
+        scheduled_start = blk.start_at.strftime("%H:%M") if blk and blk.start_at else None
+        scheduled_end = blk.end_at.strftime("%H:%M") if blk and blk.end_at else None
         items.append({
             "id": str(task.id),
             "project": project,
@@ -229,9 +270,23 @@ async def _build_today_tasks(db: AsyncSession) -> list[dict]:
             "deadline": task.deadline.isoformat() if task.deadline else None,
             "deadlineHuman": _humanize_deadline(task.deadline),
             "deadlineType": getattr(task, "deadline_type", None) or "soft",
+            "status": task.status or "pending",
+            "jira_key": (task.origin_ref or "") if task.origin == "jira" else "",
+            "scheduledStart": scheduled_start,
+            "scheduledEnd": scheduled_end,
+            "estimatedMinutes": task.estimated_minutes or 0,
             "checklistTotal": len(checklist),
             "checklistDone": sum(1 for i in checklist if i.get("done")),
+            "availableHours": available_hours,
         })
+
+    # Ordenar: com horário alocado primeiro (por hora), sem horário por deadline
+    def sort_key(it):
+        if it["scheduledStart"]:
+            return (0, it["scheduledStart"])
+        return (1, it["deadline"] or "9999")
+
+    items.sort(key=sort_key)
     return items
 
 
@@ -452,6 +507,7 @@ async def dashboard_state(db: AsyncSession = Depends(get_db), week_offset: int =
     # Extrai riskAlert que veio embutido no agenda_data
     risk_alert = agenda_data.pop("_riskAlert", None)
 
+    import os
     state = {
         "focus": focus,
         "nextTask": next_task,
@@ -462,6 +518,7 @@ async def dashboard_state(db: AsyncSession = Depends(get_db), week_offset: int =
         "riskAlert": risk_alert,
         "xp": await _build_xp_payload(db),
         "dumpLibrary": await _build_dump_library(db),
+        "jiraUrl": os.getenv("JIRA_URL", settings.jira_base_url or ""),
     }
     return sanitize_json_strings(state)
 
@@ -1137,3 +1194,255 @@ async def night_summary(db: AsyncSession = Depends(get_db)) -> dict:
         tomorrow = "✨ nada urgente amanhã"
 
     return {"summary": summary, "tomorrow": tomorrow}
+
+
+# ── Jira integration ────────────────────────────────────────────────────────
+
+import base64
+import httpx
+
+
+def _jira_auth_headers() -> dict:
+    token = base64.b64encode(
+        f"{settings.jira_email}:{settings.jira_api_token}".encode()
+    ).decode()
+    return {
+        "Authorization": f"Basic {token}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+
+def _jira_configured() -> bool:
+    return bool(settings.jira_base_url and settings.jira_email and settings.jira_api_token)
+
+
+_JIRA_PRIORITY_MAP = {"Lowest": 1, "Low": 2, "Medium": 3, "High": 4, "Highest": 5}
+
+_JIRA_PROJECT_NAMES: dict[str, str] = {
+    "SOM": "Squad Operação Marcom",
+}
+
+
+def _jira_project_name(key: str) -> str:
+    prefix = key.split("-")[0] if "-" in key else key
+    return _JIRA_PROJECT_NAMES.get(prefix, prefix)
+
+
+def _jira_issue_to_dict(issue: dict, linked_keys: set[str]) -> dict:
+    fields = issue.get("fields", {})
+    key = issue.get("key", "")
+    due = fields.get("duedate")
+    priority_name = (fields.get("priority") or {}).get("name", "Medium")
+    description_raw = fields.get("description") or {}
+    # Extract plain text from Atlassian Document Format if present
+    desc_text = ""
+    if isinstance(description_raw, dict):
+        try:
+            for block in description_raw.get("content", []):
+                for inline in block.get("content", []):
+                    if inline.get("type") == "text":
+                        desc_text += inline.get("text", "")
+        except Exception:
+            pass
+    elif isinstance(description_raw, str):
+        desc_text = description_raw
+    return {
+        "key": key,
+        "summary": fields.get("summary", ""),
+        "status": (fields.get("status") or {}).get("name", ""),
+        "dueDate": due,
+        "priority": priority_name,
+        "description": desc_text[:200],
+        "linked": key in linked_keys,
+    }
+
+
+@router.get("/jira/issues")
+async def jira_list_issues(db: AsyncSession = Depends(get_db)) -> dict:
+    if not _jira_configured():
+        return {"status": "error", "message": "Jira não configurado"}
+
+    # Buscar jira keys já linkadas (origin_ref onde origin == 'jira')
+    linked_result = await db.execute(
+        select(Task.origin_ref).where(Task.origin == "jira").where(Task.origin_ref.is_not(None))
+    )
+    linked_keys = {row[0] for row in linked_result.all()}
+
+    jql = "assignee = currentUser() AND status != Done ORDER BY duedate ASC"
+    url = f"{settings.jira_base_url.rstrip('/')}/rest/api/3/search"
+    params = {
+        "jql": jql,
+        "maxResults": 50,
+        "fields": "summary,status,duedate,priority,description",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, headers=_jira_auth_headers(), params=params)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+    issues = [_jira_issue_to_dict(i, linked_keys) for i in data.get("issues", [])]
+    return {"status": "ok", "issues": issues, "total": len(issues)}
+
+
+class JiraLinkPayload(BaseModel):
+    task_id: str
+    jira_key: str
+
+
+@router.post("/jira/link")
+async def jira_link_task(payload: JiraLinkPayload, db: AsyncSession = Depends(get_db)) -> dict:
+    if not _jira_configured():
+        return {"status": "error", "message": "Jira não configurado"}
+    try:
+        task_uuid = UUID(payload.task_id)
+    except ValueError:
+        return {"status": "error", "message": "invalid task_id"}
+
+    result = await db.execute(select(Task).where(Task.id == task_uuid))
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"status": "error", "message": "task not found"}
+
+    url = f"{settings.jira_base_url.rstrip('/')}/rest/api/3/issue/{payload.jira_key}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, headers=_jira_auth_headers())
+            resp.raise_for_status()
+            issue = resp.json()
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+    fields = issue.get("fields", {})
+    updated_fields = []
+
+    task.origin_ref = payload.jira_key
+    task.origin = "jira"
+    updated_fields.append("jira_key")
+
+    if not task.deadline and fields.get("duedate"):
+        try:
+            task.deadline = datetime.fromisoformat(fields["duedate"])
+            updated_fields.append("deadline")
+        except Exception:
+            pass
+
+    description_raw = fields.get("description") or {}
+    desc_text = ""
+    if isinstance(description_raw, dict):
+        try:
+            for block in description_raw.get("content", []):
+                for inline in block.get("content", []):
+                    if inline.get("type") == "text":
+                        desc_text += inline.get("text", "")
+        except Exception:
+            pass
+    elif isinstance(description_raw, str):
+        desc_text = description_raw
+
+    if desc_text.strip():
+        notes = list(task.notes_json or [])
+        notes.append({
+            "text": f"[Jira] {desc_text[:500]}",
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        })
+        task.notes_json = notes
+        updated_fields.append("notes")
+
+    await db.commit()
+    return {"status": "ok", "updated_fields": updated_fields}
+
+
+class JiraImportPayload(BaseModel):
+    keys: list[str]
+
+
+@router.post("/jira/import")
+async def jira_import_issues(payload: JiraImportPayload, db: AsyncSession = Depends(get_db)) -> dict:
+    if not _jira_configured():
+        return {"status": "error", "message": "Jira não configurado"}
+    if not payload.keys:
+        return {"status": "error", "message": "no keys provided"}
+
+    imported_tasks = []
+    for key in payload.keys:
+        url = f"{settings.jira_base_url.rstrip('/')}/rest/api/3/issue/{key}"
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    url,
+                    headers=_jira_auth_headers(),
+                    params={"fields": "summary,status,duedate,priority,description"},
+                )
+                resp.raise_for_status()
+                issue = resp.json()
+        except Exception as e:
+            imported_tasks.append({"key": key, "status": "error", "message": str(e)})
+            continue
+
+        fields = issue.get("fields", {})
+        project_name = _jira_project_name(key)
+        summary = fields.get("summary", key)
+        full_title = f"{project_name} | {summary}"
+
+        deadline = None
+        if fields.get("duedate"):
+            try:
+                deadline = datetime.fromisoformat(fields["duedate"])
+            except Exception:
+                pass
+
+        priority_name = (fields.get("priority") or {}).get("name", "Medium")
+        priority_int = _JIRA_PRIORITY_MAP.get(priority_name, 3)
+
+        description_raw = fields.get("description") or {}
+        desc_text = ""
+        if isinstance(description_raw, dict):
+            try:
+                for block in description_raw.get("content", []):
+                    for inline in block.get("content", []):
+                        if inline.get("type") == "text":
+                            desc_text += inline.get("text", "")
+            except Exception:
+                pass
+        elif isinstance(description_raw, str):
+            desc_text = description_raw
+
+        notes_json = []
+        if desc_text.strip():
+            notes_json.append({
+                "text": f"[Jira] {desc_text[:500]}",
+                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            })
+
+        new_task = Task(
+            title=full_title,
+            origin="jira",
+            origin_ref=key,
+            status="pending",
+            priority=priority_int,
+            deadline=deadline,
+            category="work",
+            estimated_minutes=120,
+            notes_json=notes_json if notes_json else None,
+        )
+        db.add(new_task)
+        try:
+            await db.flush()
+            imported_tasks.append({
+                "key": key,
+                "status": "imported",
+                "id": str(new_task.id),
+                "title": full_title,
+            })
+        except Exception as e:
+            await db.rollback()
+            imported_tasks.append({"key": key, "status": "error", "message": str(e)})
+            continue
+
+    await db.commit()
+    imported_count = sum(1 for t in imported_tasks if t.get("status") == "imported")
+    return {"imported": imported_count, "tasks": imported_tasks}

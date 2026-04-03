@@ -37,17 +37,7 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 .view{display:none;flex:1;flex-direction:column;overflow:hidden}
 .view.active{display:flex}
 
-/* ── Focus panel ── */
-.focus-panel{padding:24px 28px 20px;border-bottom:1px solid var(--b1);flex-shrink:0;position:relative;transition:border-color .3s}
-.focus-panel.urgent {
-  /* Nenhuma borda — urgência é mostrada pela bolinha pulsante acima */
-}
 @keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(0.7)}}
-
-.night-mode .focus-panel {
-  opacity: 0.3;
-  pointer-events: none;
-}
 
 .night-overlay {
   position: fixed;
@@ -70,16 +60,9 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
   max-width: 420px;
 }
 
-.focus-project{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--t-muted);margin-bottom:6px}
-.focus-task{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1.1;color:var(--t-primary);margin-bottom:12px;max-width:800px}
-.focus-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--t-muted);margin-bottom:16px;font-family:'JetBrains Mono',monospace}
-.focus-meta .meta-dot{color:var(--t-dim)}
 .deadline-type{display:inline-flex;align-items:center;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
 .deadline-type.hard{background:var(--red-bg);color:var(--red)}
 .deadline-type.soft{background:var(--gold-bg);color:var(--gold)}
-.progress-mini{display:inline-block;width:60px;height:4px;background:var(--b2);border-radius:2px;vertical-align:middle}
-.progress-fill{height:100%;background:var(--green);border-radius:2px;transition:width .5s}
-.focus-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
 .btn-action{padding:6px 14px;border-radius:6px;border:1px solid var(--b2);background:var(--s1);color:var(--t-primary);font-size:12px;font-weight:500;cursor:pointer;transition:background .15s,border-color .15s;position:relative}
 .btn-action:hover{background:var(--s2);border-color:var(--b2)}
 .btn-done{border-color:var(--green)40;color:var(--green)}
@@ -90,74 +73,170 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 .btn-tunnel:hover{background:var(--purple-bg)}
 .btn-del{border-color:var(--red)40;color:var(--red)}
 .btn-del:hover{background:var(--red-bg)}
-.btn-pause{position:relative}
 .pause-menu{display:none;position:absolute;top:calc(100% + 4px);left:0;background:var(--s2);border:1px solid var(--b2);border-radius:6px;overflow:hidden;min-width:120px;z-index:100}
 .pause-menu.open{display:block}
 .pause-menu div{padding:8px 14px;cursor:pointer;font-size:12px;color:var(--t-primary)}
 .pause-menu div:hover{background:var(--b1)}
-.focus-next{font-size:12px;color:var(--t-dim);font-family:'JetBrains Mono',monospace}
-.focus-empty{display:flex;align-items:center;gap:12px;color:var(--t-muted);font-size:15px}
-.focus-free-label{color:var(--t-dim);font-size:12px;font-family:'JetBrains Mono',monospace;margin-bottom:8px}
 
-/* ── Middle zone ── */
-.middle-zone{display:flex;flex:1;overflow:hidden;min-height:0}
+/* ── Work layout ── */
+.work-body{display:flex;flex:1;overflow:hidden;min-height:0}
 
-/* ── Agenda ── */
-.agenda-section{flex:1;display:flex;flex-direction:column;border-right:1px solid var(--b1);overflow:hidden;min-width:0}
-.agenda-nav{display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--b1);gap:8px;flex-shrink:0}
-.agenda-nav-btn{background:none;border:1px solid var(--b1);border-radius:4px;color:var(--t-muted);font-size:12px;padding:3px 10px;cursor:pointer}
-.agenda-nav-btn:hover{border-color:var(--b2);color:var(--t-primary)}
-.agenda-week-label{font-size:12px;color:var(--t-muted);font-family:'JetBrains Mono',monospace;flex:1;text-align:center}
-.cal-container{flex:1;overflow-y:auto;overflow-x:hidden;position:relative}
-.cal-grid{display:flex;min-height:600px}
-.cal-time-col{width:40px;flex-shrink:0;position:relative}
-.cal-time-label{position:absolute;font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--t-dim);right:4px;transform:translateY(-50%);line-height:1}
-.cal-days{display:flex;flex:1;position:relative}
-.cal-day-header-row{display:flex;padding-left:40px;border-bottom:1px solid var(--b1);flex-shrink:0}
-.cal-day-header{flex:1;text-align:center;padding:6px 4px;font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--t-dim);letter-spacing:.06em;text-transform:uppercase}
-.cal-day-header.today{color:var(--purple)}
-.day-col{flex:1;position:relative;border-right:1px solid var(--b1);min-height:600px}
-.day-col:last-child{border-right:none}
-.cal-hour-line{position:absolute;left:0;right:0;border-top:1px solid var(--b1);pointer-events:none}
-.cal-now-line{position:absolute;left:0;right:0;border-top:2px solid var(--red);z-index:5;pointer-events:none}
-.cal-now-line::before{content:'';position:absolute;left:-3px;top:-4px;width:6px;height:6px;border-radius:50%;background:var(--red)}
-.cal-block{position:absolute;left:2px;right:2px;border-radius:4px;padding:3px 5px;overflow:hidden;font-size:10px;cursor:pointer;transition:opacity .15s;z-index:2;border-left:3px solid;box-sizing:border-box;text-overflow:ellipsis;white-space:nowrap}
-.cal-block:hover{opacity:.85}
-.cal-gcal{background:var(--purple-bg);border-left-color:var(--purple)}
-.cal-suggested{background:var(--green-bg);border-left-color:var(--green)}
-.cal-pause{background:var(--pause-bg);border-left-color:#555}
-.cal-quick{background:var(--blue-bg);border-left-color:var(--blue)}
-.cal-block.current-block{box-shadow:0 0 10px var(--green)50;animation:glow-block 2s infinite}
-@keyframes glow-block{0%,100%{box-shadow:0 0 10px var(--green)40}50%{box-shadow:0 0 20px var(--green)70}}
-.block-time{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--t-dim);line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.block-title{font-size:10px;font-weight:500;color:var(--t-primary);line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cal-deadline-marker{position:absolute;left:0;right:0;height:2px;background:var(--red);z-index:3;pointer-events:none}
-.cal-deadline-label{position:absolute;right:2px;top:-12px;font-size:9px;font-family:'JetBrains Mono',monospace;color:var(--red);white-space:nowrap;background:var(--bg);padding:0 2px}
+.focus-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
 
-/* ── Today panel ── */
-.today-panel{width:240px;flex-shrink:0;display:flex;flex-direction:column;overflow:hidden}
-.today-header{padding:10px 14px;border-bottom:1px solid var(--b1);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--t-muted);flex-shrink:0}
-.today-list{flex:1;overflow-y:auto;padding:8px}
-.today-item{display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:6px;cursor:pointer;transition:background .15s;margin-bottom:4px}
-.today-item:hover{background:var(--s1)}
-.today-empty{padding:16px;text-align:center;color:var(--t-dim);font-size:12px}
-.deadline-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px}
-.deadline-dot.hard{background:var(--red)}
-.deadline-dot.soft{background:var(--gold)}
-.today-info{flex:1;min-width:0}
-.today-name{font-size:12px;font-weight:500;color:var(--t-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.today-deadline{font-size:11px;color:var(--t-muted);font-family:'JetBrains Mono',monospace}
-.today-checklist{font-size:10px;color:var(--t-dim);margin-top:2px}
+.focus-main {
+  flex: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 40px;
+  position: relative;
+  min-width: 0;
+}
+
+.focus-sidebar {
+  flex: 0 0 260px;
+  border-left: 1px solid #ffffff08;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: transparent;
+}
+
+.focus-task-name {
+  font-size: clamp(28px, 4.5vw, 56px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: #e8e8ed;
+  text-align: center;
+  max-width: 600px;
+  line-height: 1.1;
+  word-wrap: break-word;
+}
+
+.focus-project-label {
+  font-size: 12px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #555568;
+  font-family: 'JetBrains Mono', monospace;
+  margin-bottom: 12px;
+}
+
+.focus-actions-bar {
+  margin-top: 24px;
+  display: flex;
+  gap: 8px;
+  opacity: 0.35;
+  transition: opacity 0.3s;
+}
+.focus-actions-bar:hover { opacity: 0.95; }
+.focus-actions-bar button {
+  background: transparent;
+  border: 1px solid #ffffff08;
+  color: #8888a0;
+  padding: 6px 14px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  transition: all 0.15s;
+}
+.focus-actions-bar button:hover { border-color: #ffffff20; color: #e8e8ed; }
+
+.sidebar-header {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #555568;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 16px 16px 8px;
+  flex-shrink: 0;
+}
+
+.day-timeline {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 12px;
+}
+
+.timeline-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  position: relative;
+}
+.timeline-item:hover { background: #ffffff06; }
+.timeline-item.current {
+  background: #ffffff06;
+  border-left: 2px solid #4ade80;
+  padding-left: 6px;
+}
+.timeline-item.done { opacity: 0.3; }
+.timeline-item.done .tl-name { text-decoration: line-through; }
+.timeline-item.future { opacity: 0.6; }
+
+.tl-marker {
+  flex-shrink: 0;
+  width: 16px;
+  font-size: 12px;
+  text-align: center;
+  margin-top: 1px;
+}
+.tl-info { flex: 1; min-width: 0; }
+.tl-name {
+  font-size: 12px;
+  color: #e8e8ed;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-time {
+  font-size: 10px;
+  color: #555568;
+  font-family: 'JetBrains Mono', monospace;
+  margin-top: 2px;
+}
+.tl-jira {
+  font-size: 9px;
+  color: #60a5fa;
+  font-family: 'JetBrains Mono', monospace;
+  cursor: pointer;
+}
+
+.day-summary {
+  padding: 12px 16px;
+  border-top: 1px solid #ffffff08;
+  font-size: 11px;
+  color: #555568;
+  font-family: 'JetBrains Mono', monospace;
+  flex-shrink: 0;
+}
+.day-summary .ok { color: #4ade80; }
+.day-summary .warn { color: #fbbf24; }
 
 /* ── Bottom bar ── */
-.bottom-bar{border-top:1px solid var(--b1);padding:6px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0;background:var(--bg)}
+.bottom-bar{border-top:1px solid var(--b1);padding:0 16px;height:48px;display:flex;align-items:center;gap:8px;flex-shrink:0;background:var(--bg)}
 .bottom-toggle{cursor:pointer;font-size:12px;color:var(--t-muted);white-space:nowrap;transition:color .15s;font-family:'JetBrains Mono',monospace}
 .bottom-toggle:hover{color:var(--t-primary)}
-.bottom-create{display:flex;gap:6px;flex:1}
+.bottom-create{display:flex;gap:6px;flex:1;align-items:center}
 .bottom-create input{flex:1;background:var(--s1);border:1px solid var(--b1);border-radius:6px;padding:6px 10px;color:var(--t-primary);font-size:12px;outline:none;font-family:inherit}
 .bottom-create input:focus{border-color:var(--purple)60}
 .bottom-create button{background:var(--s1);border:1px solid var(--b2);border-radius:6px;padding:6px 12px;color:var(--purple);font-size:12px;cursor:pointer;font-weight:500}
 .bottom-create button:hover{background:var(--purple-bg)}
+.btn-jira{color:var(--blue)!important;border-color:var(--blue)20!important}
+.btn-jira:hover{background:var(--blue-bg)!important}
+
+/* ── Risk alert ── */
 
 /* ── Active panel ── */
 .active-panel{display:none;border-top:1px solid var(--b1);background:var(--s1);max-height:280px;overflow-y:auto;flex-shrink:0}
@@ -276,8 +355,21 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 .dump-meta{font-size:11px;color:var(--t-dim);font-family:'JetBrains Mono',monospace;margin-top:2px}
 .dumps-empty{text-align:center;padding:40px;color:var(--t-dim);font-size:13px}
 
-/* ── Risk alert ── */
-.risk-alert{background:var(--red-bg);border:1px solid var(--red)30;border-radius:6px;padding:8px 14px;margin:8px 16px;font-size:12px;color:var(--red);display:flex;align-items:center;gap:8px}
+/* ── Jira modal ── */
+.jira-issue{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #ffffff08;transition:background .15s}
+.jira-issue:hover{background:#ffffff04}
+.jira-issue input[type=checkbox]{accent-color:#60a5fa;cursor:pointer;flex-shrink:0}
+.jira-key{font-size:11px;color:#60a5fa;font-family:'JetBrains Mono',monospace;min-width:80px;white-space:nowrap}
+.jira-summary{font-size:13px;color:#e8e8ed;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jira-status{font-size:10px;color:#555568;font-family:'JetBrains Mono',monospace;white-space:nowrap}
+.jira-due{font-size:10px;color:#555568;font-family:'JetBrains Mono',monospace;white-space:nowrap}
+.jira-linked{opacity:.3;pointer-events:none}
+.jira-linked-badge{font-size:10px;color:#4ade80;font-family:'JetBrains Mono',monospace;white-space:nowrap}
+
+.risk-alert{background:var(--red-bg);border-bottom:1px solid var(--red)30;padding:8px 24px;font-size:12px;color:var(--red);display:flex;align-items:center;gap:8px;flex-shrink:0}
+@keyframes pulse{0%,100%{opacity:0.5}50%{opacity:1}}
+.loading-pulse{opacity:0.5;animation:pulse 1s infinite}
+.toast{position:fixed;bottom:20px;right:20px;background:#1a1a25;border:1px solid #ffffff12;padding:10px 16px;border-radius:6px;font-size:12px;z-index:9999;transition:opacity 0.3s}
 </style>
 </head>
 <body>
@@ -296,74 +388,67 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
   <!-- ── WORK view ── -->
   <div class="view active" id="view-work">
 
-    <!-- Focus panel -->
-    <div class="focus-panel" id="focus-panel" style="padding:20px 24px 16px 24px;position:relative;min-height:140px;display:flex;flex-direction:column;justify-content:center;">
-      <div id="focus-urgent-dot" style="display:none;margin-bottom:8px;">
-        <span style="display:inline-block;width:12px;height:12px;background:#f87171;border-radius:50%;animation:pulse-dot 1.5s ease-in-out infinite;vertical-align:middle;"></span>
-        <span style="font-size:11px;color:#f87171;font-family:monospace;margin-left:6px;">ENTREGA URGENTE</span>
-      </div>
-      <div id="focus-project" style="font-size:11px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:#555568;margin-bottom:4px;font-family:monospace;"></div>
-      <div id="focus-task" style="font-size:52px;font-weight:700;letter-spacing:-0.03em;color:#e8e8ed;line-height:1.05;margin-bottom:6px;"></div>
-      <div id="focus-deadline-info" style="font-size:13px;color:#555568;font-family:monospace;"></div>
-      <div id="focus-actions" style="position:absolute;top:16px;right:24px;display:flex;gap:6px;align-items:center;">
-        <button onclick="completeCurrentTask()" style="background:transparent;color:#4ade80;border:1px solid #4ade8020;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px;font-family:monospace;opacity:0.6;transition:opacity 0.2s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0.6'">✓ entregar</button>
-        <button onclick="togglePauseMenu()" style="background:transparent;color:#8888a0;border:1px solid #ffffff08;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px;font-family:monospace;opacity:0.4;transition:opacity 0.2s;" onmouseenter="this.style.opacity='0.8'" onmouseleave="this.style.opacity='0.4'">☕ pausa ▾</button>
-        <button onclick="enterTunnel()" style="background:transparent;color:#8888a0;border:1px solid #ffffff08;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px;font-family:monospace;opacity:0.4;transition:opacity 0.2s;" onmouseenter="this.style.opacity='0.8'" onmouseleave="this.style.opacity='0.4'">◼ túnel</button>
-        <div id="pause-menu" style="display:none;position:absolute;top:100%;right:0;background:#1a1a25;border:1px solid #ffffff12;border-radius:6px;padding:4px;margin-top:4px;z-index:100;">
-          <div onclick="insertPause(15)" style="padding:6px 16px;cursor:pointer;font-size:12px;color:#8888a0;border-radius:4px;font-family:monospace;" onmouseenter="this.style.background='#ffffff08'" onmouseleave="this.style.background='transparent'">15 min</div>
-          <div onclick="insertPause(30)" style="padding:6px 16px;cursor:pointer;font-size:12px;color:#8888a0;border-radius:4px;font-family:monospace;" onmouseenter="this.style.background='#ffffff08'" onmouseleave="this.style.background='transparent'">30 min</div>
-          <div onclick="insertPause(60)" style="padding:6px 16px;cursor:pointer;font-size:12px;color:#8888a0;border-radius:4px;font-family:monospace;" onmouseenter="this.style.background='#ffffff08'" onmouseleave="this.style.background='transparent'">1 hora</div>
-        </div>
-      </div>
-    </div>
+    <!-- Work body: focus-main + focus-sidebar -->
+    <div class="work-body">
 
-    <!-- Risk alert bar (hidden by default) -->
-    <div class="risk-alert" id="risk-alert-bar" style="display:none"></div>
+      <!-- Focus main (central, ~75%) -->
+      <div class="focus-main" id="focus-panel">
 
-    <!-- Middle zone -->
-    <div class="middle-zone">
+        <!-- Risk alert bar -->
+        <div class="risk-alert" id="risk-alert-bar" style="display:none;position:absolute;top:0;left:0;right:0;margin:0;border-radius:0;"></div>
 
-      <!-- Agenda section -->
-      <div class="agenda-section">
-        <div class="agenda-nav">
-          <button class="agenda-nav-btn" onclick="changeWeek(-1)">← anterior</button>
-          <span class="agenda-week-label" id="agenda-week-label">carregando...</span>
-          <button class="agenda-nav-btn" onclick="changeWeek(1)">próxima →</button>
-          <button class="agenda-nav-btn" onclick="changeWeek(0)">hoje</button>
-          <span style="margin-left:8px;display:flex;gap:10px;align-items:center;font-size:10px;color:var(--t-dim);font-family:'JetBrains Mono',monospace">
-            <span><span style="display:inline-block;width:8px;height:8px;border-radius:1px;background:var(--purple-bg);border-left:2px solid var(--purple);margin-right:3px"></span>gcal</span>
-            <span><span style="display:inline-block;width:8px;height:8px;border-radius:1px;background:var(--green-bg);border-left:2px solid var(--green);margin-right:3px"></span>alfred</span>
-            <span><span style="display:inline-block;width:8px;height:8px;border-radius:1px;background:var(--red-bg);border-left:2px solid var(--red);margin-right:3px"></span>prazo</span>
-          </span>
-        </div>
-        <div class="cal-container" id="cal-container">
-          <div class="cal-day-header-row" id="cal-day-headers"></div>
-          <div class="cal-grid" id="cal-grid">
-            <div class="cal-time-col" id="cal-time-col"></div>
-            <div class="cal-days" id="cal-days"></div>
+        <!-- Centered content -->
+        <div class="focus-center">
+          <div id="focus-urgent-dot" style="display:none;margin-bottom:12px;">
+            <span style="display:inline-block;width:10px;height:10px;background:#f87171;border-radius:50%;animation:pulse-dot 1.5s ease-in-out infinite;vertical-align:middle;"></span>
+            <span style="font-size:11px;color:#f87171;font-family:monospace;margin-left:6px;letter-spacing:0.08em;">ENTREGA URGENTE</span>
           </div>
+
+          <div id="focus-project" style="font-size:12px;font-weight:600;letter-spacing:0.15em;text-transform:uppercase;color:#555568;font-family:monospace;margin-bottom:8px;"></div>
+
+          <div id="focus-task" style="font-size:clamp(28px,4.5vw,56px);font-weight:700;letter-spacing:-0.03em;color:#e8e8ed;line-height:1.1;text-align:center;max-width:600px;"></div>
+
+          <div id="focus-progress" style="margin-top:16px;opacity:0.6;">
+            <div class="focus-progress-bar"><div class="focus-progress-fill" id="focus-progress-fill" style="width:0%"></div></div>
+          </div>
+
+          <div id="focus-actions" style="margin-top:24px;display:flex;gap:8px;align-items:center;opacity:0.4;transition:opacity 0.2s;position:relative;">
+            <button onclick="completeCurrentTask()" style="background:transparent;color:#4ade80;border:1px solid #4ade8020;padding:6px 14px;border-radius:5px;cursor:pointer;font-size:12px;font-family:monospace;">✓ entregar</button>
+            <button onclick="togglePauseMenu()" style="background:transparent;color:#8888a0;border:1px solid #ffffff08;padding:6px 14px;border-radius:5px;cursor:pointer;font-size:12px;font-family:monospace;">☕ pausa ▾</button>
+            <button onclick="enterTunnel()" style="background:transparent;color:#8888a0;border:1px solid #ffffff08;padding:6px 14px;border-radius:5px;cursor:pointer;font-size:12px;font-family:monospace;">◼ túnel</button>
+            <div id="pause-menu" style="display:none;position:absolute;top:calc(100% + 4px);left:80px;background:#1a1a25;border:1px solid #ffffff12;border-radius:6px;padding:4px;z-index:100;">
+              <div onclick="insertPause(15)" style="padding:6px 16px;cursor:pointer;font-size:12px;color:#8888a0;border-radius:4px;font-family:monospace;" onmouseenter="this.style.background='#ffffff08'" onmouseleave="this.style.background='transparent'">15 min</div>
+              <div onclick="insertPause(30)" style="padding:6px 16px;cursor:pointer;font-size:12px;color:#8888a0;border-radius:4px;font-family:monospace;" onmouseenter="this.style.background='#ffffff08'" onmouseleave="this.style.background='transparent'">30 min</div>
+              <div onclick="insertPause(60)" style="padding:6px 16px;cursor:pointer;font-size:12px;color:#8888a0;border-radius:4px;font-family:monospace;" onmouseenter="this.style.background='#ffffff08'" onmouseleave="this.style.background='transparent'">1 hora</div>
+            </div>
+          </div>
+
+          <div id="focus-deadline-info" style="margin-top:12px;font-size:12px;color:#555568;font-family:monospace;"></div>
         </div>
+
+      </div><!-- /focus-main -->
+
+      <!-- Focus sidebar (~25%, max 280px) -->
+      <div class="focus-sidebar">
+        <div class="sidebar-header">SEU DIA</div>
+        <div id="day-timeline">
+          <div class="timeline-empty">carregando...</div>
+        </div>
+        <div id="day-summary"></div>
       </div>
 
-      <!-- Today panel -->
-      <div class="today-panel">
-        <div class="today-header" id="today-header">HOJE</div>
-        <div class="today-list" id="today-list">
-          <div class="today-empty">carregando...</div>
-        </div>
-      </div>
-
-    </div>
+    </div><!-- /work-body -->
 
     <!-- Bottom bar -->
-    <div class="bottom-bar" style="border-top:1px solid #ffffff08;padding:8px 24px;display:flex;align-items:center;gap:16px;">
-      <div onclick="toggleActivePanel()" style="cursor:pointer;font-size:13px;color:#8888a0;font-family:monospace;display:flex;align-items:center;gap:6px;user-select:none;">
+    <div class="bottom-bar">
+      <div onclick="toggleActivePanel()" style="cursor:pointer;font-size:12px;color:#8888a0;font-family:monospace;display:flex;align-items:center;gap:6px;user-select:none;white-space:nowrap;">
         <span id="active-arrow" style="display:inline-block;transition:transform 0.2s;">▸</span>
-        <span id="active-count">0</span> demandas ativas
+        <span id="active-count">0</span> demandas
       </div>
-      <div style="flex:1;display:flex;align-items:center;gap:8px;position:relative">
-        <input id="new-task-input" placeholder="descreva a demanda..." onkeydown="if(event.key==='Enter')createTaskSmart()" style="flex:1;background:#12121a;color:#e8e8ed;border:1px solid #ffffff08;border-radius:6px;padding:8px 14px;font-size:13px;font-family:monospace;outline:none;" />
-        <button onclick="createTaskSmart()" style="background:#1a1a25;color:#8888a0;border:1px solid #ffffff12;border-radius:6px;padding:8px 14px;cursor:pointer;font-size:12px;font-family:monospace;">+ criar</button>
+      <div class="bottom-create">
+        <input id="new-task-input" placeholder="descreva a demanda..." onkeydown="if(event.key==='Enter')createTaskSmart()" style="flex:1;background:#12121a;color:#e8e8ed;border:1px solid #ffffff08;border-radius:6px;padding:7px 12px;font-size:13px;font-family:monospace;outline:none;" />
+        <button onclick="createTaskSmart()">+ criar</button>
+        <button class="btn-jira" onclick="openJiraImport()" title="Importar do Jira">📥 jira</button>
       </div>
     </div>
 
@@ -437,13 +522,13 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 
         <div style="display:flex;align-items:center;gap:6px;">
           <label style="font-size:11px;color:#555568;font-family:monospace;">prazo:</label>
-          <input type="date" id="modal-deadline-date" onchange="saveModalDeadline()" style="background:#1a1a25;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:4px 8px;font-size:12px;font-family:monospace;" />
-          <input type="time" id="modal-deadline-time" onchange="saveModalDeadline()" style="background:#1a1a25;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:4px 8px;font-size:12px;font-family:monospace;width:90px;" />
+          <input type="date" id="modal-deadline-date" onchange="debouncedSaveDeadline()" style="background:#1a1a25;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:4px 8px;font-size:12px;font-family:monospace;" />
+          <input type="time" id="modal-deadline-time" onchange="debouncedSaveDeadline()" style="background:#1a1a25;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:4px 8px;font-size:12px;font-family:monospace;width:90px;" />
         </div>
 
         <div style="display:flex;align-items:center;gap:6px;">
           <label style="font-size:11px;color:#555568;font-family:monospace;">estimativa:</label>
-          <select id="modal-estimate-select" onchange="saveModalEstimate()" style="background:#1a1a25;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:4px 8px;font-size:12px;font-family:monospace;">
+          <select id="modal-estimate-select" onchange="debouncedSaveEstimate()" style="background:#1a1a25;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:4px 8px;font-size:12px;font-family:monospace;">
             <option value="30">30min</option>
             <option value="60">1h</option>
             <option value="90">1h30</option>
@@ -458,6 +543,27 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 
         <span id="modal-status" style="font-size:11px;color:#555568;font-family:monospace;"></span>
       </div>
+
+      <!-- Jira section -->
+      <div id="modal-jira-section" style="margin:16px 0;position:relative;">
+        <div id="jira-linked-info" style="display:none;align-items:center;gap:8px;">
+          <span style="font-size:11px;color:#555568;font-family:monospace;">jira:</span>
+          <span id="jira-linked-key" class="tl-jira" style="font-size:12px;"></span>
+          <a id="jira-link-url" target="_blank" style="color:#60a5fa;font-size:11px;font-family:monospace;text-decoration:none;">abrir no jira ↗</a>
+        </div>
+        <button id="jira-link-btn" onclick="openJiraLinkModal()" style="background:transparent;color:#60a5fa;border:1px solid #60a5fa20;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px;font-family:monospace;">🔗 linkar ao Jira</button>
+        <!-- Link picker dropdown -->
+        <div id="jira-link-picker" style="display:none;position:absolute;top:calc(100% + 4px);left:0;width:420px;max-width:90vw;background:#1a1a25;border:1px solid #ffffff12;border-radius:8px;z-index:210;box-shadow:0 8px 32px #00000060;overflow:hidden;">
+          <div style="padding:8px 12px;border-bottom:1px solid #ffffff08;">
+            <input id="jira-picker-search" placeholder="buscar issue..." oninput="filterJiraPicker()" style="width:100%;background:#12121a;color:#e8e8ed;border:1px solid #ffffff08;border-radius:4px;padding:6px 10px;font-size:12px;font-family:monospace;outline:none;box-sizing:border-box;" />
+          </div>
+          <div id="jira-picker-list" style="max-height:280px;overflow-y:auto;"></div>
+          <div style="padding:8px 12px;border-top:1px solid #ffffff08;">
+            <button onclick="document.getElementById('jira-link-picker').style.display='none'" style="background:transparent;color:#555568;border:none;cursor:pointer;font-size:11px;font-family:monospace;">cancelar</button>
+          </div>
+        </div>
+      </div>
+
       <div id="modal-block-section" style="margin:16px 0;padding:12px 16px;border-radius:8px;border:1px solid #ffffff08;">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
           <span style="font-size:11px;color:#555568;font-family:monospace;letter-spacing:0.06em;">STATUS:</span>
@@ -467,11 +573,11 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
         <div id="block-details" style="display:none;margin-top:10px;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
             <label style="font-size:11px;color:#555568;font-family:monospace;">motivo:</label>
-            <input id="block-reason" placeholder="ex: esperando Divoom chegar..." onblur="saveBlockDetails()" style="flex:1;background:#12121a;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:5px 10px;font-size:12px;font-family:monospace;outline:none;" />
+            <input id="block-reason" placeholder="ex: esperando Divoom chegar..." onblur="debouncedSaveBlockDetails()" style="flex:1;background:#12121a;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:5px 10px;font-size:12px;font-family:monospace;outline:none;" />
           </div>
           <div style="display:flex;align-items:center;gap:8px;">
             <label style="font-size:11px;color:#555568;font-family:monospace;">previsão:</label>
-            <input type="date" id="block-until" onchange="saveBlockDetails()" style="background:#12121a;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:5px 10px;font-size:12px;font-family:monospace;outline:none;" />
+            <input type="date" id="block-until" onchange="debouncedSaveBlockDetails()" style="background:#12121a;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:5px 10px;font-size:12px;font-family:monospace;outline:none;" />
             <span style="font-size:11px;color:#555568;">ou</span>
             <button onclick="clearBlockUntil()" style="background:transparent;color:#8888a0;border:1px solid #ffffff08;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-family:monospace;">sem data</button>
           </div>
@@ -518,18 +624,7 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
     <div class="tunnel-hint">ESC para voltar · SPACE pausar · C concluir</div>
   </div>
 
-  <!-- ── Completion flash ── -->
-  <div class="completion-flash" id="completion-flash">
-    <div class="completion-msg" id="completion-msg"></div>
-    <div class="completion-time-q">Quanto tempo levou?</div>
-    <div class="completion-time-opts">
-      <button onclick="confirmComplete(30)">~30min</button>
-      <button onclick="confirmComplete(60)">~1h</button>
-      <button onclick="confirmComplete(120)">~2h</button>
-      <button onclick="confirmComplete(180)">~3h</button>
-      <button onclick="confirmComplete(240)">~4h</button>
-    </div>
-  </div>
+
 
   <!-- ── Quick dump ── -->
   <div class="quick-dump-overlay" id="quick-dump">
@@ -539,20 +634,41 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
     </div>
   </div>
 
+  <!-- ── Jira import modal ── -->
+  <div class="modal-overlay" id="jira-modal" onclick="if(event.target===this)closeJiraModal()">
+    <div class="modal-content" style="max-width:680px;">
+      <button class="modal-close" onclick="closeJiraModal()">✕</button>
+      <div style="font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#555568;font-family:monospace;margin-bottom:16px;">IMPORTAR DO JIRA</div>
+      <div id="jira-loading" style="padding:24px;text-align:center;color:#555568;font-family:monospace;font-size:12px;">carregando issues...</div>
+      <div id="jira-list" style="max-height:420px;overflow-y:auto;margin:0 -28px;"></div>
+      <div style="display:flex;gap:8px;padding-top:16px;border-top:1px solid #ffffff08;margin-top:16px;">
+        <button onclick="importSelectedJira()" style="background:#1a2a1a;color:#4ade80;border:1px solid #4ade8030;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:12px;font-family:monospace;font-weight:600;">↓ importar selecionadas</button>
+        <button onclick="importAllJira()" style="background:#1a1a25;color:#8888a0;border:1px solid #ffffff12;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:12px;font-family:monospace;">importar todas</button>
+        <div style="flex:1"></div>
+        <span id="jira-selected-count" style="font-size:11px;color:#555568;font-family:monospace;align-self:center;"></span>
+      </div>
+    </div>
+  </div>
+
 </div><!-- /app -->
 
 <script>
 'use strict';
 
+// ── Debounce ───────────────────────────────────────────
+function debounce(fn, ms) { var t; return function() { var a=arguments,c=this; clearTimeout(t); t=setTimeout(function(){fn.apply(c,a);},ms); }; }
+
 // ── State ──────────────────────────────────────────────
 var API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:8000' : '';
 var currentWeekOffset = 0;
+var JIRA_BASE = '';
 var currentTab = 'work';
 var currentModalTaskId = null;
 var currentTaskBlocked = false;
 var isMuted = false;
 var isTunnelMode = false;
 var tunnelInterval = null;
+var tunnelOriginalHTML = null;
 var activePanelOpen = false;
 var currentState = null;
 var activeProjectFilter = 'ALL';
@@ -564,6 +680,20 @@ var CAL_START_HOUR = 8;
 var CAL_END_HOUR = 20;
 var CAL_PX_PER_HOUR = 56;
 
+// ── Toast ──────────────────────────────────────────────
+function showToast(msg, type) {
+  var t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  t.style.color = type === 'error' ? '#f87171' : '#4ade80';
+  t.style.borderColor = type === 'error' ? '#f8717130' : '#4ade8030';
+  document.body.appendChild(t);
+  setTimeout(function() {
+    t.style.opacity = '0';
+    setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 300);
+  }, 3000);
+}
+
 // ── API helpers ────────────────────────────────────────
 async function apiGet(path) {
   try {
@@ -572,6 +702,7 @@ async function apiGet(path) {
     return await r.json();
   } catch(e) {
     console.error('GET', path, e);
+    showToast('Erro de conexão', 'error');
     return null;
   }
 }
@@ -587,6 +718,7 @@ async function apiPost(path, body) {
     return await r.json();
   } catch(e) {
     console.error('POST', path, e);
+    showToast('Erro de conexão', 'error');
     return null;
   }
 }
@@ -660,9 +792,9 @@ async function loadState() {
   var data = await apiGet(url);
   if (!data) return;
   currentState = data;
+  if (data.jiraUrl) JIRA_BASE = data.jiraUrl;
   renderFocus(data.focus, data.nextTask);
-  renderToday(data.today);
-  renderAgenda(data.agenda);
+  renderDayTimeline(data.today, data.focus);
   renderActiveCount(data.activeQueue);
   renderProjects(data.projects);
   if (data.riskAlert) renderRiskAlert(data.riskAlert);
@@ -670,44 +802,147 @@ async function loadState() {
 
 // ── Render: Focus ──────────────────────────────────────
 function renderFocus(focus, next) {
-  var panel = document.getElementById('focus-panel');
   var urgentDot = document.getElementById('focus-urgent-dot');
+  var taskEl = document.getElementById('focus-task');
+  var projectEl = document.getElementById('focus-project');
+  var actionsEl = document.getElementById('focus-actions');
+  var progressEl = document.getElementById('focus-progress');
+  var progressFill = document.getElementById('focus-progress-fill');
+  var deadlineEl = document.getElementById('focus-deadline-info');
 
   if (focus && focus.blocked) focus = null;
 
   if (!focus || focus.status === 'empty') {
     urgentDot.style.display = 'none';
-    document.getElementById('focus-project').textContent = '';
-    document.getElementById('focus-task').textContent = 'tudo limpo por agora ✨';
-    document.getElementById('focus-task').style.fontSize = '28px';
-    document.getElementById('focus-task').style.color = '#555568';
-    document.getElementById('focus-deadline-info').textContent = '';
-    document.getElementById('focus-actions').style.display = 'none';
-    panel.classList.remove('urgent');
+    projectEl.textContent = '';
+    taskEl.textContent = 'tudo limpo por agora ✨';
+    taskEl.style.fontSize = '28px';
+    taskEl.style.color = '#555568';
+    if (actionsEl) actionsEl.style.display = 'none';
+    if (progressEl) progressEl.style.display = 'none';
     loadPersonalSuggestion();
     return;
   }
 
-  document.getElementById('focus-actions').style.display = 'flex';
-  document.getElementById('focus-task').style.fontSize = '52px';
-  document.getElementById('focus-task').style.color = '#e8e8ed';
-
-  document.getElementById('focus-project').textContent = focus.project || '';
-  document.getElementById('focus-task').textContent = focus.taskName || '';
+  projectEl.textContent = focus.project || '';
+  taskEl.textContent = focus.taskName || '';
+  taskEl.style.fontSize = '';
+  taskEl.style.color = '#e8e8ed';
 
   if (focus.status === 'urgent') {
     urgentDot.style.display = 'block';
-    panel.classList.add('urgent');
   } else {
     urgentDot.style.display = 'none';
-    panel.classList.remove('urgent');
   }
 
-  var info = '';
-  if (focus.deadlineType === 'hard') info += '🔴 ';
-  else info += '🟡 ';
-  info += focus.deadlineHuman || 'sem prazo';
-  document.getElementById('focus-deadline-info').textContent = info;
+  var info = (focus.deadlineType === 'hard' ? '🔴 ' : '🟡 ') + (focus.deadlineHuman || 'sem prazo');
+  deadlineEl.textContent = info;
+
+  if (progressEl) {
+    var total = focus.checklistTotal || 0;
+    var done = focus.checklistDone || 0;
+    if (total > 0) {
+      progressEl.style.display = 'block';
+      if (progressFill) progressFill.style.width = Math.round(done / total * 100) + '%';
+      var progLabel = progressEl.querySelector('.focus-progress-label');
+      if (!progLabel) {
+        progLabel = document.createElement('div');
+        progLabel.className = 'focus-progress-label';
+        progLabel.style.cssText = 'font-size:10px;color:#555568;font-family:monospace;margin-top:4px;text-align:center;';
+        progressEl.appendChild(progLabel);
+      }
+      progLabel.textContent = done + '/' + total;
+    } else {
+      progressEl.style.display = 'none';
+    }
+  }
+
+  if (actionsEl) actionsEl.style.display = 'flex';
+}
+
+// ── Render: Day timeline ───────────────────────────────
+function renderDayTimeline(today, focus) {
+  var container = document.getElementById('day-timeline');
+  var summary = document.getElementById('day-summary');
+  if (!container) return;
+
+  var items = today || [];
+  var focusId = focus && !focus.blocked && focus.status !== 'empty' ? focus.taskId : null;
+
+  if (!items.length) {
+    container.innerHTML = '<div style="padding:16px 8px;text-align:center;font-size:12px;color:#555568;">nenhuma tarefa hoje ✨</div>';
+    if (summary) summary.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = '';
+
+  var totalTasks = 0;
+  var doneTasks = 0;
+  var remainingMins = 0;
+
+  items.forEach(function(item) {
+    totalTasks++;
+    var isDone = item.status === 'done' || item.status === 'completed';
+    var isCurrent = item.id === focusId;
+    if (isDone) doneTasks++;
+
+    var cls = isDone ? 'done' : (isCurrent ? 'current' : 'future');
+    var marker = isDone ? '✓' : (isCurrent ? '▶' : '·');
+
+    if (!isDone) {
+      remainingMins += item.estimatedMinutes || item.estimated_minutes || 0;
+    }
+
+    var el = document.createElement('div');
+    el.className = 'timeline-item ' + cls;
+    el.onclick = function() { openTaskModal(item.id); };
+
+    var nameHTML = item.project
+      ? '<strong>' + esc(item.project) + '</strong> · ' + esc(item.taskName || '')
+      : esc(item.taskName || '');
+
+    var timeStr = item.scheduledTime || item.scheduled_time || '';
+    var estStr = item.estimatedMinutes || item.estimated_minutes || 0;
+    var timeInfo = '';
+    if (timeStr) timeInfo += timeStr;
+    if (estStr) timeInfo += (timeStr ? ' · ' : '') + fmt_time(estStr);
+
+    var checklistHTML = '';
+    var clTotal = item.checklistTotal || 0;
+    var clDone = item.checklistDone || 0;
+    if (clTotal > 0) {
+      checklistHTML = ' <span style="font-size:10px;color:#555568;font-family:monospace;">' + clDone + '/' + clTotal + '</span>';
+    }
+
+    var jiraHTML = '';
+    var jiraKey = item.jira_key || item.jiraKey || '';
+    if (jiraKey) {
+      jiraHTML = '<span class="tl-jira" onclick="event.stopPropagation();window.open((JIRA_BASE||\'https://hotmart.atlassian.net\')+\'/browse/' + esc(jiraKey) + '\',\'_blank\')">' + esc(jiraKey) + '</span>';
+    }
+
+    el.innerHTML =
+      '<span class="tl-marker">' + marker + '</span>' +
+      '<div class="tl-info">' +
+        '<div class="tl-name">' + nameHTML + checklistHTML + '</div>' +
+        (timeInfo || jiraHTML
+          ? '<div class="tl-time">' + esc(timeInfo) + (jiraHTML ? (timeInfo ? ' · ' : '') + jiraHTML : '') + '</div>'
+          : '') +
+      '</div>';
+
+    container.appendChild(el);
+  });
+
+  if (summary) {
+    var remainH = Math.round(remainingMins / 60 * 10) / 10;
+    var availH = 8;
+    var ok = remainH <= availH;
+    var icon = ok ? '✅' : '⚠️';
+    var extraHTML = ok ? '' : ' <span class="warn">+' + Math.round((remainH - availH) * 10) / 10 + 'h excedente</span>';
+    summary.innerHTML =
+      icon + ' <span class="' + (ok ? 'ok' : 'warn') + '">' + doneTasks + '/' + totalTasks + ' tasks</span>' +
+      ' · ' + remainH + 'h restantes' + extraHTML;
+  }
 }
 
 function fmt_time(mins) {
@@ -871,7 +1106,6 @@ function renderCalBlock(dayIdx, block, type) {
   var col = document.querySelector('.day-col[data-day="' + dayIdx + '"]');
   if (!col) return;
 
-  // Deadlines renderizados como barra horizontal
   if (type === 'deadline' || type === 'prazo') {
     renderCalDeadline(Object.assign({ day: dayIdx }, block));
     return;
@@ -881,50 +1115,20 @@ function renderCalBlock(dayIdx, block, type) {
   var endTime = block.end || '';
   var top = timeToPx(startTime);
   var height = endTime ? Math.max(timeToPx(endTime) - top, 20) : 40;
-
-  // Detectar colisão com blocos existentes na mesma coluna
-  var existingBlocks = col.querySelectorAll('.cal-block');
-  var column = 0;
-  var totalColumns = 1;
   var myBottom = top + height;
-
-  existingBlocks.forEach(function(existing) {
-    var exTop = parseInt(existing.style.top) || 0;
-    var exHeight = parseInt(existing.style.height) || 0;
-    var exBottom = exTop + exHeight;
-    if (top < exBottom && myBottom > exTop) {
-      totalColumns++;
-      var exCol = parseInt(existing.dataset.col || '0');
-      if (exCol >= column) column = exCol + 1;
-      // Ajustar largura dos blocos existentes
-      existing.style.width = (100 / totalColumns) + '%';
-      existing.style.left = (parseInt(existing.dataset.col || '0') * (100 / totalColumns)) + '%';
-    }
-  });
 
   var el = document.createElement('div');
   el.className = 'cal-block cal-' + type;
   el.style.position = 'absolute';
   el.style.top = top + 'px';
   el.style.height = height + 'px';
-  el.style.left = (column * (100 / totalColumns)) + '%';
-  el.style.width = (100 / totalColumns) + '%';
   el.style.boxSizing = 'border-box';
-  el.dataset.col = column;
+  el.dataset.top = top;
+  el.dataset.bottom = myBottom;
 
-  // Quick task gap suggestion — cor azul
-  if (type === 'quick') {
-    el.style.background = '#60a5fa10';
-    el.style.borderLeft = '3px solid #60a5fa';
-    el.style.opacity = '0.75';
-  }
+  if (type === 'quick') { el.style.background = '#60a5fa10'; el.style.borderLeft = '3px solid #60a5fa'; el.style.opacity = '0.75'; }
+  if (block.project && type !== 'quick') el.style.borderLeftColor = projectColor(block.project);
 
-  // Project color on border
-  if (block.project && type !== 'quick') {
-    el.style.borderLeftColor = projectColor(block.project);
-  }
-
-  // Check if current block
   var now = new Date();
   var nowH = now.getHours() + now.getMinutes()/60;
   var startH = parseFloat(startTime.split(':')[0]) + parseFloat((startTime.split(':')[1]||0))/60;
@@ -938,16 +1142,32 @@ function renderCalBlock(dayIdx, block, type) {
       '<div class="block-time" style="font-size:10px;opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(startTime) + (endTime ? '–' + esc(endTime) : '') + '</div>' +
       '<div class="block-title" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;">' + esc(block.shortTitle || block.title || '') + '</div>';
   }
-
-  el.title = (block.title || '') + '\n' + startTime + '–' + (endTime||'') +
-    (block.checklistProgress ? '\n' + block.checklistProgress : '');
-
-  if (block.id) {
-    el.style.cursor = 'pointer';
-    el.onclick = function(e) { e.stopPropagation(); openTaskModal(block.id); };
-  }
+  el.title = (block.title || '') + '\n' + startTime + '–' + (endTime||'') + (block.checklistProgress ? '\n' + block.checklistProgress : '');
+  if (block.id) { el.style.cursor = 'pointer'; el.onclick = function(e) { e.stopPropagation(); openTaskModal(block.id); }; }
 
   col.appendChild(el);
+
+  // Re-layout: agrupar todos os blocos que se sobrepõem entre si
+  var allBlocks = Array.from(col.querySelectorAll('.cal-block'));
+  var visited = [];
+  allBlocks.forEach(function(b) {
+    var bTop = parseFloat(b.dataset.top) || 0;
+    var bBottom = parseFloat(b.dataset.bottom) || 0;
+    var group = allBlocks.filter(function(c) {
+      var cTop = parseFloat(c.dataset.top) || 0;
+      var cBottom = parseFloat(c.dataset.bottom) || 0;
+      return bTop < cBottom && bBottom > cTop;
+    });
+    if (group.length < 2) return;
+    var key = group.map(function(x){ return x.dataset.top; }).sort().join(',');
+    if (visited.indexOf(key) !== -1) return;
+    visited.push(key);
+    group.forEach(function(c, i) {
+      c.dataset.col = i;
+      c.style.width = (100 / group.length) + '%';
+      c.style.left = (i * (100 / group.length)) + '%';
+    });
+  });
 }
 
 function renderCalDeadline(dl) {
@@ -1130,8 +1350,10 @@ function renderActiveQueue(items) {
 async function openTaskModal(taskId) {
   if (!taskId) return;
   currentModalTaskId = taskId;
+  document.getElementById('modal-title').textContent = 'carregando...';
+  document.getElementById('modal-overlay').classList.add('open');
   var task = await apiGet('/dashboard/task/' + taskId);
-  if (!task || task.status === 'error') return;
+  if (!task || task.status === 'error') { closeModal(); return; }
 
   document.getElementById('modal-project').textContent = task.project || '';
   document.getElementById('modal-title').textContent = task.taskName || task.fullTitle || '';
@@ -1179,7 +1401,25 @@ async function openTaskModal(taskId) {
   renderRelatedDumps(task.relatedDumps || []);
   renderBlockStatus(task);
 
-  document.getElementById('modal-overlay').classList.add('open');
+  // Jira section
+  var jiraKey = task.jira_key || task.jiraKey || '';
+  var linkedInfo = document.getElementById('jira-linked-info');
+  var linkBtn = document.getElementById('jira-link-btn');
+  var picker = document.getElementById('jira-link-picker');
+  if (picker) picker.style.display = 'none';
+  if (jiraKey) {
+    if (linkedInfo) {
+      linkedInfo.style.display = 'flex';
+      var keyEl = document.getElementById('jira-linked-key');
+      if (keyEl) keyEl.textContent = jiraKey;
+      var urlEl = document.getElementById('jira-link-url');
+      if (urlEl) urlEl.href = (JIRA_BASE || 'https://hotmart.atlassian.net') + '/browse/' + jiraKey;
+    }
+    if (linkBtn) linkBtn.style.display = 'none';
+  } else {
+    if (linkedInfo) linkedInfo.style.display = 'none';
+    if (linkBtn) linkBtn.style.display = 'inline-block';
+  }
 }
 
 function closeModal() {
@@ -1451,6 +1691,10 @@ async function saveModalEstimate() {
   await apiPost('/dashboard/task/' + currentModalTaskId + '/estimate', {estimated_minutes: minutes});
 }
 
+var debouncedSaveDeadline = debounce(saveModalDeadline, 300);
+var debouncedSaveEstimate = debounce(saveModalEstimate, 300);
+var debouncedSaveBlockDetails = debounce(saveBlockDetails, 500);
+
 // ── Complete current task ──────────────────────────────
 function completeCurrentTask() {
   if (!currentState || !currentState.focus || currentState.focus.status === 'empty') return;
@@ -1463,6 +1707,7 @@ async function skipToNext() {
 }
 
 function showCompletionAnimation(taskName, taskId) {
+  if (window._completionFlash && window._completionFlash.parentNode) window._completionFlash.parentNode.removeChild(window._completionFlash);
   playCompleteSound();
   var flash = document.createElement('div');
   flash.className = 'completion-flash';
@@ -1500,6 +1745,7 @@ async function confirmComplete(minutes, flashEl) {
 // ── Tunnel mode ────────────────────────────────────────
 function enterTunnel() {
   if (!currentState || !currentState.focus || currentState.focus.status === 'empty') return;
+  if (!tunnelOriginalHTML) tunnelOriginalHTML = document.getElementById('tunnel-mode').innerHTML;
   isTunnelMode = true;
   var tm = document.getElementById('tunnel-mode');
   tm.classList.add('active');
@@ -1511,7 +1757,9 @@ function enterTunnel() {
 
 function exitTunnel() {
   isTunnelMode = false;
-  document.getElementById('tunnel-mode').classList.remove('active');
+  var tm = document.getElementById('tunnel-mode');
+  if (tunnelOriginalHTML) { tm.innerHTML = tunnelOriginalHTML; tunnelOriginalHTML = null; }
+  tm.classList.remove('active');
   if (tunnelInterval) { clearInterval(tunnelInterval); tunnelInterval = null; }
 }
 
@@ -1537,15 +1785,19 @@ function updateTunnelProgress() {
 
 function showTunnelBlockEnd() {
   var tm = document.getElementById('tunnel-mode');
-  tm.innerHTML =
-    '<div class="tunnel-complete">' +
+  Array.from(tm.children).forEach(function(c) { c.style.display = 'none'; });
+  var complete = document.createElement('div');
+  complete.id = 'tunnel-block-end';
+  complete.className = 'tunnel-complete';
+  complete.innerHTML =
     '<div class="tunnel-done-msg">bloco concluído ✓</div>' +
     '<div class="tunnel-pause-msg">pausa merecida: 15 minutos ☕</div>' +
     '<div class="tunnel-pause-bar"><div class="tunnel-pause-fill" id="tunnel-pause-fill"></div></div>' +
     '<div class="tunnel-pause-actions">' +
     '<button onclick="exitTunnel()">pular pausa</button>' +
     '<button onclick="extendBlock()">continuar +30min</button>' +
-    '</div></div>';
+    '</div>';
+  tm.appendChild(complete);
 }
 
 async function extendBlock() {
@@ -1573,7 +1825,7 @@ async function createTaskSmart() {
   var text = (input.value||'').trim();
   if (!text) return;
   var btn = document.querySelector('.bottom-create button');
-  if (btn) { btn.textContent = '...'; btn.disabled = true; }
+  if (btn) { btn.textContent = '...'; btn.disabled = true; btn.classList.add('loading-pulse'); }
 
   try {
     var result = await apiPost('/dashboard/task/create-smart', { raw_text: text });
@@ -1611,7 +1863,7 @@ async function createTaskSmart() {
       alert('Erro ao criar demanda. Tente novamente.');
     }
   } finally {
-    if (btn) { btn.textContent = '+ criar'; btn.disabled = false; }
+    if (btn) { btn.textContent = '+ criar'; btn.disabled = false; btn.classList.remove('loading-pulse'); }
   }
 }
 
@@ -1696,9 +1948,7 @@ function closeEverything() {
   if (document.getElementById('quick-dump').classList.contains('open')) {
     document.getElementById('quick-dump').classList.remove('open'); return;
   }
-  if (document.getElementById('completion-flash').classList.contains('active')) {
-    document.getElementById('completion-flash').classList.remove('active'); return;
-  }
+  if (window._completionFlash && window._completionFlash.parentNode) { window._completionFlash.parentNode.removeChild(window._completionFlash); window._completionFlash = null; return; }
   var pmenu = document.getElementById('pause-menu'); if (pmenu) pmenu.style.display = 'none';
 }
 
@@ -2020,6 +2270,148 @@ function closeNightMode() {
 setInterval(checkNightMode, 300000);
 // Checar ao carregar
 setTimeout(checkNightMode, 3000);
+
+// ── Jira import modal ─────────────────────────────────
+var _jiraIssuesCache = [];
+
+function closeJiraModal() {
+  document.getElementById('jira-modal').classList.remove('open');
+}
+
+function _updateJiraSelectedCount() {
+  var checked = document.querySelectorAll('#jira-list input[type=checkbox]:checked').length;
+  var el = document.getElementById('jira-selected-count');
+  if (el) el.textContent = checked > 0 ? checked + ' selecionada' + (checked > 1 ? 's' : '') : '';
+}
+
+function _renderJiraList(issues) {
+  var container = document.getElementById('jira-list');
+  if (!issues || !issues.length) {
+    container.innerHTML = '<div style="padding:24px;text-align:center;color:#555568;font-family:monospace;font-size:12px;">nenhuma issue encontrada</div>';
+    return;
+  }
+  container.innerHTML = '';
+  issues.forEach(function(issue) {
+    var el = document.createElement('div');
+    el.className = 'jira-issue' + (issue.linked ? ' jira-linked' : '');
+    el.dataset.key = issue.key;
+
+    var dueStr = '';
+    if (issue.dueDate) {
+      try {
+        var d = new Date(issue.dueDate + 'T12:00:00');
+        dueStr = d.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'});
+      } catch(e) {}
+    }
+
+    el.innerHTML =
+      '<input type="checkbox" ' + (issue.linked ? 'disabled' : '') + ' onchange="_updateJiraSelectedCount()" data-key="' + esc(issue.key) + '">' +
+      '<span class="jira-key">' + esc(issue.key) + '</span>' +
+      '<span class="jira-summary" title="' + esc(issue.summary) + '">' + esc(issue.summary) + '</span>' +
+      '<span class="jira-status">' + esc(issue.status) + '</span>' +
+      (dueStr ? '<span class="jira-due">' + dueStr + '</span>' : '') +
+      (issue.linked ? '<span class="jira-linked-badge">✓ no alfred</span>' : '');
+
+    container.appendChild(el);
+  });
+  _updateJiraSelectedCount();
+}
+
+async function openJiraImport() {
+  document.getElementById('jira-modal').classList.add('open');
+  document.getElementById('jira-loading').style.display = 'block';
+  document.getElementById('jira-list').innerHTML = '';
+
+  var data = await apiGet('/dashboard/jira/issues');
+  document.getElementById('jira-loading').style.display = 'none';
+
+  if (!data || data.status === 'error') {
+    document.getElementById('jira-list').innerHTML =
+      '<div style="padding:24px;text-align:center;color:#f87171;font-family:monospace;font-size:12px;">' +
+      esc((data && data.message) || 'Erro ao conectar ao Jira') + '</div>';
+    return;
+  }
+
+  _jiraIssuesCache = data.issues || [];
+  _renderJiraList(_jiraIssuesCache);
+}
+
+async function importSelectedJira() {
+  var checked = document.querySelectorAll('#jira-list input[type=checkbox]:checked');
+  var keys = Array.from(checked).map(function(cb) { return cb.dataset.key; }).filter(Boolean);
+  if (!keys.length) { showToast('Nenhuma issue selecionada', 'error'); return; }
+  var result = await apiPost('/dashboard/jira/import', { keys: keys });
+  closeJiraModal();
+  await loadState();
+  if (result && result.imported !== undefined) {
+    showToast(result.imported + ' demanda' + (result.imported !== 1 ? 's' : '') + ' importada' + (result.imported !== 1 ? 's' : ''), 'ok');
+  }
+}
+
+async function importAllJira() {
+  var keys = _jiraIssuesCache.filter(function(i) { return !i.linked; }).map(function(i) { return i.key; });
+  if (!keys.length) { showToast('Nenhuma issue nova para importar', 'error'); return; }
+  var result = await apiPost('/dashboard/jira/import', { keys: keys });
+  closeJiraModal();
+  await loadState();
+  if (result && result.imported !== undefined) {
+    showToast(result.imported + ' demanda' + (result.imported !== 1 ? 's' : '') + ' importada' + (result.imported !== 1 ? 's' : ''), 'ok');
+  }
+}
+
+// ── Jira link picker (inside task modal) ──────────────
+var _jiraPickerIssues = [];
+
+function openJiraLinkModal() {
+  var picker = document.getElementById('jira-link-picker');
+  if (!picker) return;
+  picker.style.display = 'block';
+  picker.querySelector('#jira-picker-list').innerHTML = '<div style="padding:12px;color:#555568;font-family:monospace;font-size:11px;">carregando...</div>';
+  apiGet('/dashboard/jira/issues').then(function(data) {
+    _jiraPickerIssues = (data && data.issues) ? data.issues.filter(function(i){ return !i.linked; }) : [];
+    _renderJiraPickerList(_jiraPickerIssues);
+  });
+}
+
+function _renderJiraPickerList(issues) {
+  var container = document.getElementById('jira-picker-list');
+  if (!container) return;
+  if (!issues.length) {
+    container.innerHTML = '<div style="padding:12px;color:#555568;font-family:monospace;font-size:11px;">nenhuma issue disponível</div>';
+    return;
+  }
+  container.innerHTML = '';
+  issues.forEach(function(issue) {
+    var el = document.createElement('div');
+    el.style.cssText = 'display:flex;gap:8px;align-items:center;padding:8px 12px;cursor:pointer;border-bottom:1px solid #ffffff08;transition:background .15s;';
+    el.onmouseenter = function(){ this.style.background='#ffffff06'; };
+    el.onmouseleave = function(){ this.style.background='transparent'; };
+    el.onclick = function() { linkJiraToTask(issue.key); };
+    el.innerHTML =
+      '<span style="font-size:11px;color:#60a5fa;font-family:monospace;min-width:80px;">' + esc(issue.key) + '</span>' +
+      '<span style="font-size:12px;color:#e8e8ed;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(issue.summary) + '</span>';
+    container.appendChild(el);
+  });
+}
+
+function filterJiraPicker() {
+  var q = (document.getElementById('jira-picker-search') ? document.getElementById('jira-picker-search').value : '').toLowerCase();
+  var filtered = _jiraPickerIssues.filter(function(i) {
+    return !q || i.key.toLowerCase().includes(q) || (i.summary || '').toLowerCase().includes(q);
+  });
+  _renderJiraPickerList(filtered);
+}
+
+async function linkJiraToTask(key) {
+  if (!currentModalTaskId) return;
+  var result = await apiPost('/dashboard/jira/link', { task_id: currentModalTaskId, jira_key: key });
+  var picker = document.getElementById('jira-link-picker');
+  if (picker) picker.style.display = 'none';
+  if (result && result.status === 'ok') {
+    showToast('Linkada a ' + key, 'ok');
+    openTaskModal(currentModalTaskId);
+  }
+}
 
 // ── Init ──────────────────────────────────────────────
 updateClock();
