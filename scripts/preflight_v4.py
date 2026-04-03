@@ -17,7 +17,7 @@ MODULES = [
     "app.routers.internal_whatsapp",
     "app.routers.whatsapp",
     "app.routers.dashboard",
-    "app.services.alfred_brain_v2",
+    "app.services.brain",
     "app.services.focus_snapshot",
     "app.services.tomorrow_board",
     "app.cron.scheduler",

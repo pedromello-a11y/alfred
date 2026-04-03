@@ -1,13 +1,14 @@
 """Google Calendar client — real implementation using OAuth2 + httpx."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
 from loguru import logger
 
 from app.config import settings
+from app.services.time_utils import today_brt, to_brt_naive
 
 _GCAL_API = "https://www.googleapis.com/calendar/v3"
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -70,10 +71,11 @@ def _parse_event(event: dict) -> dict:
 
 
 async def get_today_events() -> list[dict]:
-    """Returns today's events from the primary calendar."""
-    now = datetime.now(timezone.utc)
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = now.replace(hour=23, minute=59, second=59, microsecond=0)
+    """Returns today's events from the primary calendar (BRT)."""
+    from app.services.time_utils import BRT
+    today = today_brt()
+    day_start = datetime(today.year, today.month, today.day, 0, 0, 0, tzinfo=BRT)
+    day_end = datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=BRT)
     return await get_events_range(day_start, day_end)
 
 
@@ -158,11 +160,19 @@ async def delete_event(event_id: str) -> dict:
 
 
 async def sync_to_agenda_blocks(db) -> int:
-    """Syncs today's GCal events into AgendaBlock table (source='gcal'). Returns count."""
+    """Syncs current week's GCal events (Mon-Fri, BRT) into AgendaBlock table. Returns count."""
     from app.services.agenda_manager import upsert_agenda_block
+    from app.services.time_utils import BRT
 
-    events = await get_today_events()
+    today = today_brt()
+    monday = today - timedelta(days=today.weekday())
+    friday = monday + timedelta(days=4)
+    week_start = datetime(monday.year, monday.month, monday.day, 0, 0, 0, tzinfo=BRT)
+    week_end = datetime(friday.year, friday.month, friday.day, 23, 59, 59, tzinfo=BRT)
+
+    events = await get_events_range(week_start, week_end)
     if not events:
+        logger.info("gcal sync: no events returned for week {}-{}", monday, friday)
         return 0
 
     synced = 0
@@ -173,8 +183,8 @@ async def sync_to_agenda_blocks(db) -> int:
         try:
             await upsert_agenda_block(
                 title=event["title"],
-                start_at=event["start"],
-                end_at=event["end"],
+                start_at=to_brt_naive(event["start"]),
+                end_at=to_brt_naive(event["end"]),
                 block_type=block_type,
                 source="gcal",
                 db=db,
@@ -182,6 +192,7 @@ async def sync_to_agenda_blocks(db) -> int:
             synced += 1
         except Exception as exc:
             logger.warning("gcal sync failed for event {}: {}", event.get("id"), exc)
+    logger.info("gcal sync: {} events synced for week {}-{}", synced, monday, friday)
     return synced
 
 

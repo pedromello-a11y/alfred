@@ -18,7 +18,12 @@ router = APIRouter()
 def _should_accept_self_authored(msg: dict) -> bool:
     source = (msg.get("source") or "").lower()
     chat_id = str(msg.get("chat_id") or "")
-    return source in {"web", "mobile"} and chat_id.endswith("@g.us")
+    if source not in {"web", "mobile"} or not chat_id.endswith("@g.us"):
+        return False
+    allowed = settings.alfred_whapi_chat_id.strip()
+    if not allowed:
+        return False
+    return chat_id == allowed
 
 
 async def _is_recent_echo(text: str, db: AsyncSession, window: int = 120) -> bool:
@@ -35,6 +40,9 @@ async def _is_recent_echo(text: str, db: AsyncSession, window: int = 120) -> boo
 
 @router.post("/webhook")
 async def webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    if settings.wa_gateway_url:
+        return {"status": "ignored", "reason": "gateway_active"}
+
     payload = await request.json()
     messages = payload.get("messages", [])
     if not messages and isinstance(payload.get("message"), dict):

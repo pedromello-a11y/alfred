@@ -59,9 +59,9 @@ async def dashboard_state(db: AsyncSession = Depends(get_db)) -> dict:
 
 
 async def _build_xp_payload(db: AsyncSession) -> dict:
-    result = await db.execute(select(PlayerStat).order_by(PlayerStat.xp.desc()).limit(1))
-    top = result.scalar_one_or_none()
-    total_xp = top.xp if top else 0
+    result = await db.execute(select(PlayerStat))
+    all_stats = result.scalars().all()
+    total_xp = sum(s.xp for s in all_stats) if all_stats else 0
     level = calculate_level(total_xp)
     current_in_level, xp_for_next = xp_progress_in_level(total_xp, level)
 
@@ -77,8 +77,9 @@ async def _build_xp_payload(db: AsyncSession) -> dict:
 
 async def _build_agenda_payload(db: AsyncSession) -> list:
     """Returns week calendar grouped by day (0=Mon..4=Fri) for the frontend."""
-    from datetime import date, timedelta
-    today = date.today()
+    from datetime import timedelta
+    from app.services.time_utils import today_brt
+    today = today_brt()
     # Get Monday of current week
     monday = today - timedelta(days=today.weekday())
     friday = monday + timedelta(days=4)

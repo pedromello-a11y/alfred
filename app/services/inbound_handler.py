@@ -27,7 +27,7 @@ _TASK_QUERY_HINTS = (
 
 
 def _normalize_text(text: str) -> str:
-    return re.sub(r"\\s+", " ", re.sub(r"[^\\w\\s]", " ", (text or "").lower())).strip()
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", (text or "").lower())).strip()
 
 
 def _is_active_tasks_question(text: str) -> bool:
