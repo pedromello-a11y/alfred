@@ -448,87 +448,87 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
   <div class="tab-bar">
     <div class="tab active" data-tab="work" onclick="switchTab('work')">FOCO</div>
     <div class="tab" data-tab="agenda" onclick="switchTab('agenda')">AGENDA</div>
+    <div class="tab" data-tab="demandas" onclick="switchTab('demandas')">DEMANDAS</div>
     <div class="tab" data-tab="personal" onclick="switchTab('personal')">PESSOAL</div>
-    <div class="tab" data-tab="dumps" onclick="switchTab('dumps')">DUMPS</div>
     <div class="tab-spacer"></div>
     <div class="mute-btn" id="mute-btn" onclick="toggleMute()" title="Mute/unmute sons">🔔</div>
     <div class="clock-mini" id="clock-mini"></div>
   </div>
 
   <!-- ── WORK view ── -->
-  <div class="view active" id="view-work">
+  <div id="view-work" class="view active" style="display:flex;flex-direction:column;">
 
-    <!-- Work body: focus-main + focus-sidebar -->
-    <div class="work-body">
+    <!-- Alert bar (deficit) — discreto -->
+    <div id="deficit-alert" style="display:none;padding:6px 16px;font-size:11px;color:#fbbf24;font-family:monospace;background:#fbbf2408;border-bottom:1px solid #fbbf2415;"></div>
 
-      <!-- Focus main (central, ~75%) -->
-      <div class="focus-main" id="focus-panel">
+    <!-- Main layout -->
+    <div style="display:flex;flex:1;overflow:hidden;">
 
-        <!-- Risk alert bar -->
-        <div class="risk-alert" id="risk-alert-bar" style="display:none;position:absolute;top:0;left:0;right:0;margin:0;border-radius:0;"></div>
+      <!-- Centro: task atual (75%) -->
+      <div id="focus-main" style="flex:3;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 60px;position:relative;min-width:0;">
 
-        <!-- Centered content -->
-        <div class="focus-center">
-          <div id="focus-urgent-dot" style="display:none;margin-bottom:16px;">
-            <span style="display:inline-block;width:10px;height:10px;background:#f87171;border-radius:50%;animation:pulse-dot 1.5s ease-in-out infinite;vertical-align:middle;"></span>
-            <span style="font-size:11px;color:#f87171;font-family:monospace;margin-left:6px;letter-spacing:0.08em;">ENTREGA URGENTE</span>
-          </div>
-
-          <div id="focus-project" class="focus-project-label"></div>
-
-          <div id="focus-task" class="focus-task-name"></div>
-
-          <div id="focus-progress" style="margin-top:12px;opacity:0.5;">
-            <div class="focus-progress-bar"><div class="focus-progress-fill" id="focus-progress-fill" style="width:0%"></div></div>
-          </div>
-
-          <div id="focus-actions" style="margin-top:32px;display:flex;gap:8px;align-items:center;opacity:0.3;transition:opacity 0.2s;position:relative;" onmouseenter="this.style.opacity='0.9'" onmouseleave="this.style.opacity='0.3'">
-            <button onclick="completeCurrentTask()" style="background:transparent;color:#4ade80;border:1px solid #4ade8020;padding:6px 14px;border-radius:5px;cursor:pointer;font-size:12px;font-family:monospace;">✓ entregar</button>
-            <button onclick="togglePauseMenu()" style="background:transparent;color:#8888a0;border:1px solid #ffffff08;padding:6px 14px;border-radius:5px;cursor:pointer;font-size:12px;font-family:monospace;">☕ pausa ▾</button>
-            <button onclick="enterTunnel()" style="background:transparent;color:#8888a0;border:1px solid #ffffff08;padding:6px 14px;border-radius:5px;cursor:pointer;font-size:12px;font-family:monospace;">◼ túnel</button>
-            <div id="pause-menu" style="display:none;position:absolute;top:calc(100% + 4px);left:80px;background:#1a1a25;border:1px solid #ffffff12;border-radius:6px;padding:4px;z-index:100;">
-              <div onclick="insertPause(15)" style="padding:6px 16px;cursor:pointer;font-size:12px;color:#8888a0;border-radius:4px;font-family:monospace;" onmouseenter="this.style.background='#ffffff08'" onmouseleave="this.style.background='transparent'">15 min</div>
-              <div onclick="insertPause(30)" style="padding:6px 16px;cursor:pointer;font-size:12px;color:#8888a0;border-radius:4px;font-family:monospace;" onmouseenter="this.style.background='#ffffff08'" onmouseleave="this.style.background='transparent'">30 min</div>
-              <div onclick="insertPause(60)" style="padding:6px 16px;cursor:pointer;font-size:12px;color:#8888a0;border-radius:4px;font-family:monospace;" onmouseenter="this.style.background='#ffffff08'" onmouseleave="this.style.background='transparent'">1 hora</div>
-            </div>
-          </div>
-
-          <div id="focus-deadline-info" style="margin-top:16px;font-size:12px;color:#555568;font-family:monospace;"></div>
+        <div id="focus-urgent-dot" style="display:none;margin-bottom:16px;">
+          <span style="display:inline-block;width:12px;height:12px;background:#f87171;border-radius:50%;animation:pulse-dot 1.5s ease-in-out infinite;vertical-align:middle;"></span>
+          <span style="font-size:11px;color:#f87171;font-family:monospace;margin-left:6px;letter-spacing:0.08em;">ENTREGA URGENTE</span>
         </div>
 
+        <div id="focus-project" style="font-size:11px;font-weight:500;letter-spacing:0.15em;text-transform:uppercase;color:#555568;font-family:monospace;margin-bottom:4px;"></div>
+
+        <div id="focus-deliverable" style="font-size:12px;color:#666680;font-family:monospace;margin-bottom:8px;"></div>
+
+        <div id="focus-task" style="font-size:clamp(40px,7vw,80px);font-weight:800;letter-spacing:-0.04em;color:#e8e8ed;text-align:center;max-width:700px;line-height:1.0;word-wrap:break-word;cursor:pointer;" onclick="if(currentState&&currentState.focus&&currentState.focus.taskId)openTaskModal(currentState.focus.taskId)"></div>
+
+        <div id="focus-progress" style="margin-top:16px;opacity:0.5;display:flex;align-items:center;gap:10px;">
+          <div style="width:200px;height:5px;background:#ffffff12;border-radius:3px;overflow:hidden;">
+            <div id="focus-progress-fill" style="height:100%;background:#4ade80;border-radius:3px;transition:width 0.5s;width:0%;"></div>
+          </div>
+          <span id="focus-progress-text" style="font-size:12px;color:#555568;font-family:monospace;"></span>
+        </div>
+
+        <div id="focus-actions" style="margin-top:32px;display:flex;gap:8px;opacity:0.3;transition:opacity 0.3s;position:relative;" onmouseenter="this.style.opacity='0.95'" onmouseleave="this.style.opacity='0.3'">
+          <button onclick="completeCurrentTask()" style="background:transparent;color:#4ade80;border:1px solid #4ade8020;padding:6px 14px;border-radius:5px;cursor:pointer;font-size:11px;font-family:monospace;">✓ entregar</button>
+          <button onclick="togglePauseMenu()" style="background:transparent;color:#8888a0;border:1px solid #ffffff08;padding:6px 14px;border-radius:5px;cursor:pointer;font-size:11px;font-family:monospace;">☕ pausa ▾</button>
+          <button onclick="enterTunnel()" style="background:transparent;color:#8888a0;border:1px solid #ffffff08;padding:6px 14px;border-radius:5px;cursor:pointer;font-size:11px;font-family:monospace;">◼ túnel</button>
+          <div id="pause-menu" style="display:none;position:absolute;top:100%;background:#1a1a25;border:1px solid #ffffff12;border-radius:6px;padding:4px;margin-top:4px;z-index:100;">
+            <div onclick="insertPause(15)" style="padding:6px 16px;cursor:pointer;font-size:12px;color:#8888a0;border-radius:4px;font-family:monospace;" onmouseenter="this.style.background='#ffffff08'" onmouseleave="this.style.background='transparent'">15 min</div>
+            <div onclick="insertPause(30)" style="padding:6px 16px;cursor:pointer;font-size:12px;color:#8888a0;border-radius:4px;font-family:monospace;" onmouseenter="this.style.background='#ffffff08'" onmouseleave="this.style.background='transparent'">30 min</div>
+            <div onclick="insertPause(60)" style="padding:6px 16px;cursor:pointer;font-size:12px;color:#8888a0;border-radius:4px;font-family:monospace;" onmouseenter="this.style.background='#ffffff08'" onmouseleave="this.style.background='transparent'">1 hora</div>
+          </div>
+        </div>
+
+        <div id="focus-timer-info" style="margin-top:20px;text-align:center;">
+          <div id="focus-window" style="font-size:13px;color:#555568;font-family:monospace;"></div>
+          <div id="focus-deadline-real" style="font-size:11px;color:#444458;font-family:monospace;margin-top:4px;"></div>
+        </div>
       </div><!-- /focus-main -->
 
-      <!-- Focus sidebar (~25%, max 280px) -->
-      <div class="focus-sidebar">
-        <div class="sidebar-header">SEU DIA</div>
-        <div id="day-timeline">
-          <div class="timeline-empty">carregando...</div>
-        </div>
-        <div id="day-summary"></div>
+      <!-- Sidebar: timeline do dia (25%) -->
+      <div id="focus-sidebar" style="flex:0 0 280px;border-left:1px solid #ffffff08;display:flex;flex-direction:column;overflow:hidden;">
+        <div style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:#555568;font-family:monospace;padding:16px 16px 8px;flex-shrink:0;">SEU DIA</div>
+        <div id="day-timeline" style="flex:1;overflow-y:auto;padding:0 12px;"></div>
+        <div id="day-summary" style="padding:12px 16px;border-top:1px solid #ffffff08;font-size:11px;color:#555568;font-family:monospace;flex-shrink:0;"></div>
       </div>
 
-    </div><!-- /work-body -->
+    </div><!-- /main layout -->
 
     <!-- Bottom bar -->
-    <div class="bottom-bar">
-      <div onclick="toggleActivePanel()" style="cursor:pointer;font-size:12px;color:#8888a0;font-family:monospace;display:flex;align-items:center;gap:6px;user-select:none;white-space:nowrap;">
+    <div style="border-top:1px solid #ffffff08;padding:8px 24px;display:flex;align-items:center;gap:16px;flex-shrink:0;">
+      <div onclick="toggleActivePanel()" style="cursor:pointer;font-size:13px;color:#8888a0;font-family:monospace;display:flex;align-items:center;gap:6px;user-select:none;">
         <span id="active-arrow" style="display:inline-block;transition:transform 0.2s;">▸</span>
         <span id="active-count">0</span> demandas
       </div>
-      <div class="bottom-create">
-        <input id="new-task-input" placeholder="descreva a demanda..." onkeydown="if(event.key==='Enter')createTaskSmart()" style="flex:1;background:#12121a;color:#e8e8ed;border:1px solid #ffffff08;border-radius:6px;padding:7px 12px;font-size:13px;font-family:monospace;outline:none;" />
-        <button onclick="createTaskSmart()">+ criar</button>
-        <button class="btn-jira" onclick="openJiraImport()" title="Importar do Jira">📥 jira</button>
+      <div style="flex:1;display:flex;align-items:center;gap:8px;">
+        <input id="new-task-input" placeholder="descreva a demanda..." onkeydown="if(event.key==='Enter')createTaskSmart()" style="flex:1;background:#12121a;color:#e8e8ed;border:1px solid #ffffff08;border-radius:6px;padding:8px 14px;font-size:13px;font-family:monospace;outline:none;" />
+        <button onclick="createTaskSmart()" style="background:#1a1a25;color:#8888a0;border:1px solid #ffffff12;border-radius:6px;padding:8px 14px;cursor:pointer;font-size:12px;font-family:monospace;">+ criar</button>
+        <button onclick="openJiraImport()" style="background:#1a1a25;color:#60a5fa;border:1px solid #60a5fa20;border-radius:6px;padding:8px 14px;cursor:pointer;font-size:12px;font-family:monospace;">📥 jira</button>
       </div>
     </div>
 
-    <!-- Active panel (collapsible) -->
+    <!-- Active panel -->
     <div class="active-panel" id="active-panel">
       <div class="active-header">
         <span class="active-header-title">▾ DEMANDAS ATIVAS (<span id="active-panel-count">0</span>)</span>
-        <div class="active-filters" id="active-filters">
-          <span class="filter-chip active" onclick="filterActive('ALL')">TODAS</span>
-        </div>
+        <div class="active-filters" id="active-filters"></div>
       </div>
       <div id="active-list"></div>
     </div>
@@ -538,48 +538,37 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
   <!-- ── AGENDA view ── -->
   <div class="view" id="view-agenda" style="display:none;flex-direction:column;">
 
-    <!-- Deficit alert -->
-    <div class="agenda-deficit" id="agenda-deficit-alert" style="display:none;">
-      <span id="agenda-deficit-text"></span>
-      <button onclick="highlightMovableTasks()">ver sugestão</button>
+    <!-- Nav -->
+    <div style="display:flex;align-items:center;padding:8px 16px;border-bottom:1px solid #ffffff08;gap:8px;flex-shrink:0;">
+      <button onclick="changeAgendaWeek(-1)" style="background:none;border:1px solid #ffffff08;border-radius:4px;color:#8888a0;font-size:12px;padding:4px 10px;cursor:pointer;">← anterior</button>
+      <span id="agenda-week-label" style="flex:1;text-align:center;font-size:13px;color:#8888a0;font-family:monospace;"></span>
+      <button onclick="changeAgendaWeek(1)" style="background:none;border:1px solid #ffffff08;border-radius:4px;color:#8888a0;font-size:12px;padding:4px 10px;cursor:pointer;">próxima →</button>
+      <button onclick="changeAgendaWeek(0)" style="background:none;border:1px solid #ffffff08;border-radius:4px;color:#8888a0;font-size:12px;padding:4px 10px;cursor:pointer;">hoje</button>
+      <button onclick="reorganizeAgenda()" style="background:none;border:1px solid #4ade8030;border-radius:4px;color:#4ade80;font-size:12px;padding:4px 10px;cursor:pointer;">↻ reorganizar</button>
     </div>
 
-    <div class="view-agenda-layout">
+    <!-- Deficit/resumo -->
+    <div id="agenda-summary-bar" style="display:none;padding:6px 16px;font-size:11px;color:#fbbf24;font-family:monospace;background:#fbbf2408;border-bottom:1px solid #fbbf2410;flex-shrink:0;"></div>
 
-      <!-- Calendário semanal -->
-      <div class="agenda-calendar">
-        <div class="agenda-nav" id="agenda-nav-bar">
-          <button class="agenda-nav-btn" onclick="changeAgendaWeek(-1)">← anterior</button>
-          <span class="agenda-week-label" id="agenda-week-label-tab">carregando...</span>
-          <button class="agenda-nav-btn" onclick="changeAgendaWeek(1)">próxima →</button>
-          <button class="agenda-nav-btn" onclick="changeAgendaWeek(0)">hoje</button>
-          <button class="agenda-nav-btn" onclick="reorganizeAgenda()" style="color:#4ade80;border-color:#4ade8030;margin-left:8px;">↻ reorganizar</button>
-          <span style="margin-left:8px;display:flex;gap:10px;align-items:center;font-size:10px;color:var(--t-dim);font-family:'JetBrains Mono',monospace">
-            <span><span style="display:inline-block;width:8px;height:8px;border-radius:1px;background:var(--purple-bg);border-left:2px solid var(--purple);margin-right:3px"></span>gcal</span>
-            <span><span style="display:inline-block;width:8px;height:8px;border-radius:1px;background:#4ade8010;border-left:2px solid var(--green);margin-right:3px"></span>pinned</span>
-            <span><span style="display:inline-block;width:8px;height:8px;border-radius:1px;background:#4ade8008;border-left:2px dashed var(--green);margin-right:3px"></span>sugerido</span>
-          </span>
-        </div>
-        <div class="cal-container" id="agenda-cal-container">
-          <div class="cal-day-header-row" id="agenda-day-headers"></div>
-          <div class="cal-grid" id="agenda-cal-grid">
-            <div class="cal-time-col" id="agenda-time-col"></div>
-            <div class="cal-days" id="agenda-cal-days"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Sidebar de demandas -->
-      <div class="agenda-sidebar">
-        <div class="agenda-sidebar-header">
-          <span>DEMANDAS</span>
-          <span id="agenda-sidebar-count" style="font-size:10px;color:var(--t-dim);font-family:'JetBrains Mono',monospace;font-weight:400"></span>
-        </div>
-        <div class="agenda-tasks-list" id="agenda-tasks-list"></div>
-      </div>
-
+    <!-- Cards container -->
+    <div style="flex:1;overflow-y:auto;padding:16px;">
+      <div id="agenda-cards" style="display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-bottom:16px;"></div>
+      <div id="agenda-week-summary" style="padding:12px;background:#12121a;border:1px solid #ffffff08;border-radius:8px;font-size:12px;color:#8888a0;font-family:monospace;"></div>
     </div>
+
+    <!-- Day detail -->
+    <div id="agenda-day-detail" style="display:none;flex:1;overflow:hidden;border-top:1px solid #ffffff08;"></div>
+
   </div><!-- /view-agenda -->
+
+  <!-- ── DEMANDAS view ── -->
+  <div class="view" id="view-demandas" style="display:none;flex-direction:column;padding:24px;overflow-y:auto;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <h2 style="font-size:18px;font-weight:700;color:#e8e8ed;margin:0;">Demandas</h2>
+      <button onclick="openCreateModal('')" style="background:#166534;color:#4ade80;border:1px solid #4ade8030;border-radius:6px;padding:7px 16px;cursor:pointer;font-size:12px;font-family:monospace;">+ nova</button>
+    </div>
+    <div id="demandas-list"></div>
+  </div>
 
   <!-- ── PERSONAL view ── -->
   <div class="view" id="view-personal" style="padding:32px;max-width:800px;margin:0 auto;">
@@ -938,17 +927,18 @@ function updateClock() {
 // ── Tab switching ──────────────────────────────────────
 function switchTab(tab) {
   currentTab = tab;
-  document.getElementById('view-work').style.display = (tab === 'work') ? 'flex' : 'none';
-  document.getElementById('view-agenda').style.display = (tab === 'agenda') ? 'flex' : 'none';
-  document.getElementById('view-personal').style.display = (tab === 'personal') ? 'flex' : 'none';
-  document.getElementById('view-dumps').style.display = (tab === 'dumps') ? 'flex' : 'none';
-  document.getElementById('view-dumps').style.flexDirection = (tab === 'dumps') ? 'column' : '';
+  var views = { work: 'view-work', agenda: 'view-agenda', demandas: 'view-demandas', personal: 'view-personal', dumps: 'view-dumps', foco: 'view-work' };
+  Object.keys(views).forEach(function(t) {
+    var el = document.getElementById(views[t]);
+    if (el) el.style.display = (t === tab || (tab === 'foco' && t === 'work')) ? 'flex' : 'none';
+  });
   document.querySelectorAll('.tab').forEach(function(el) {
     el.classList.toggle('active', el.dataset.tab === tab);
   });
   if (tab === 'personal') loadPersonal();
-  if (tab === 'dumps') loadDumps();
+  if (tab === 'dumps') { var d = document.getElementById('view-dumps'); if (d) d.style.flexDirection = 'column'; loadDumps(); }
   if (tab === 'agenda') loadAgenda();
+  if (tab === 'demandas') loadDemandas();
 }
 
 // ── Mute ──────────────────────────────────────────────
@@ -986,203 +976,188 @@ async function loadState() {
   currentState = data;
   if (data.jiraUrl) JIRA_BASE = data.jiraUrl;
   renderFocus(data.focus, data.nextTask);
-  renderDayTimeline(data.today, data.focus);
+  renderDayTimeline(data.today, data.focus, data.agenda);
   renderActiveCount(data.activeQueue);
   renderProjects(data.projects);
   if (data.riskAlert) renderRiskAlert(data.riskAlert);
+
+  // Deficit alert
+  var deficitEl = document.getElementById('deficit-alert');
+  if (deficitEl) {
+    if (data.deficit && data.deficit.overflow > 0) {
+      deficitEl.style.display = 'block';
+      deficitEl.textContent = '⚠ ' + fmt_time(data.deficit.totalNeeded * 60) + ' de demandas · ' + fmt_time(data.deficit.totalAvailable * 60) + ' disponíveis · ' + fmt_time(data.deficit.overflow * 60) + ' não cabem';
+    } else {
+      deficitEl.style.display = 'none';
+    }
+  }
 }
 
 // ── Render: Focus ──────────────────────────────────────
 function renderFocus(focus, next) {
   var urgentDot = document.getElementById('focus-urgent-dot');
-  var taskEl = document.getElementById('focus-task');
   var projectEl = document.getElementById('focus-project');
-  var actionsEl = document.getElementById('focus-actions');
-  var progressEl = document.getElementById('focus-progress');
-  var progressFill = document.getElementById('focus-progress-fill');
-  var deadlineEl = document.getElementById('focus-deadline-info');
+  var deliverableEl = document.getElementById('focus-deliverable');
+  var taskEl = document.getElementById('focus-task');
+  var progressDiv = document.getElementById('focus-progress');
+  var actionsDiv = document.getElementById('focus-actions');
+  var timerInfo = document.getElementById('focus-timer-info');
+  var windowEl = document.getElementById('focus-window');
+  var deadlineEl = document.getElementById('focus-deadline-real');
 
   if (focus && focus.blocked) focus = null;
 
   if (!focus || focus.status === 'empty') {
-    urgentDot.style.display = 'none';
-    projectEl.textContent = '';
-    taskEl.textContent = 'tudo limpo por agora ✨';
-    taskEl.style.fontSize = '';
-    taskEl.style.color = '#555568';
-    if (actionsEl) actionsEl.style.display = 'none';
-    if (progressEl) progressEl.style.display = 'none';
+    if (urgentDot) urgentDot.style.display = 'none';
+    if (projectEl) projectEl.textContent = '';
+    if (deliverableEl) deliverableEl.textContent = '';
+    if (taskEl) { taskEl.textContent = 'tudo limpo por agora ✨'; taskEl.style.fontSize = '32px'; taskEl.style.color = '#555568'; taskEl.style.fontWeight = '500'; }
+    if (progressDiv) progressDiv.style.display = 'none';
+    if (actionsDiv) actionsDiv.style.display = 'none';
+    if (timerInfo) timerInfo.style.display = 'none';
     loadPersonalSuggestion();
     return;
   }
 
-  projectEl.textContent = focus.project || '';
-  taskEl.textContent = focus.taskName || '';
-  taskEl.style.fontSize = '';
-  taskEl.style.color = '';
+  if (taskEl) { taskEl.style.fontSize = ''; taskEl.style.color = '#e8e8ed'; taskEl.style.fontWeight = '800'; }
+  if (progressDiv) progressDiv.style.display = 'flex';
+  if (actionsDiv) actionsDiv.style.display = 'flex';
+  if (timerInfo) timerInfo.style.display = 'block';
 
-  if (focus.status === 'urgent') {
-    urgentDot.style.display = 'block';
+  // Parse project | deliverable | task from title
+  var parts = (focus.fullTitle || focus.taskName || '').split('|').map(function(s){return s.trim();});
+  if (parts.length >= 3) {
+    if (projectEl) projectEl.textContent = parts[0];
+    if (deliverableEl) deliverableEl.textContent = parts[1];
+    if (taskEl) taskEl.textContent = parts.slice(2).join(' | ');
+  } else if (parts.length === 2) {
+    if (projectEl) projectEl.textContent = parts[0];
+    if (deliverableEl) deliverableEl.textContent = '';
+    if (taskEl) taskEl.textContent = parts[1];
   } else {
-    urgentDot.style.display = 'none';
+    if (projectEl) projectEl.textContent = focus.project || '';
+    if (deliverableEl) deliverableEl.textContent = '';
+    if (taskEl) taskEl.textContent = focus.taskName || '';
   }
 
-  var info = (focus.deadlineType === 'hard' ? '🔴 ' : '🟡 ') + (focus.deadlineHuman || 'sem prazo');
-  deadlineEl.textContent = info;
+  if (urgentDot) urgentDot.style.display = (focus.status === 'urgent') ? 'block' : 'none';
 
-  if (progressEl) {
-    var total = focus.checklistTotal || 0;
-    var done = focus.checklistDone || 0;
-    if (total > 0) {
-      progressEl.style.display = 'block';
-      if (progressFill) progressFill.style.width = Math.round(done / total * 100) + '%';
-      var progLabel = progressEl.querySelector('.focus-progress-label');
-      if (!progLabel) {
-        progLabel = document.createElement('div');
-        progLabel.className = 'focus-progress-label';
-        progLabel.style.cssText = 'font-size:10px;color:#555568;font-family:monospace;margin-top:4px;text-align:center;';
-        progressEl.appendChild(progLabel);
-      }
-      progLabel.textContent = done + '/' + total;
-    } else {
-      progressEl.style.display = 'none';
-    }
+  // Progress bar = tempo restante
+  var estMins = focus.estimatedMinutes || focus.estimated_minutes || 120;
+  var elapsed = focus.elapsedMinutes || 0;
+  var remaining = Math.max(0, estMins - elapsed);
+  var pct = estMins > 0 ? Math.min(100, Math.round(elapsed / estMins * 100)) : 0;
+  var fill = document.getElementById('focus-progress-fill');
+  if (fill) {
+    fill.style.width = pct + '%';
+    fill.style.background = remaining <= 15 ? '#f87171' : remaining <= 30 ? '#fbbf24' : '#4ade80';
   }
+  var progText = document.getElementById('focus-progress-text');
+  if (progText) progText.textContent = fmt_time(remaining) + ' restam';
 
-  if (actionsEl) actionsEl.style.display = 'flex';
+  // Window info
+  if (windowEl) windowEl.textContent = focus.windowEnd ? '⏱ janela até ' + focus.windowEnd + (focus.windowMargin ? ' (margem ' + fmt_time(focus.windowMargin) + ')' : '') : '';
+
+  // Real deadline
+  if (deadlineEl) deadlineEl.textContent = focus.deadlineHuman ? '📅 prazo real: ' + focus.deadlineHuman : '';
 }
 
 // ── Render: Day timeline ───────────────────────────────
-function renderDayTimeline(today, focus) {
+function renderDayTimeline(today, focus, agenda) {
   var container = document.getElementById('day-timeline');
-  var summary = document.getElementById('day-summary');
   if (!container) return;
 
-  var focusId = focus && !focus.blocked && focus.status !== 'empty' ? focus.taskId : null;
-
-  // Coletar eventos GCal de hoje da agenda
-  var todayISO = new Date().toISOString().slice(0, 10);
-  var gcalEvents = [];
-  if (currentState && currentState.agenda) {
-    var agendaDays = currentState.agenda.days || [];
-    var weekStart = currentState.agenda.weekStart;
-    for (var di = 0; di < 5; di++) {
-      if (weekStart && addDays(weekStart, di) === todayISO) {
-        var dayData = agendaDays.find(function(d) { return d.day === di; });
-        if (dayData) {
-          gcalEvents = (dayData.events || []).filter(function(ev) { return ev.source === 'gcal'; });
-        }
-        break;
-      }
-    }
-  }
-
-  // Montar array unificado
   var dayItems = [];
-
-  gcalEvents.forEach(function(ev) {
-    dayItems.push({
-      type: 'gcal',
-      title: ev.title || ev.shortTitle || '',
-      start: ev.start || ev.time || '',
-      end: ev.end || '',
-      id: null
-    });
-  });
+  var focusId = focus && !focus.blocked && focus.status !== 'empty' ? focus.taskId : null;
 
   (today || []).forEach(function(t) {
     dayItems.push({
       type: 'task',
+      shortTitle: t.taskName || '',
       title: (t.project ? t.project + ' · ' : '') + (t.taskName || ''),
-      start: t.scheduledTime || t.scheduled_time || t.scheduledStart || '',
+      start: t.scheduledStart || t.scheduledTime || t.scheduled_time || '',
       end: t.scheduledEnd || '',
       id: t.id,
       status: t.status,
+      estimate: t.estimatedMinutes || t.estimated_minutes,
+      isCurrent: t.id === focusId,
       jira_key: t.jira_key || t.jiraKey || '',
-      estimatedMinutes: t.estimatedMinutes || t.estimated_minutes || 0,
       checklistDone: t.checklistDone || 0,
-      checklistTotal: t.checklistTotal || 0,
-      isCurrent: t.id === focusId
+      checklistTotal: t.checklistTotal || 0
     });
   });
 
-  // Ordenar cronologicamente
-  dayItems.sort(function(a, b) {
-    return (a.start || '99:99').localeCompare(b.start || '99:99');
-  });
+  var todayISO = new Date().toISOString().slice(0, 10);
+  if (agenda && agenda.days) {
+    var weekStart = agenda.weekStart;
+    (agenda.days || []).forEach(function(day) {
+      var dayDate = weekStart ? addDays(weekStart, day.day) : null;
+      if (dayDate === todayISO) {
+        (day.events || []).forEach(function(ev) {
+          if (ev.source === 'gcal') {
+            dayItems.push({ type: 'gcal', title: ev.title || ev.shortTitle || '', start: ev.start || ev.time || '', end: ev.end || '', id: null });
+          }
+        });
+      }
+    });
+  }
+
+  dayItems.sort(function(a, b) { return (a.start || '99:99').localeCompare(b.start || '99:99'); });
 
   if (!dayItems.length) {
     container.innerHTML = '<div style="padding:16px 8px;text-align:center;font-size:12px;color:#555568;">nenhuma tarefa hoje ✨</div>';
+    var summary = document.getElementById('day-summary');
     if (summary) summary.innerHTML = '';
     return;
   }
 
   container.innerHTML = '';
-  var totalTasks = 0;
-  var doneTasks = 0;
-  var remainingMins = 0;
+  var maxVisible = 8;
+  var remaining = dayItems.length - maxVisible;
 
-  dayItems.forEach(function(item) {
+  dayItems.slice(0, maxVisible).forEach(function(item) {
     var el = document.createElement('div');
 
     if (item.type === 'gcal') {
-      el.className = 'timeline-item gcal';
-      var timeInfo = item.start + (item.end ? '–' + item.end : '');
-      el.innerHTML =
-        '<span class="tl-marker" style="color:#a78bfa;">📅</span>' +
-        '<div class="tl-info">' +
-          '<div class="tl-name">' + esc(item.title) + '</div>' +
-          (timeInfo ? '<div class="tl-time">' + esc(timeInfo) + '</div>' : '') +
-        '</div>';
+      el.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:8px;border-left:2px solid #a78bfa40;margin-left:4px;margin-bottom:4px;opacity:0.5;';
+      el.innerHTML = '<span style="font-size:12px;flex-shrink:0;">📅</span><div style="flex:1;min-width:0;"><div style="font-size:11px;color:#a78bfa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(item.title) + '</div><div style="font-size:10px;color:#555568;font-family:monospace;">' + esc(item.start) + (item.end ? '–' + esc(item.end) : '') + '</div></div>';
+    } else if (item.isCurrent) {
+      el.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:8px;background:#ffffff06;border-left:2px solid #4ade80;margin-left:4px;border-radius:0 6px 6px 0;margin-bottom:4px;cursor:pointer;';
+      el.onclick = function(){ openTaskModal(item.id); };
+      el.innerHTML = '<span style="font-size:12px;color:#4ade80;flex-shrink:0;">▶</span><div style="flex:1;min-width:0;"><div style="font-size:12px;color:#e8e8ed;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(item.shortTitle) + '</div><div style="font-size:10px;color:#555568;font-family:monospace;">' + esc(item.start) + (item.end ? '–' + esc(item.end) : '') + (item.estimate ? ' · est ' + fmt_time(item.estimate) : '') + '</div>' + (item.jira_key ? '<div style="font-size:9px;color:#60a5fa;font-family:monospace;">' + esc(item.jira_key) + '</div>' : '') + '</div>';
+    } else if (item.status === 'done') {
+      el.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:6px 8px;margin-left:4px;margin-bottom:4px;opacity:0.3;';
+      el.innerHTML = '<span style="font-size:12px;flex-shrink:0;">✓</span><div style="font-size:11px;color:#555568;text-decoration:line-through;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(item.shortTitle) + '</div>';
     } else {
-      totalTasks++;
-      var isDone = item.status === 'done' || item.status === 'completed';
-      var isCurrent = item.isCurrent;
-      if (isDone) doneTasks++;
-      if (!isDone) remainingMins += item.estimatedMinutes;
-
-      var cls = isDone ? 'done' : (isCurrent ? 'current' : 'future');
-      var marker = isDone ? '✓' : (isCurrent ? '▶' : '·');
-      var markerColor = isCurrent ? 'color:#4ade80;' : (isDone ? '' : 'color:#555568;');
-
-      var timeInfo = '';
-      if (item.start) timeInfo += item.start;
-      if (item.estimatedMinutes) timeInfo += (timeInfo ? ' · ' : '') + fmt_time(item.estimatedMinutes);
-
-      var checklistHTML = '';
-      if (item.checklistTotal > 0) {
-        checklistHTML = ' <span style="font-size:10px;color:#555568;font-family:monospace;">' + item.checklistDone + '/' + item.checklistTotal + '</span>';
-      }
-
-      var jiraHTML = '';
-      if (item.jira_key) {
-        jiraHTML = '<span class="tl-jira" onclick="event.stopPropagation();window.open((JIRA_BASE||\'https://hotmart.atlassian.net\')+\'/browse/' + esc(item.jira_key) + '\',\'_blank\')">' + esc(item.jira_key) + '</span>';
-      }
-
-      el.className = 'timeline-item ' + cls;
-      el.onclick = function() { openTaskModal(item.id); };
-      el.innerHTML =
-        '<span class="tl-marker" style="' + markerColor + '">' + marker + '</span>' +
-        '<div class="tl-info">' +
-          '<div class="tl-name">' + esc(item.title) + checklistHTML + '</div>' +
-          (timeInfo || jiraHTML
-            ? '<div class="tl-time">' + esc(timeInfo) + (jiraHTML ? (timeInfo ? ' · ' : '') + jiraHTML : '') + '</div>'
-            : '') +
-        '</div>';
+      el.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:6px 8px;margin-left:4px;margin-bottom:4px;cursor:pointer;opacity:0.6;transition:opacity 0.15s;';
+      el.onmouseenter = function(){ this.style.opacity='0.9'; };
+      el.onmouseleave = function(){ this.style.opacity='0.6'; };
+      if (item.id) el.onclick = function(){ openTaskModal(item.id); };
+      el.innerHTML = '<span style="font-size:12px;color:#555568;flex-shrink:0;">·</span><div style="flex:1;min-width:0;"><div style="font-size:11px;color:#8888a0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(item.shortTitle) + '</div><div style="font-size:10px;color:#555568;font-family:monospace;">' + esc(item.start) + (item.estimate ? ' · ' + fmt_time(item.estimate) : '') + '</div></div>';
     }
 
     container.appendChild(el);
   });
 
+  if (remaining > 0) {
+    var more = document.createElement('div');
+    more.style.cssText = 'padding:6px 8px;font-size:10px;color:#555568;font-family:monospace;margin-left:4px;';
+    more.textContent = '... +' + remaining + ' mais';
+    container.appendChild(more);
+  }
+
+  var summary = document.getElementById('day-summary');
   if (summary) {
-    var remainH = Math.round(remainingMins / 60 * 10) / 10;
-    var availH = 8;
-    var ok = remainH <= availH;
-    var icon = ok ? '✅' : '⚠️';
-    var extraHTML = ok ? '' : ' <span class="warn">+' + Math.round((remainH - availH) * 10) / 10 + 'h excedente</span>';
-    summary.innerHTML =
-      icon + ' <span class="' + (ok ? 'ok' : 'warn') + '">' + doneTasks + '/' + totalTasks + ' tasks</span>' +
-      ' · ' + remainH + 'h restantes' + extraHTML;
+    var totalTasks = (today || []).length;
+    var doneTasks = (today || []).filter(function(t){ return t.status === 'done'; }).length;
+    var totalEst = (today || []).reduce(function(s, t){ return s + (t.estimatedMinutes || t.estimated_minutes || 0); }, 0);
+    var doneEst = (today || []).filter(function(t){ return t.status === 'done'; }).reduce(function(s, t){ return s + (t.estimatedMinutes || t.estimated_minutes || 0); }, 0);
+    var remainingEst = totalEst - doneEst;
+    var availableH = currentState && currentState.availableHoursToday ? currentState.availableHoursToday : 8;
+    var factor = remainingEst > 0 ? (availableH * 60 / remainingEst) : 99;
+    var emoji = factor >= 2.5 ? '😎' : factor >= 1.7 ? '😌' : factor >= 1.3 ? '🙂' : factor >= 1.0 ? '😐' : '😰';
+    var factorColor = factor >= 1.0 ? '#4ade80' : '#fbbf24';
+    summary.innerHTML = '<span style="color:' + factorColor + ';">■</span> ' + doneTasks + '/' + totalTasks + ' tasks · ' + fmt_time(remainingEst) + ' restam<br><span style="opacity:0.6;">fator ' + (factor > 10 ? '∞' : factor.toFixed(1)) + 'x ' + emoji + '</span>';
   }
 }
 
@@ -2451,6 +2426,40 @@ var personalCategories = {
   ideias: { icon: '💡', label: 'IDEIAS' }
 };
 
+async function loadDemandas() {
+  var container = document.getElementById('demandas-list');
+  if (!container) return;
+  var data = await apiGet('/dashboard/all-tasks');
+  if (!data) return;
+  container.innerHTML = '';
+
+  function renderGroup(title, tasks, color) {
+    if (!tasks.length) return;
+    var section = document.createElement('div');
+    section.style.cssText = 'margin-bottom:24px;';
+    section.innerHTML = '<div style="font-size:10px;letter-spacing:0.1em;color:' + color + ';font-family:monospace;margin-bottom:10px;">' + title + ' (' + tasks.length + ')</div>';
+    tasks.forEach(function(t) {
+      var el = document.createElement('div');
+      el.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;background:#12121a;border:1px solid #ffffff08;border-radius:8px;margin-bottom:6px;cursor:pointer;transition:border-color 0.15s;';
+      el.onmouseenter = function(){ this.style.borderColor='#ffffff20'; };
+      el.onmouseleave = function(){ this.style.borderColor='#ffffff08'; };
+      el.onclick = function(){ openTaskModal(t.id); };
+      var dl = t.deadlineHuman ? '<span style="font-size:10px;color:#555568;font-family:monospace;">📅 ' + esc(t.deadlineHuman) + '</span>' : '';
+      var jira = t.jira_key ? '<span style="font-size:10px;color:#60a5fa;font-family:monospace;">' + esc(t.jira_key) + '</span>' : '';
+      var est = t.estimated_minutes ? '<span style="font-size:10px;color:#555568;font-family:monospace;">' + fmt_time(t.estimated_minutes) + '</span>' : '';
+      var cl = (t.checklistTotal > 0) ? '<span style="font-size:10px;color:#555568;font-family:monospace;">' + t.checklistDone + '/' + t.checklistTotal + '</span>' : '';
+      var proj = t.project ? '<span style="font-size:10px;color:#555568;font-family:monospace;letter-spacing:0.08em;">' + esc(t.project) + '</span>' : '';
+      el.innerHTML = '<div style="flex:1;min-width:0;"><div style="font-size:13px;color:#e8e8ed;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(t.taskName || t.title) + '</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:3px;">' + [proj,dl,est,cl,jira].filter(Boolean).join('') + '</div></div>';
+      section.appendChild(el);
+    });
+    container.appendChild(section);
+  }
+
+  renderGroup('● ATIVAS', data.active || [], '#4ade80');
+  renderGroup('◑ ON HOLDING', data.onHolding || [], '#fbbf24');
+  renderGroup('○ BACKLOG', data.backlog || [], '#60a5fa');
+}
+
 async function loadPersonal() {
   try {
     var data = await apiGet('/dashboard/personal');
@@ -2616,14 +2625,346 @@ var draggedTaskEstimate = null;
 var draggedBlockId = null;
 var draggedBlockTaskId = null;
 
+var agendaDayExpanded = null;
+
 async function loadAgenda() {
   var url = '/dashboard/state' + (agendaWeekOffset ? '?week_offset=' + agendaWeekOffset : '');
   var data = await apiGet(url);
   if (!data) return;
   agendaCurrentState = data;
-  renderAgendaCalendar(data.agenda);
-  renderAgendaSidebar(data.activeQueue, data.agenda);
-  renderAgendaDeficit(data.deficit);
+  currentState = data;
+  renderAgendaCards(data);
+  if (agendaDayExpanded !== null) renderDayDetail(agendaDayExpanded);
+}
+
+function renderAgendaCards(data) {
+  var agenda = data.agenda || {};
+  var container = document.getElementById('agenda-cards');
+  if (!container) return;
+  container.innerHTML = '';
+
+  var weekStart = agenda.weekStart;
+  var labelEl = document.getElementById('agenda-week-label');
+  if (labelEl) labelEl.textContent = (agenda.weekStart && agenda.weekEnd) ? formatWeekLabel(agenda.weekStart, agenda.weekEnd) : '';
+
+  var DIAS = ['SEG','TER','QUA','QUI','SEX','SÁB','DOM'];
+  var todayISO = new Date().toISOString().slice(0,10);
+
+  for (var d = 0; d < 7; d++) {
+    (function(dayIdx) {
+      var dayDate = weekStart ? addDays(weekStart, dayIdx) : null;
+      var isToday = dayDate === todayISO;
+      var isWeekend = dayIdx >= 5;
+
+      var card = document.createElement('div');
+      card.style.cssText = 'background:' + (isWeekend ? '#0f0f18' : '#12121a') + ';border:1px solid ' + (isToday ? '#a78bfa40' : '#ffffff08') + ';border-radius:8px;padding:12px;cursor:pointer;transition:border-color 0.15s;min-height:180px;display:flex;flex-direction:column;';
+      card.onmouseenter = function(){ this.style.borderColor='#ffffff20'; };
+      card.onmouseleave = function(){ this.style.borderColor = isToday ? '#a78bfa40' : '#ffffff08'; };
+      card.dataset.day = dayIdx;
+      card.onclick = function(){ expandDayDetail(parseInt(this.dataset.day)); };
+
+      var dateNum = dayDate ? dayDate.slice(8) : '';
+      var headerColor = isToday ? '#a78bfa' : '#555568';
+      card.innerHTML = '<div style="font-size:11px;font-weight:600;color:' + headerColor + ';font-family:monospace;letter-spacing:0.06em;margin-bottom:10px;">' + DIAS[dayIdx] + ' ' + dateNum + '</div>';
+
+      var dayTasks = (agenda.suggestedBlocks || []).filter(function(b){ return b.day === dayIdx; });
+      var dayMap = {};
+      (agenda.days || []).forEach(function(day) { dayMap[day.day] = day.events || []; });
+      var dayEvents = (dayMap[dayIdx] || []).filter(function(ev){ return ev.source === 'gcal'; });
+
+      if (dayTasks.length > 0) {
+        var mainTask = dayTasks[0];
+        var totalHours = dayTasks.reduce(function(s,t){ return s + ((t.durationMinutes || 120) / 60); }, 0);
+        card.innerHTML += '<div style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:#e8e8ed;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">■ ' + esc(mainTask.shortTitle || mainTask.title || '') + '</div><div style="font-size:10px;color:#555568;font-family:monospace;">' + totalHours.toFixed(1) + 'h</div></div>';
+      }
+
+      dayEvents.slice(0, 3).forEach(function(ev) {
+        card.innerHTML += '<div style="font-size:10px;color:#a78bfa;font-family:monospace;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📅 ' + esc(ev.shortTitle || ev.title || '') + ' ' + (ev.start || '') + '</div>';
+      });
+      if (dayEvents.length > 3) card.innerHTML += '<div style="font-size:9px;color:#555568;">+' + (dayEvents.length - 3) + ' mais</div>';
+
+      card.innerHTML += '<div style="flex:1;"></div>';
+      var allocH = dayTasks.reduce(function(s,t){ return s + ((t.durationMinutes || 120) / 60); }, 0);
+      card.innerHTML += '<div style="font-size:10px;color:#555568;font-family:monospace;margin-top:8px;padding-top:8px;border-top:1px solid #ffffff06;">' + (dayTasks.length > 0 ? allocH.toFixed(0) + 'h aloc.' : 'livre') + '</div>';
+
+      container.appendChild(card);
+    })(d);
+  }
+
+  renderAgendaWeekSummary(data);
+}
+
+function renderAgendaWeekSummary(data) {
+  var el = document.getElementById('agenda-week-summary');
+  if (!el) return;
+  var deficit = data.deficit || {};
+  var needed = deficit.totalNeeded || 0;
+  var available = deficit.totalAvailable || 0;
+  var overflow = deficit.overflow || 0;
+  var factor = needed > 0 ? available / needed : 99;
+  var emoji = factor >= 2.5 ? '😎' : factor >= 1.7 ? '😌' : factor >= 1.3 ? '🙂' : factor >= 1.0 ? '😐' : '😰';
+  el.innerHTML = 'RESUMO DA SEMANA<br>' +
+    fmt_time(needed * 60) + ' de demandas · ' + fmt_time(available * 60) + ' disponíveis<br>' +
+    'fator ' + (factor > 10 ? '∞' : factor.toFixed(1)) + 'x ' + emoji +
+    (overflow > 0 ? '<br><span style="color:#fbbf24;">⚠ ' + fmt_time(overflow * 60) + ' não cabem</span>' : '');
+}
+
+function expandDayDetail(dayIdx) {
+  agendaDayExpanded = dayIdx;
+  var detail = document.getElementById('agenda-day-detail');
+  if (!detail) return;
+  detail.style.display = 'flex';
+  detail.innerHTML = '<div style="flex:1;padding:16px;overflow-y:auto;" id="day-detail-content"></div><div style="flex:0 0 280px;border-left:1px solid #ffffff08;display:flex;flex-direction:column;overflow:hidden;" id="day-detail-sidebar"></div>';
+  renderDayDetail(dayIdx);
+}
+
+function closeDayDetail() {
+  var detail = document.getElementById('agenda-day-detail');
+  if (detail) detail.style.display = 'none';
+  agendaDayExpanded = null;
+}
+
+function renderDayDetail(dayIdx) {
+  var content = document.getElementById('day-detail-content');
+  var sidebar = document.getElementById('day-detail-sidebar');
+  if (!content || !sidebar || !currentState) return;
+
+  var agenda = currentState.agenda || {};
+  var weekStart = agenda.weekStart;
+  var dayDate = weekStart ? addDays(weekStart, dayIdx) : '';
+  var DIAS = ['SEGUNDA','TERÇA','QUARTA','QUINTA','SEXTA','SÁBADO','DOMINGO'];
+
+  content.innerHTML = '';
+  var header = document.createElement('div');
+  header.style.cssText = 'display:flex;align-items:center;gap:12px;margin-bottom:16px;';
+  header.innerHTML = '<button onclick="closeDayDetail()" style="background:none;border:1px solid #ffffff08;border-radius:4px;color:#8888a0;font-size:12px;padding:4px 10px;cursor:pointer;">← semana</button>' +
+    '<span style="font-size:16px;font-weight:600;color:#e8e8ed;">' + DIAS[dayIdx] + ' ' + (dayDate ? dayDate.slice(8) : '') + '</span>';
+  content.appendChild(header);
+
+  var blocks = [];
+  var dayMap = {};
+  (agenda.days || []).forEach(function(day) { dayMap[day.day] = day.events || []; });
+  (dayMap[dayIdx] || []).forEach(function(ev) {
+    if (ev.source === 'gcal') blocks.push({ type:'gcal', title:ev.title||ev.shortTitle||'', start:ev.start||'', end:ev.end||'', id:null });
+  });
+  (agenda.suggestedBlocks || []).forEach(function(b) {
+    if (b.day === dayIdx) blocks.push({ type: b.pinned ? 'pinned' : 'suggested', title:b.title||b.shortTitle||'', start:b.start||'', end:b.end||'', id:b.blockId||b.id, taskId:b.taskId, pinned:b.pinned });
+  });
+  (agenda.pauses || []).forEach(function(b) {
+    if (b.day === dayIdx) blocks.push({ type:'fixed', title:b.title||'Pausa', start:b.start||'', end:b.end||'', id:b.id });
+  });
+  blocks.sort(function(a,b){ return (a.start||'').localeCompare(b.start||''); });
+
+  var CAL_START = 8, CAL_END = 21, PX_PER_HOUR = 52;
+  var totalPx = (CAL_END - CAL_START) * PX_PER_HOUR;
+  var timeline = document.createElement('div');
+  timeline.style.cssText = 'position:relative;height:' + totalPx + 'px;margin-left:48px;';
+
+  for (var h = CAL_START; h <= CAL_END; h++) {
+    var top = (h - CAL_START) * PX_PER_HOUR;
+    var label = document.createElement('div');
+    label.style.cssText = 'position:absolute;left:-48px;top:' + top + 'px;font-size:10px;color:#555568;font-family:monospace;transform:translateY(-50%);';
+    label.textContent = h + 'h';
+    timeline.appendChild(label);
+    var line = document.createElement('div');
+    line.style.cssText = 'position:absolute;left:0;right:0;top:' + top + 'px;border-top:1px solid #ffffff06;';
+    timeline.appendChild(line);
+  }
+
+  blocks.forEach(function(block) {
+    var startParts = (block.start || '9:00').split(':');
+    var endParts = (block.end || '').split(':');
+    var startH = parseInt(startParts[0]) + (parseInt(startParts[1]||0)) / 60;
+    var endH = endParts.length >= 2 ? parseInt(endParts[0]) + parseInt(endParts[1]||0) / 60 : startH + 1;
+    var btop = Math.max(0, (startH - CAL_START) * PX_PER_HOUR);
+    var bheight = Math.max(20, (endH - startH) * PX_PER_HOUR);
+    var el = document.createElement('div');
+    el.style.cssText = 'position:absolute;left:4px;right:4px;top:' + btop + 'px;height:' + bheight + 'px;border-radius:5px;padding:6px 8px;overflow:hidden;box-sizing:border-box;transition:opacity 0.15s;';
+
+    if (block.type === 'gcal') {
+      el.style.background = '#a78bfa12'; el.style.borderLeft = '3px solid #a78bfa';
+      el.innerHTML = '<div style="font-size:10px;color:#a78bfa60;font-family:monospace;">' + esc(block.start) + '–' + esc(block.end) + '</div><div style="font-size:11px;color:#a78bfa;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(block.title) + '</div>';
+    } else if (block.type === 'pinned' || block.type === 'fixed') {
+      el.style.background = block.type === 'fixed' ? '#60a5fa10' : '#4ade8012';
+      el.style.borderLeft = '3px solid ' + (block.type === 'fixed' ? '#60a5fa' : '#4ade80');
+      el.style.cursor = 'grab';
+      if (block.id) { el.draggable = true; el.dataset.blockId = block.id; el.ondragstart = function(e){ e.dataTransfer.setData('blockId', this.dataset.blockId); this.style.opacity='0.4'; }; el.ondragend = function(){ this.style.opacity='1'; }; }
+      el.innerHTML = '<div style="font-size:10px;color:#555568;font-family:monospace;">' + esc(block.start) + '–' + esc(block.end) + '</div><div style="font-size:11px;color:#e8e8ed;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(block.title) + '</div>';
+      if (block.id) el.innerHTML += '<span onclick="event.stopPropagation();deleteAgendaBlock(\'' + block.id + '\')" style="position:absolute;top:3px;right:6px;font-size:9px;color:#f87171;cursor:pointer;opacity:0;transition:opacity 0.15s;" class="del-btn">✕</span>';
+      el.innerHTML += '<div style="position:absolute;bottom:0;left:0;right:0;height:6px;cursor:ns-resize;border-radius:0 0 5px 5px;" onmousedown="startBlockResize(event,\'' + (block.id||'') + '\',' + bheight + ')"></div>';
+      el.onmouseenter = function(){ var s=this.querySelector('.del-btn'); if(s)s.style.opacity='0.6'; };
+      el.onmouseleave = function(){ var s=this.querySelector('.del-btn'); if(s)s.style.opacity='0'; };
+    } else {
+      el.style.background = '#4ade8008'; el.style.border = '1px dashed #4ade8040'; el.style.borderLeft = '3px dashed #4ade8050';
+      el.innerHTML = '<div style="font-size:10px;color:#555568;font-family:monospace;">' + esc(block.start) + '–' + esc(block.end) + '</div><div style="font-size:11px;color:#8888a0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(block.title) + '</div>';
+      if (block.taskId) { el.style.cursor = 'pointer'; el.onclick = function(){ openTaskModal(block.taskId); }; }
+    }
+    timeline.appendChild(el);
+  });
+
+  timeline.ondragover = function(e){ e.preventDefault(); };
+  timeline.ondrop = function(e) {
+    e.preventDefault();
+    var blockId = e.dataTransfer.getData('blockId');
+    var taskId = e.dataTransfer.getData('taskId');
+    var rect = timeline.getBoundingClientRect();
+    var snapped = Math.round((CAL_START + (e.clientY - rect.top) / PX_PER_HOUR) * 4) / 4;
+    var hh = Math.floor(snapped), mm = Math.round((snapped - hh) * 60);
+    var startTime = String(hh).padStart(2,'0') + ':' + String(mm).padStart(2,'0');
+    if (blockId) moveAgendaBlock(blockId, dayIdx, startTime);
+    else if (taskId) allocateTask(taskId, dayIdx, startTime);
+  };
+  timeline.addEventListener('dblclick', function(e) {
+    if (e.target !== timeline) return;
+    var rect = timeline.getBoundingClientRect();
+    var snapped = Math.round((CAL_START + (e.clientY - rect.top) / PX_PER_HOUR) * 4) / 4;
+    var hh = Math.floor(snapped), mm = Math.round((snapped - hh) * 60);
+    showCreateBlockPopup(dayIdx, String(hh).padStart(2,'0') + ':' + String(mm).padStart(2,'0'));
+  });
+
+  var now = new Date();
+  var todayISO = now.toISOString().slice(0,10);
+  if (dayDate === todayISO) {
+    var nowH = now.getHours() + now.getMinutes() / 60;
+    if (nowH >= CAL_START && nowH <= CAL_END) {
+      var nowTop = (nowH - CAL_START) * PX_PER_HOUR;
+      var nowLine = document.createElement('div');
+      nowLine.style.cssText = 'position:absolute;left:0;right:0;top:' + nowTop + 'px;border-top:2px solid #f87171;z-index:5;';
+      nowLine.innerHTML = '<div style="position:absolute;left:-4px;top:-5px;width:8px;height:8px;border-radius:50%;background:#f87171;"></div>';
+      timeline.appendChild(nowLine);
+    }
+  }
+
+  content.appendChild(timeline);
+  renderDayDetailSidebar(sidebar, dayIdx);
+}
+
+function renderDayDetailSidebar(container, dayIdx) {
+  container.innerHTML = '';
+  var tabs = document.createElement('div');
+  tabs.style.cssText = 'display:flex;border-bottom:1px solid #ffffff08;flex-shrink:0;';
+  ['demandas','blocos','pessoal'].forEach(function(tab, i) {
+    var btn = document.createElement('div');
+    btn.style.cssText = 'flex:1;text-align:center;padding:8px;font-size:10px;font-family:monospace;letter-spacing:0.06em;cursor:pointer;border-bottom:2px solid transparent;transition:all 0.15s;';
+    btn.textContent = tab.toUpperCase();
+    btn.style.color = i === 0 ? '#a78bfa' : '#555568';
+    btn.style.borderBottomColor = i === 0 ? '#a78bfa' : 'transparent';
+    btn.onclick = function() {
+      tabs.querySelectorAll('div').forEach(function(t){ t.style.color='#555568'; t.style.borderBottomColor='transparent'; });
+      btn.style.color='#a78bfa'; btn.style.borderBottomColor='#a78bfa';
+      renderDaySidebarContent(container, dayIdx, tab);
+    };
+    tabs.appendChild(btn);
+  });
+  container.appendChild(tabs);
+  var content = document.createElement('div');
+  content.id = 'day-sidebar-content';
+  content.style.cssText = 'flex:1;overflow-y:auto;padding:8px;';
+  container.appendChild(content);
+  renderDaySidebarContent(container, dayIdx, 'demandas');
+}
+
+function renderDaySidebarContent(container, dayIdx, tab) {
+  var content = document.getElementById('day-sidebar-content');
+  if (!content) return;
+  content.innerHTML = '';
+
+  if (tab === 'demandas') {
+    var queue = (currentState && currentState.activeQueue) || [];
+    if (!queue.length) { content.innerHTML = '<div style="padding:16px;color:#555568;font-size:11px;text-align:center;">nenhuma demanda ativa</div>'; return; }
+    queue.forEach(function(task) {
+      if (task.blocked) return;
+      var el = document.createElement('div');
+      el.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px;border-radius:5px;cursor:grab;margin-bottom:4px;border:1px solid #ffffff08;transition:border-color 0.15s;';
+      el.draggable = true; el.dataset.taskId = task.id; el.dataset.estimate = task.estimatedMinutes || task.estimated_minutes || 120;
+      el.ondragstart = function(e){ e.dataTransfer.setData('taskId', this.dataset.taskId); e.dataTransfer.setData('estimate', this.dataset.estimate); this.style.opacity='0.4'; };
+      el.ondragend = function(){ this.style.opacity='1'; };
+      el.onmouseenter = function(){ this.style.borderColor='#ffffff20'; };
+      el.onmouseleave = function(){ this.style.borderColor='#ffffff08'; };
+      el.innerHTML = '<div style="flex:1;min-width:0;"><div style="font-size:11px;color:#e8e8ed;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(task.taskName) + '</div><div style="font-size:10px;color:#555568;font-family:monospace;">' + fmt_time(task.estimatedMinutes || task.estimated_minutes || 120) + ' · ' + esc(task.deadlineHuman || 'sem prazo') + '</div></div>';
+      content.appendChild(el);
+    });
+  } else if (tab === 'blocos') {
+    var presets = [{name:'🍽 Almoço',duration:60,category:'meal'},{name:'🏃 Exercício',duration:60,category:'exercise'},{name:'🐕 Cachorro',duration:20,category:'personal'},{name:'🏠 Casa',duration:30,category:'home'},{name:'☕ Pausa',duration:15,category:'break'}];
+    presets.forEach(function(p) {
+      var el = document.createElement('div');
+      el.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px;border-radius:5px;cursor:grab;margin-bottom:4px;border:1px solid #ffffff08;';
+      el.draggable = true;
+      el.ondragstart = function(e){ e.dataTransfer.setData('blockName', p.name); e.dataTransfer.setData('blockDuration', p.duration); e.dataTransfer.setData('blockCategory', p.category); };
+      el.innerHTML = '<span style="font-size:14px;">' + p.name.split(' ')[0] + '</span><div style="flex:1;"><div style="font-size:11px;color:#e8e8ed;">' + esc(p.name) + '</div><div style="font-size:10px;color:#555568;font-family:monospace;">' + p.duration + 'min</div></div>';
+      content.appendChild(el);
+    });
+    var customDiv = document.createElement('div');
+    customDiv.style.cssText = 'margin-top:12px;padding-top:12px;border-top:1px solid #ffffff08;';
+    customDiv.innerHTML = '<div style="font-size:10px;color:#555568;font-family:monospace;margin-bottom:6px;">CRIAR BLOCO</div><input id="custom-block-name" placeholder="nome..." style="width:100%;background:#0a0a0f;color:#e8e8ed;border:1px solid #ffffff08;border-radius:4px;padding:6px 8px;font-size:12px;outline:none;margin-bottom:6px;box-sizing:border-box;" /><div style="display:flex;gap:6px;"><input id="custom-block-duration" placeholder="30min" style="flex:1;background:#0a0a0f;color:#e8e8ed;border:1px solid #ffffff08;border-radius:4px;padding:6px 8px;font-size:12px;font-family:monospace;outline:none;" /><button onclick="createCustomBlock(' + dayIdx + ')" style="background:#1a1a25;color:#4ade80;border:1px solid #4ade8020;border-radius:4px;padding:6px 12px;font-size:11px;cursor:pointer;">criar</button></div>';
+    content.appendChild(customDiv);
+  } else if (tab === 'pessoal') {
+    loadPersonalForAgenda(content);
+  }
+}
+
+async function loadPersonalForAgenda(container) {
+  var data = await apiGet('/dashboard/personal');
+  var items = (data && data.items) || data || [];
+  var pending = items.filter(function(i){ return i.status !== 'done' && i.status !== 'completed'; });
+  if (!pending.length) { container.innerHTML = '<div style="padding:16px;color:#555568;font-size:11px;text-align:center;">backlog pessoal vazio</div>'; return; }
+  pending.forEach(function(item) {
+    var el = document.createElement('div');
+    el.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px;border-radius:5px;cursor:grab;margin-bottom:4px;border:1px solid #ffffff08;';
+    el.draggable = true;
+    el.ondragstart = function(e){ e.dataTransfer.setData('blockName', '💡 ' + (item.title||item.text||'')); e.dataTransfer.setData('blockDuration', '60'); e.dataTransfer.setData('blockCategory', 'personal'); };
+    el.innerHTML = '<span style="font-size:12px;">💡</span><div style="font-size:11px;color:#e8e8ed;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(item.title||item.text||'') + '</div>';
+    container.appendChild(el);
+  });
+}
+
+function showCreateBlockPopup(dayIdx, startTime) {
+  var name = prompt('Nome do bloco:');
+  if (!name) return;
+  var duration = prompt('Duração (ex: 30min, 1h):', '30min');
+  var mins = parseEstimate(duration);
+  if (!mins) mins = 30;
+  createFixedBlock(dayIdx, startTime, name, mins, 'other');
+}
+
+async function createFixedBlock(dayIdx, startTime, name, durationMinutes, category) {
+  await apiPost('/dashboard/agenda/block/create', { day: dayIdx, start: startTime, duration_minutes: durationMinutes, title: name, category: category || 'other', pinned: true, week_offset: agendaWeekOffset });
+  loadAgenda();
+}
+
+async function createCustomBlock(dayIdx) {
+  var name = (document.getElementById('custom-block-name') || {}).value || '';
+  name = name.trim();
+  var dur = parseEstimate((document.getElementById('custom-block-duration') || {}).value || '');
+  if (!name || !dur) return;
+  createFixedBlock(dayIdx, '09:00', name, dur, 'other');
+}
+
+async function moveAgendaBlock(blockId, newDay, newStart) {
+  await apiPost('/dashboard/agenda/move', { block_id: blockId, new_day: newDay, new_start: newStart, week_offset: agendaWeekOffset });
+  loadAgenda();
+}
+
+async function allocateTask(taskId, dayIdx, startTime) {
+  var estimate = 120;
+  await apiPost('/dashboard/agenda/allocate', { task_id: taskId, day: dayIdx, start: startTime, duration_minutes: estimate, week_offset: agendaWeekOffset, pinned: true });
+  loadAgenda();
+}
+
+var resizingBlock = null;
+function startBlockResize(e, blockId, originalHeight) {
+  e.preventDefault(); e.stopPropagation();
+  resizingBlock = { id: blockId, startY: e.clientY, originalHeight: originalHeight, el: e.target.parentElement };
+  document.onmousemove = function(ev) {
+    if (!resizingBlock) return;
+    resizingBlock.el.style.height = Math.max(20, resizingBlock.originalHeight + (ev.clientY - resizingBlock.startY)) + 'px';
+  };
+  document.onmouseup = function() {
+    if (!resizingBlock) return;
+    var newMins = Math.round(parseInt(resizingBlock.el.style.height) / 52 * 60 / 15) * 15;
+    apiPost('/dashboard/agenda/resize', { block_id: resizingBlock.id, new_duration_minutes: newMins }).then(function(){ loadAgenda(); if (agendaDayExpanded !== null) renderDayDetail(agendaDayExpanded); });
+    resizingBlock = null; document.onmousemove = null; document.onmouseup = null;
+  };
 }
 
 function changeAgendaWeek(delta) {
