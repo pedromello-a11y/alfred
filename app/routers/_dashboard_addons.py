@@ -244,6 +244,9 @@ def _factor_emoji(factor: float) -> str:
 
 
 async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
+    import logging
+    log = logging.getLogger("alfred.agenda")
+
     week_end = week_start + timedelta(days=6)
     today = _today_brt()
 
@@ -276,15 +279,77 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
     )
     gcal_blocks = gcal_result.scalars().all()
 
-    DAY_START = dt_time(8, 0)
+    DAY_START = dt_time(9, 0)
     DAY_END = dt_time(18, 0)
+    DAY_START_MINS = 9 * 60
+    DAY_END_MINS = 18 * 60
+    GAP_MINS = 15  # gap between consecutive task blocks
 
+    # Pre-compute available hours from today through each deadline for comfort calc
+    # Build per-day free minutes map for the week
+    def _day_free_mins(day_date: date) -> int:
+        """Free minutes in DAY_START..DAY_END for a given date (excluding gcal/fixed)."""
+        if day_date.weekday() >= 5:
+            return 0
+        day_fixed = [b for b in schedule_blocks_list if b.date == day_date]
+        day_gcal_b = [b for b in gcal_blocks if b.start_at.date() == day_date]
+        occ: list[tuple[int, int]] = []
+        for b in day_fixed:
+            s = b.start_time.hour * 60 + b.start_time.minute
+            e = b.end_time.hour * 60 + b.end_time.minute
+            occ.append((max(s, DAY_START_MINS), min(e, DAY_END_MINS)))
+        for b in day_gcal_b:
+            s = b.start_at.hour * 60 + b.start_at.minute
+            e = b.end_at.hour * 60 + b.end_at.minute
+            occ.append((max(s, DAY_START_MINS), min(e, DAY_END_MINS)))
+        occ = [(s, e) for s, e in occ if e > s]
+        occ.sort()
+        free = 0
+        cursor = DAY_START_MINS
+        for s, e in occ:
+            if s > cursor:
+                free += s - cursor
+            cursor = max(cursor, e)
+        if cursor < DAY_END_MINS:
+            free += DAY_END_MINS - cursor
+        return free
+
+    def _hours_until_deadline(deadline: date | None) -> float:
+        """Sum free hours from today through deadline day (inclusive)."""
+        if deadline is None:
+            return 9999.0
+        total = 0
+        d = today
+        while d <= deadline:
+            total += _day_free_mins(d)
+            d += timedelta(days=1)
+        return total / 60.0
+
+    def _deadline_multiplier(task: Task) -> float:
+        est_hours = (task.estimated_minutes or 60) / 60.0
+        avail = _hours_until_deadline(task.deadline)
+        comfort = avail / est_hours if est_hours > 0 else 9999.0
+        if comfort > 3.0:
+            return 1.25
+        if comfort > 2.0:
+            return 1.2
+        if comfort > 1.5:
+            return 1.15
+        if comfort > 1.2:
+            return 1.1
+        return 1.0
+
+    # task_remaining tracks how many minutes are left to allocate across the week
     task_remaining: dict[str, int] = {}
     for t in work_queue:
-        task_remaining[str(t.id)] = t.estimated_minutes or 30
+        est = t.estimated_minutes or 60
+        mult = _deadline_multiplier(t)
+        task_remaining[str(t.id)] = round(est * mult)
 
     completions: dict[str, date | None] = {}
     days_output = []
+    # cursor_task_idx: next task to allocate (tasks are consumed across days)
+    task_idx = 0
 
     for day_offset in range(7):
         day_date = week_start + timedelta(days=day_offset)
@@ -295,30 +360,21 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
         day_fixed = [b for b in schedule_blocks_list if b.date == day_date]
         day_gcal = [b for b in gcal_blocks if b.start_at.date() == day_date]
 
-        occupied: list[tuple[dt_time, dt_time, str]] = []
+        # Build sorted list of blocked ranges (in minutes from midnight)
+        blocked: list[tuple[int, int]] = []
         for b in day_fixed:
-            occupied.append((b.start_time, b.end_time, "fixed"))
+            s = b.start_time.hour * 60 + b.start_time.minute
+            e = b.end_time.hour * 60 + b.end_time.minute
+            blocked.append((s, e))
         for b in day_gcal:
-            s = b.start_at.time().replace(second=0, microsecond=0)
-            e = b.end_at.time().replace(second=0, microsecond=0)
-            occupied.append((s, e, "gcal"))
-        occupied.sort(key=lambda x: x[0])
+            s = b.start_at.hour * 60 + b.start_at.minute
+            e = b.end_at.hour * 60 + b.end_at.minute
+            blocked.append((s, e))
+        blocked.sort()
 
-        def get_free_slots(occ: list) -> list[tuple[dt_time, dt_time]]:
-            slots = []
-            cursor = DAY_START
-            for os, oe, _ in sorted(occ, key=lambda x: x[0]):
-                if os >= DAY_END:
-                    break
-                if cursor < os:
-                    slots.append((cursor, min(os, DAY_END)))
-                cursor = max(cursor, oe)
-            if cursor < DAY_END:
-                slots.append((cursor, DAY_END))
-            return [(s, e) for s, e in slots if _minutes_between(s, e) > 0]
-
-        free_slots = get_free_slots(occupied)
-        total_available_mins = sum(_minutes_between(s, e) for s, e in free_slots)
+        # Total free minutes for this day (for display purposes)
+        free_mins_today = _day_free_mins(day_date)
+        total_available_mins = free_mins_today
 
         blocks_out: list[dict] = []
 
@@ -342,136 +398,127 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
                 "draggable": True,
             })
 
-        estimated_hours = 0.0
-        factor_day = 2.5
+        allocated_today = 0
+        auto_blocks: list[dict] = []
 
-        if not is_weekend and work_queue:
-            total_remaining = sum(task_remaining.values())
-            remaining_workdays = max(1, sum(
-                1 for d in range(7)
-                if (week_start + timedelta(days=d)).weekday() < 5
-                and (week_start + timedelta(days=d)) >= max(today, day_date)
-            ))
-            per_day_needed = total_remaining / remaining_workdays if remaining_workdays else 0
-            if per_day_needed > 0 and total_available_mins > 0:
-                factor = max(1.0, min(total_available_mins / per_day_needed, 2.5))
-            else:
-                factor = 2.5
+        if not is_weekend and task_idx < len(work_queue):
+            # Cursor-based sequential allocation
+            # cursor_mins: current position in day (minutes from midnight)
+            cursor_mins = DAY_START_MINS
+            local_task_idx = task_idx  # local copy; advance task_idx after day
 
-            slot_list = list(free_slots)
-            slot_idx = 0
-            task_idx = 0
-            allocated_today = 0
-            auto_blocks: list[dict] = []
-
-            while slot_idx < len(slot_list) and task_idx < len(work_queue):
-                slot_start, slot_end = slot_list[slot_idx]
-                slot_mins = _minutes_between(slot_start, slot_end)
-                if slot_mins <= 0:
-                    slot_idx += 1
-                    continue
-
-                task = work_queue[task_idx]
+            while local_task_idx < len(work_queue) and cursor_mins < DAY_END_MINS:
+                task = work_queue[local_task_idx]
                 tid = str(task.id)
                 remaining = task_remaining.get(tid, 0)
+
                 if remaining <= 0:
                     if tid not in completions:
                         completions[tid] = day_date
-                    task_idx += 1
+                    local_task_idx += 1
                     continue
 
-                window_mins = min(int(remaining * factor), slot_mins, remaining)
-                window_mins = max(window_mins, min(remaining, slot_mins))
-                window_mins = min(window_mins, remaining, slot_mins)
-                if window_mins <= 0:
-                    slot_idx += 1
+                # Duration to allocate for this task on this day
+                duration = remaining  # already = est * mult from initialization
+
+                # Advance cursor past any blocking range that covers current position
+                changed = True
+                while changed:
+                    changed = False
+                    for bs, be in blocked:
+                        if bs <= cursor_mins < be:
+                            cursor_mins = be
+                            changed = True
+                            break
+
+                if cursor_mins >= DAY_END_MINS:
+                    break
+
+                # Find next blocker after cursor
+                next_blocker_start = DAY_END_MINS
+                for bs, be in blocked:
+                    if bs > cursor_mins:
+                        next_blocker_start = bs
+                        break
+
+                space = next_blocker_start - cursor_mins
+                if space <= 0:
+                    # No space before next blocker — skip past it
+                    cursor_mins = next_blocker_start
                     continue
 
-                estimate_in_slot = int(window_mins / factor) if factor > 1.01 else window_mins
-                estimate_in_slot = max(1, min(estimate_in_slot, remaining, window_mins))
-                margin_mins = window_mins - estimate_in_slot
+                # Allocate min(space, duration) to this task
+                alloc = min(space, duration)
+                if alloc <= 0:
+                    local_task_idx += 1
+                    continue
 
-                block_end_t = _add_minutes_to_time(slot_start, window_mins)
+                block_start_mins = cursor_mins
+                block_end_mins = cursor_mins + alloc
+                original_est = task.estimated_minutes or 60
+                mult = _deadline_multiplier(task)
+
                 project, task_name = _parse_project_task(task.title)
-                original_est = task.estimated_minutes or 30
-                is_continuation = task_remaining.get(tid, original_est) < original_est
+
+                log.info(
+                    "AGENDA alloc | %s | est=%dmin mult=%.2f alloc=%dmin | %02d:%02d–%02d:%02d | deadline=%s",
+                    task_name or task.title,
+                    original_est,
+                    mult,
+                    alloc,
+                    block_start_mins // 60, block_start_mins % 60,
+                    block_end_mins // 60, block_end_mins % 60,
+                    task.deadline.isoformat() if task.deadline else "none",
+                )
 
                 auto_blocks.append({
                     "type": "auto",
                     "title": task_name or task.title,
                     "task_id": tid,
                     "project": project,
-                    "start": slot_start.strftime("%H:%M"),
-                    "end": block_end_t.strftime("%H:%M"),
-                    "estimated_minutes": estimate_in_slot,
-                    "window_minutes": window_mins,
-                    "margin_minutes": margin_mins,
-                    "is_continuation": is_continuation,
+                    "start": f"{block_start_mins // 60:02d}:{block_start_mins % 60:02d}",
+                    "end": f"{block_end_mins // 60:02d}:{block_end_mins % 60:02d}",
+                    "estimated_minutes": original_est,
+                    "window_minutes": alloc,
+                    "margin_minutes": alloc - original_est,
+                    "is_continuation": task_remaining.get(tid, original_est) < round(original_est * mult),
                     "overflow": False,
                     "task_total_hours": round(original_est / 60, 1),
                     "task_remaining_hours": round(remaining / 60, 1),
-                    "task_completes_today": (remaining <= window_mins),
+                    "task_completes_today": alloc >= duration,
                     "draggable": False,
                     "deadline": task.deadline.isoformat() if task.deadline else None,
                     "deadline_human": _humanize_deadline(task.deadline),
                 })
 
-                allocated_today += window_mins
-                task_remaining[tid] = max(0, remaining - window_mins)
+                allocated_today += alloc
+                task_remaining[tid] = max(0, duration - alloc)
+
                 if task_remaining[tid] == 0:
-                    completions[tid] = day_date
-                    task_idx += 1
-
-                remaining_slot_mins = slot_mins - window_mins
-                if remaining_slot_mins > 0:
-                    slot_list[slot_idx] = (_add_minutes_to_time(slot_start, window_mins), slot_end)
+                    if tid not in completions:
+                        completions[tid] = day_date
+                    local_task_idx += 1
+                    cursor_mins = block_end_mins + GAP_MINS
                 else:
-                    slot_idx += 1
+                    # Task split across days — move to next day
+                    break
 
-            # Overflow: tarefas que não couberam nos slots — mostrar todas após o último bloco
-            if task_idx < len(work_queue):
-                if auto_blocks:
-                    last_end_str = max(b["end"] for b in auto_blocks)
-                    lh, lm = int(last_end_str[:2]), int(last_end_str[3:])
-                    overflow_cursor = _add_minutes_to_time(dt_time(lh, lm), 15)
-                else:
-                    overflow_cursor = DAY_END
-                while task_idx < len(work_queue):
-                    task = work_queue[task_idx]
-                    tid = str(task.id)
-                    remaining = task_remaining.get(tid, 0)
-                    if remaining <= 0:
-                        task_idx += 1
-                        continue
-                    project, task_name = _parse_project_task(task.title)
-                    original_est = task.estimated_minutes or 30
-                    block_end_t = _add_minutes_to_time(overflow_cursor, remaining)
-                    auto_blocks.append({
-                        "type": "auto",
-                        "title": task_name or task.title,
-                        "task_id": tid,
-                        "project": project,
-                        "start": overflow_cursor.strftime("%H:%M"),
-                        "end": block_end_t.strftime("%H:%M"),
-                        "estimated_minutes": remaining,
-                        "window_minutes": remaining,
-                        "margin_minutes": 0,
-                        "is_continuation": False,
-                        "overflow": True,
-                        "task_total_hours": round(original_est / 60, 1),
-                        "task_remaining_hours": round(remaining / 60, 1),
-                        "task_completes_today": False,
-                        "draggable": False,
-                        "deadline": task.deadline.isoformat() if task.deadline else None,
-                        "deadline_human": _humanize_deadline(task.deadline),
-                    })
-                    overflow_cursor = _add_minutes_to_time(block_end_t, 15)
+            # Update global task_idx to reflect tasks fully completed today
+            while task_idx < len(work_queue):
+                tid = str(work_queue[task_idx].id)
+                if task_remaining.get(tid, 0) == 0:
                     task_idx += 1
+                else:
+                    break
 
             estimated_hours = round(allocated_today / 60, 1)
             factor_day = round(total_available_mins / max(allocated_today, 1), 2) if allocated_today > 0 else 2.5
             factor_day = min(factor_day, 2.5)
             blocks_out += auto_blocks
+
+        else:
+            estimated_hours = 0.0
+            factor_day = 2.5
 
         blocks_out.sort(key=lambda b: b.get("start", "00:00"))
 
