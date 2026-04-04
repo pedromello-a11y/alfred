@@ -424,6 +424,7 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 .block-project{font-size:9px;color:#555568;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.4;margin-top:1px}
 .block-delete{position:absolute;top:2px;right:4px;font-size:10px;color:#f87171;cursor:pointer;opacity:0;transition:opacity .15s;z-index:3;padding:2px;line-height:1}
 .block-delete:hover{opacity:1!important}
+.block-part{font-size:9px;font-family:'JetBrains Mono',monospace;color:#60a5fa;opacity:.7;margin-top:1px}
 .cal-now-line{position:absolute;left:0;right:0;border-top:2px solid #f87171;z-index:5;pointer-events:none}
 .cal-now-line::before{content:'';position:absolute;left:-4px;top:-5px;width:8px;height:8px;border-radius:50%;background:#f87171}
 .current-block{box-shadow:0 0 10px #4ade8050;animation:glow-block 2s infinite}
@@ -2624,16 +2625,23 @@ function renderAgendaBlock(dayIdx, block, type) {
   el.style.height = th.height + 'px';
   el.style.boxSizing = 'border-box';
 
-  // Colisão: offset simples — bloco que sobrepõe fica com left deslocado
+  // Colisão: checar blocos existentes
   var existing = Array.from(col.querySelectorAll('.cal-block'));
-  var hasOverlap = existing.some(function(b) {
-    var bTop = parseFloat(b.style.top) || 0;
-    var bBottom = bTop + (parseFloat(b.style.height) || 0);
-    return th.top < bBottom && (th.top + th.height) > bTop;
+  var hasCollision = false;
+  var collidesWithGcal = false;
+  existing.forEach(function(ex) {
+    var exTop = parseFloat(ex.style.top) || 0;
+    var exHeight = parseFloat(ex.style.height) || 0;
+    if (th.top < (exTop + exHeight) && (th.top + th.height) > exTop) {
+      hasCollision = true;
+      if (ex.classList.contains('cal-gcal')) collidesWithGcal = true;
+    }
   });
-  if (hasOverlap) {
-    el.style.left = '20px';
-    el.style.right = '0px';
+  if (hasCollision && type !== 'gcal') {
+    el.style.left = '40%';
+    el.style.right = '3px';
+    el.style.opacity = '0.85';
+    el.style.zIndex = '3';
   } else {
     el.style.left = '3px';
     el.style.right = '3px';
@@ -2677,6 +2685,11 @@ function renderAgendaBlock(dayIdx, block, type) {
     inner = '<div class="block-time">' + timeText + '</div>' +
             '<div class="block-title">' + titleText + '</div>' +
             (projectText ? '<div class="block-project">' + projectText + '</div>' : '');
+  }
+
+  // Indicador de parte para blocos multi-dia
+  if (block.part && th.height >= 30) {
+    inner += '<div class="block-part">' + esc(block.part) + '</div>';
   }
 
   // Botão delete (não gcal)
@@ -2757,12 +2770,14 @@ function renderAgendaDeadlineMarker(dl) {
   if (!deadlineTime.includes(':')) deadlineTime = '17:00';
   var top = timeToPx(deadlineTime);
   var marker = document.createElement('div');
-  marker.style.cssText = 'position:absolute;left:0;right:0;top:' + top + 'px;height:2px;background:#f8717180;z-index:10;border-radius:2px;';
-  var name = (dl.taskName || dl.shortTitle || dl.title || 'DEADLINE');
-  if (name.length > 25) name = name.substring(0, 22) + '...';
+  marker.style.cssText = 'position:absolute;left:0;top:' + top + 'px;z-index:4;display:flex;align-items:center;gap:4px;pointer-events:none;';
+  var triangle = document.createElement('div');
+  triangle.style.cssText = 'width:0;height:0;border-top:5px solid transparent;border-bottom:5px solid transparent;border-left:8px solid #f87171;flex-shrink:0;';
   var label = document.createElement('div');
-  label.style.cssText = 'position:absolute;right:2px;top:-13px;font-size:8px;color:#f87171;font-family:monospace;font-weight:600;max-width:80%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-  label.textContent = '⚠ ' + name;
+  var name = (dl.taskName || dl.shortTitle || dl.title || '').substring(0, 15);
+  label.style.cssText = 'font-size:8px;color:#f87171;font-family:monospace;white-space:nowrap;opacity:0.7;';
+  label.textContent = name;
+  marker.appendChild(triangle);
   marker.appendChild(label);
   col.appendChild(marker);
 }

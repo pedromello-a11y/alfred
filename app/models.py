@@ -62,6 +62,7 @@ class AgendaBlock(Base):
     linked_task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)  # alias mais claro
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)  # fixado pelo usuário via drag
+    part: Mapped[str | None] = mapped_column(VARCHAR(10), nullable=True)  # '1/2', '2/2' para blocos multi-dia
     notes: Mapped[str | None] = mapped_column(TEXT)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
 

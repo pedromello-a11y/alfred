@@ -106,11 +106,18 @@ def _allocate(
     existing_blocks: list[AgendaBlock],
     now_naive: datetime,
 ) -> list[dict]:
-    """Aloca tasks nos slots livres. Retorna lista de blocos sugeridos."""
-    # Minutos restantes por task (considera o total estimado)
-    remaining: dict[str, int] = {
+    """Aloca tasks nos slots livres. Retorna lista de blocos sugeridos.
+    Tasks com estimated_minutes maior que o disponível num dia são divididas
+    em blocos consecutivos com indicador de parte (1/2, 2/2, etc.)."""
+    total_minutes: dict[str, int] = {
         str(t.id): (t.estimated_minutes or 120) for t in tasks
     }
+    # Minutos restantes por task (decresce conforme alocamos)
+    remaining: dict[str, int] = dict(total_minutes)
+    # Contador de partes já geradas por task
+    parts_count: dict[str, int] = {str(t.id): 0 for t in tasks}
+    # Blocos pendentes para calcular part labels (índice na lista suggested)
+    task_block_indices: dict[str, list[int]] = {str(t.id): [] for t in tasks}
     suggested: list[dict] = []
 
     for day_idx, day_date in days:
@@ -132,13 +139,18 @@ def _allocate(
                 if not chosen:
                     break
 
+                tid = str(chosen.id)
                 duration = min(
-                    remaining[str(chosen.id)],
+                    remaining[tid],
                     MAX_BLOCK_MIN,
                     slot_remaining,
                 )
                 block_end = cursor + timedelta(minutes=duration)
                 project, task_name = _parse_project_task(chosen.title)
+
+                parts_count[tid] += 1
+                block_idx = len(suggested)
+                task_block_indices[tid].append(block_idx)
 
                 suggested.append({
                     "day": day_idx,
@@ -149,13 +161,21 @@ def _allocate(
                     "type": "suggested",
                     "source": "alfred",
                     "project": project,
-                    "taskId": str(chosen.id),
+                    "taskId": tid,
                     "fullTitle": chosen.title,
                     "deadlineHuman": "",  # preenchido pelo caller se necessário
+                    "part": None,  # preenchido abaixo se multi-dia
                 })
 
-                remaining[str(chosen.id)] = max(0, remaining[str(chosen.id)] - duration)
+                remaining[tid] = max(0, remaining[tid] - duration)
                 cursor = block_end + timedelta(minutes=BREAK_MIN)
+
+    # Preencher part labels para tasks com múltiplos blocos
+    for tid, indices in task_block_indices.items():
+        if len(indices) > 1:
+            total = len(indices)
+            for part_num, block_idx in enumerate(indices, start=1):
+                suggested[block_idx]["part"] = f"{part_num}/{total}"
 
     return suggested
 
@@ -491,6 +511,7 @@ async def recalculate_suggestions(
             status="planned",
             task_id=task_id_val,
             pinned=False,
+            part=b.get("part"),
         ))
 
     await db.commit()

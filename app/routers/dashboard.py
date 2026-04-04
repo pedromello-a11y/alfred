@@ -353,6 +353,7 @@ async def _build_agenda_payload(db: AsyncSession, week_offset: int = 0) -> dict:
                 "type": "quick" if btype == "quick" else "suggested",
                 "source": "alfred",
                 "pinned": bool(getattr(block, "pinned", False)),
+                "part": getattr(block, "part", None),
             })
         else:
             # GCal/manual → vão em days.events
