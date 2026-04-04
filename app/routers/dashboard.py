@@ -118,7 +118,7 @@ async def _build_focus_v3(db: AsyncSession) -> tuple[dict, dict | None]:
 
     result = await db.execute(
         select(Task)
-        .where(Task.status.in_(("pending", "in_progress")))
+        .where(Task.status.in_(("pending", "in_progress", "active")))
         .where(Task.category != "personal")
         .order_by(
             Task.status.desc(),
@@ -220,7 +220,7 @@ async def _build_today_tasks(db: AsyncSession) -> list[dict]:
     # Tasks com deadline hoje
     result = await db.execute(
         select(Task)
-        .where(Task.status.in_(("pending", "in_progress", "done", "completed")))
+        .where(Task.status.in_(("pending", "in_progress", "active", "done", "completed")))
         .where(Task.deadline >= today_start)
         .where(Task.deadline < today_end)
         .order_by(Task.deadline.asc())
@@ -294,7 +294,7 @@ async def _build_active_queue(db: AsyncSession) -> list[dict]:
     today = _today_brt()
     result = await db.execute(
         select(Task)
-        .where(Task.status.in_(("pending", "in_progress")))
+        .where(Task.status.in_(("pending", "in_progress", "active")))
         .order_by(Task.deadline.asc().nulls_last(), Task.priority.asc().nulls_last())
         .limit(50)
     )
@@ -578,6 +578,27 @@ def _calc_deficit(active_queue: list[dict], agenda_data: dict, week_offset: int)
     }
 
 
+async def _build_personal_suggestion(db: AsyncSession) -> dict | None:
+    """Returns one pending personal task to suggest during free time."""
+    result = await db.execute(
+        select(Task)
+        .where(Task.category == "personal")
+        .where(Task.status.in_(("pending", "in_progress", "active")))
+        .order_by(Task.priority.asc().nulls_last(), Task.created_at.asc())
+        .limit(5)
+    )
+    tasks = result.scalars().all()
+    if not tasks:
+        return None
+    t = tasks[0]
+    _, task_name = _parse_project_task(t.title)
+    return {
+        "id": str(t.id),
+        "title": task_name or t.title,
+        "estimatedMinutes": t.estimated_minutes or 30,
+    }
+
+
 @router.get("/state")
 async def dashboard_state(db: AsyncSession = Depends(get_db), week_offset: int = 0) -> dict:
     focus, next_task = await _build_focus_v3(db)
@@ -597,6 +618,7 @@ async def dashboard_state(db: AsyncSession = Depends(get_db), week_offset: int =
     # Calcular deficit para aba agenda
     deficit = _calc_deficit(active_queue, agenda_data, week_offset)
 
+    personal_suggestion = await _build_personal_suggestion(db)
     import os
     state = {
         "focus": focus,
@@ -607,6 +629,7 @@ async def dashboard_state(db: AsyncSession = Depends(get_db), week_offset: int =
         "projects": projects,
         "riskAlert": risk_alert,
         "deficit": deficit,
+        "personalSuggestion": personal_suggestion,
         "xp": await _build_xp_payload(db),
         "dumpLibrary": await _build_dump_library(db),
         "jiraUrl": os.getenv("JIRA_URL", settings.jira_base_url or ""),
@@ -1232,6 +1255,44 @@ async def delete_dump_item(dump_id: str, db: AsyncSession = Depends(get_db)) -> 
     if not item:
         return {"error": "not found"}
     await db.delete(item)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/personal/reorder")
+async def reorder_personal(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    ids = body.get("ids", [])
+    for i, item_id in enumerate(ids):
+        try:
+            from uuid import UUID as _UUID
+            item_uuid = _UUID(item_id)
+        except ValueError:
+            continue
+        result = await db.execute(select(Task).where(Task.id == item_uuid))
+        task = result.scalar_one_or_none()
+        if task:
+            task.times_planned = i  # reuse times_planned as sort order for personal items
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/dump/{dump_id}/edit")
+async def edit_dump_item(dump_id: str, body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    try:
+        from uuid import UUID as _UUID
+        dump_uuid = _UUID(dump_id)
+    except ValueError:
+        return {"error": "invalid id"}
+    result = await db.execute(select(DumpItem).where(DumpItem.id == dump_uuid))
+    item = result.scalar_one_or_none()
+    if not item:
+        return {"error": "not found"}
+    if "rewritten_title" in body:
+        item.rewritten_title = body["rewritten_title"]
+    if "category" in body:
+        item.category = body["category"]
+    if "notes" in body:
+        item.notes = body["notes"]
     await db.commit()
     return {"ok": True}
 
