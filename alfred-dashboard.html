@@ -627,12 +627,94 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
     <div id="dumps-list" style="display:flex;flex-direction:column;gap:6px;"></div>
   </div>
 
+  <!-- ── Modal criação de demanda ── -->
+  <div class="modal-overlay" id="create-modal" onclick="if(event.target===this)closeCreateModal()">
+    <div class="modal-content" style="max-width:560px;padding:28px;">
+      <button class="modal-close" onclick="closeCreateModal()">✕</button>
+      <div id="create-modal-title" style="font-size:16px;font-weight:700;color:#e8e8ed;margin-bottom:24px;">Nova demanda</div>
+
+      <div style="margin-bottom:16px;">
+        <label style="font-size:10px;color:#555568;font-family:monospace;letter-spacing:0.08em;display:block;margin-bottom:4px;">NOME</label>
+        <input id="create-name" placeholder="nome da tarefa" style="width:100%;background:#0a0a0f;color:#e8e8ed;border:1px solid #ffffff12;border-radius:6px;padding:10px 14px;font-size:14px;outline:none;box-sizing:border-box;" />
+      </div>
+
+      <div style="display:flex;gap:12px;margin-bottom:16px;">
+        <div style="flex:1;">
+          <label style="font-size:10px;color:#555568;font-family:monospace;letter-spacing:0.08em;display:block;margin-bottom:4px;">PROJETO</label>
+          <div style="position:relative;">
+            <input id="create-project" placeholder="opcional..." oninput="searchProjects(this.value,'create-project-list')" onfocus="searchProjects(this.value,'create-project-list')" style="width:100%;background:#0a0a0f;color:#e8e8ed;border:1px solid #ffffff12;border-radius:6px;padding:8px 12px;font-size:13px;outline:none;box-sizing:border-box;" />
+            <div id="create-project-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1a1a25;border:1px solid #ffffff12;border-radius:6px;max-height:200px;overflow-y:auto;z-index:300;margin-top:2px;"></div>
+          </div>
+        </div>
+        <div style="flex:1;">
+          <label style="font-size:10px;color:#555568;font-family:monospace;letter-spacing:0.08em;display:block;margin-bottom:4px;">ENTREGA</label>
+          <div style="position:relative;">
+            <input id="create-deliverable" placeholder="opcional..." oninput="searchDeliverables(this.value)" style="width:100%;background:#0a0a0f;color:#e8e8ed;border:1px solid #ffffff12;border-radius:6px;padding:8px 12px;font-size:13px;outline:none;box-sizing:border-box;" />
+            <div id="create-deliverable-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1a1a25;border:1px solid #ffffff12;border-radius:6px;max-height:200px;overflow-y:auto;z-index:300;margin-top:2px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:12px;margin-bottom:16px;">
+        <div style="flex:1;">
+          <label style="font-size:10px;color:#555568;font-family:monospace;letter-spacing:0.08em;display:block;margin-bottom:4px;">PRAZO</label>
+          <div style="display:flex;gap:6px;">
+            <input type="date" id="create-deadline-date" style="flex:1;background:#0a0a0f;color:#e8e8ed;border:1px solid #ffffff12;border-radius:6px;padding:8px;font-size:12px;font-family:monospace;outline:none;" />
+            <input type="time" id="create-deadline-time" value="18:00" style="width:90px;background:#0a0a0f;color:#e8e8ed;border:1px solid #ffffff12;border-radius:6px;padding:8px;font-size:12px;font-family:monospace;outline:none;" />
+          </div>
+        </div>
+        <div style="flex:1;">
+          <label style="font-size:10px;color:#555568;font-family:monospace;letter-spacing:0.08em;display:block;margin-bottom:4px;">ESTIMATIVA</label>
+          <input id="create-estimate" placeholder="ex: 2h, 30min, 1h30" style="width:100%;background:#0a0a0f;color:#e8e8ed;border:1px solid #ffffff12;border-radius:6px;padding:8px 12px;font-size:13px;font-family:monospace;outline:none;box-sizing:border-box;" />
+          <div id="create-estimate-parsed" style="font-size:10px;color:#555568;font-family:monospace;margin-top:2px;"></div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:12px;margin-bottom:16px;">
+        <div>
+          <label style="font-size:10px;color:#555568;font-family:monospace;letter-spacing:0.08em;display:block;margin-bottom:4px;">STATUS</label>
+          <select id="create-status" style="background:#0a0a0f;color:#e8e8ed;border:1px solid #ffffff12;border-radius:6px;padding:8px 12px;font-size:12px;font-family:monospace;outline:none;">
+            <option value="active">● ativa</option>
+            <option value="backlog">○ backlog</option>
+            <option value="on_holding">◑ on holding</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:10px;color:#555568;font-family:monospace;letter-spacing:0.08em;display:block;margin-bottom:4px;">TIPO PRAZO</label>
+          <select id="create-dtype" style="background:#0a0a0f;color:#e8e8ed;border:1px solid #ffffff12;border-radius:6px;padding:8px 12px;font-size:12px;font-family:monospace;outline:none;">
+            <option value="soft">🟡 meta</option>
+            <option value="hard">🔴 fixo</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:10px;color:#555568;font-family:monospace;letter-spacing:0.08em;display:block;margin-bottom:4px;">TIPO</label>
+          <select id="create-task-type" style="background:#0a0a0f;color:#e8e8ed;border:1px solid #ffffff12;border-radius:6px;padding:8px 12px;font-size:12px;font-family:monospace;outline:none;">
+            <option value="task">tarefa</option>
+            <option value="deliverable">entrega</option>
+            <option value="project">projeto</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="create-holding-section" style="display:none;margin-bottom:16px;padding:12px;background:#0a0a0f;border:1px solid #ffffff08;border-radius:6px;">
+        <label style="font-size:10px;color:#fbbf24;font-family:monospace;letter-spacing:0.08em;display:block;margin-bottom:8px;">ON HOLDING</label>
+        <input id="create-holding-reason" placeholder="motivo..." style="width:100%;background:#12121a;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:6px 10px;font-size:12px;margin-bottom:6px;outline:none;box-sizing:border-box;" />
+        <input type="date" id="create-holding-until" style="background:#12121a;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:6px 10px;font-size:12px;outline:none;" />
+      </div>
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:16px;border-top:1px solid #ffffff08;">
+        <button onclick="closeCreateModal()" style="background:transparent;color:#555568;border:1px solid #ffffff08;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:12px;">cancelar</button>
+        <button onclick="submitCreateModal()" style="background:#166534;color:#4ade80;border:1px solid #4ade8030;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">criar demanda</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Modal overlay ── -->
   <div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeModal()">
     <div class="modal-content">
       <button class="modal-close" onclick="closeModal()">✕</button>
       <div class="modal-project" id="modal-project"></div>
-      <div class="modal-title" id="modal-title"></div>
+      <input class="modal-title" id="modal-title" style="font-size:22px;font-weight:700;color:#e8e8ed;background:transparent;border:none;border-bottom:1px solid transparent;outline:none;width:100%;padding:2px 0;transition:border-color 0.2s;font-family:inherit;" onfocus="this.style.borderBottomColor='#ffffff20'" onblur="this.style.borderBottomColor='transparent';saveModalTitle()" />
       <div class="modal-meta" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:16px 0 24px 0;">
         <span class="deadline-type-toggle" id="modal-dtype" onclick="toggleModalDeadlineType()" style="padding:3px 10px;border-radius:4px;font-size:11px;font-family:monospace;cursor:pointer;user-select:none;"></span>
 
@@ -644,17 +726,8 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
 
         <div style="display:flex;align-items:center;gap:6px;">
           <label style="font-size:11px;color:#555568;font-family:monospace;">estimativa:</label>
-          <select id="modal-estimate-select" onchange="debouncedSaveEstimate()" style="background:#1a1a25;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:4px 8px;font-size:12px;font-family:monospace;">
-            <option value="30">30min</option>
-            <option value="60">1h</option>
-            <option value="90">1h30</option>
-            <option value="120">2h</option>
-            <option value="180">3h</option>
-            <option value="240">4h</option>
-            <option value="300">5h</option>
-            <option value="360">6h</option>
-            <option value="480">8h</option>
-          </select>
+          <input id="modal-estimate-input" placeholder="ex: 2h, 30min" style="background:#1a1a25;color:#e8e8ed;border:1px solid #ffffff12;border-radius:4px;padding:4px 8px;font-size:12px;font-family:monospace;width:100px;outline:none;" onblur="saveModalEstimateFree()" onkeydown="if(event.key==='Enter')this.blur()" />
+          <span id="modal-estimate-display" style="font-size:10px;color:#555568;font-family:monospace;margin-left:4px;"></span>
         </div>
 
         <span id="modal-status" style="font-size:11px;color:#555568;font-family:monospace;"></span>
@@ -681,10 +754,11 @@ html,body{height:100%;background:var(--bg);color:var(--t-primary);font-family:'I
       </div>
 
       <div id="modal-block-section" style="margin:16px 0;padding:12px 16px;border-radius:8px;border:1px solid #ffffff08;">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
           <span style="font-size:11px;color:#555568;font-family:monospace;letter-spacing:0.06em;">STATUS:</span>
-          <button id="btn-unblocked" onclick="setTaskBlocked(false)" style="padding:4px 14px;border-radius:4px;font-size:12px;cursor:pointer;font-family:monospace;border:1px solid;transition:all 0.15s;">● pronta</button>
-          <button id="btn-blocked" onclick="setTaskBlocked(true)" style="padding:4px 14px;border-radius:4px;font-size:12px;cursor:pointer;font-family:monospace;border:1px solid;transition:all 0.15s;">⏸ bloqueada</button>
+          <button id="btn-active" onclick="setTaskStatus('active')" style="padding:4px 12px;border-radius:4px;font-size:11px;cursor:pointer;font-family:monospace;border:1px solid;transition:all 0.15s;">● ativa</button>
+          <button id="btn-holding" onclick="setTaskStatus('on_holding')" style="padding:4px 12px;border-radius:4px;font-size:11px;cursor:pointer;font-family:monospace;border:1px solid;transition:all 0.15s;">◑ holding</button>
+          <button id="btn-backlog" onclick="setTaskStatus('backlog')" style="padding:4px 12px;border-radius:4px;font-size:11px;cursor:pointer;font-family:monospace;border:1px solid;transition:all 0.15s;">○ backlog</button>
         </div>
         <div id="block-details" style="display:none;margin-top:10px;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
@@ -1523,7 +1597,7 @@ async function openTaskModal(taskId) {
   if (!task || task.status === 'error') { closeModal(); return; }
 
   document.getElementById('modal-project').textContent = task.project || '';
-  document.getElementById('modal-title').textContent = task.taskName || task.fullTitle || '';
+  document.getElementById('modal-title').value = task.fullTitle || task.taskName || '';
   document.getElementById('modal-status').textContent = task.status || '';
   document.getElementById('modal-history').textContent = task.history || '';
 
@@ -1555,13 +1629,10 @@ async function openTaskModal(taskId) {
 
   // Estimativa
   var est = task.estimatedMinutes || task.estimated_minutes || 120;
-  var sel = document.getElementById('modal-estimate-select');
-  sel.value = String(est);
-  if (!sel.value) {
-    var opts = [30,60,90,120,180,240,300,360,480];
-    var closest = opts.reduce(function(a,b){ return Math.abs(b-est) < Math.abs(a-est) ? b : a; });
-    sel.value = String(closest);
-  }
+  var estInput = document.getElementById('modal-estimate-input');
+  var estDisplay = document.getElementById('modal-estimate-display');
+  if (estInput) estInput.value = fmt_time(est);
+  if (estDisplay) estDisplay.textContent = '';
 
   renderChecklist(task.checklist || []);
   renderNotes(task.notes || []);
@@ -1596,32 +1667,37 @@ function closeModal() {
 
 // ── Block/Unblock ──────────────────────────────────────
 function renderBlockStatus(task) {
-  var blocked = task.blocked || false;
+  var blocked = task.blocked || task.on_holding || false;
   currentTaskBlocked = blocked;
 
-  var btnUnblocked = document.getElementById('btn-unblocked');
-  var btnBlocked = document.getElementById('btn-blocked');
-  var details = document.getElementById('block-details');
+  var status = task.status || 'active';
+  if (blocked || status === 'on_holding') status = 'on_holding';
+  else if (status === 'pending' || status === 'in_progress') status = 'active';
 
-  if (blocked) {
-    btnBlocked.style.background = '#3a2a1a';
-    btnBlocked.style.color = '#fbbf24';
-    btnBlocked.style.borderColor = '#fbbf2430';
-    btnUnblocked.style.background = 'transparent';
-    btnUnblocked.style.color = '#555568';
-    btnUnblocked.style.borderColor = '#ffffff08';
-    details.style.display = 'block';
-    document.getElementById('block-reason').value = task.blocked_reason || '';
-    document.getElementById('block-until').value = task.blocked_until || '';
-  } else {
-    btnUnblocked.style.background = '#1a2a1a';
-    btnUnblocked.style.color = '#4ade80';
-    btnUnblocked.style.borderColor = '#4ade8030';
-    btnBlocked.style.background = 'transparent';
-    btnBlocked.style.color = '#555568';
-    btnBlocked.style.borderColor = '#ffffff08';
-    details.style.display = 'none';
-  }
+  var details = document.getElementById('block-details');
+  var btnActive = document.getElementById('btn-active');
+  var btnHolding = document.getElementById('btn-holding');
+  var btnBacklog = document.getElementById('btn-backlog');
+
+  var btns = {
+    'active':   { el: btnActive,  bg: '#1a2a1a', color: '#4ade80', border: '#4ade8030' },
+    'on_holding': { el: btnHolding, bg: '#3a2a1a', color: '#fbbf24', border: '#fbbf2430' },
+    'backlog':  { el: btnBacklog, bg: '#1a1a2a', color: '#60a5fa', border: '#60a5fa30' },
+  };
+  Object.keys(btns).forEach(function(s) {
+    var b = btns[s];
+    if (!b.el) return;
+    var isActive = (s === status);
+    b.el.style.background = isActive ? b.bg : 'transparent';
+    b.el.style.color = isActive ? b.color : '#555568';
+    b.el.style.borderColor = isActive ? b.border : '#ffffff08';
+  });
+
+  if (details) details.style.display = (status === 'on_holding') ? 'block' : 'none';
+  var reasonEl = document.getElementById('block-reason');
+  var untilEl = document.getElementById('block-until');
+  if (reasonEl) reasonEl.value = task.blocked_reason || '';
+  if (untilEl) untilEl.value = task.blocked_until || '';
 }
 
 async function setTaskBlocked(blocked) {
@@ -1634,6 +1710,180 @@ async function setTaskBlocked(blocked) {
     await apiPost('/dashboard/task/' + currentModalTaskId + '/unblock', {});
   }
   openTaskModal(currentModalTaskId);
+  loadState();
+}
+
+async function setTaskStatus(status) {
+  var body = {status: status};
+  if (status === 'on_holding') {
+    body.on_holding = true;
+    body.holding_reason = (document.getElementById('block-reason') || {}).value || '';
+    body.holding_until = (document.getElementById('block-until') || {}).value || null;
+  } else {
+    body.on_holding = false;
+  }
+  await apiPost('/dashboard/task/' + currentModalTaskId + '/update', body);
+  openTaskModal(currentModalTaskId);
+  loadState();
+}
+
+async function saveModalTitle() {
+  if (!currentModalTaskId) return;
+  var title = document.getElementById('modal-title').value.trim();
+  if (!title) return;
+  await apiPost('/dashboard/task/' + currentModalTaskId + '/rename', {title: title});
+}
+
+async function saveModalEstimateFree() {
+  var val = document.getElementById('modal-estimate-input').value;
+  var mins = parseEstimate(val);
+  if (!mins) return;
+  document.getElementById('modal-estimate-display').textContent = '= ' + fmt_time(mins);
+  await apiPost('/dashboard/task/' + currentModalTaskId + '/estimate', {estimated_minutes: mins});
+}
+
+var projectsCache = [];
+
+async function loadProjectsCache() {
+  try {
+    var data = await apiGet('/dashboard/project-suggestions?q=');
+    projectsCache = data || [];
+  } catch(e) { projectsCache = []; }
+}
+
+function searchProjects(query, listId) {
+  var list = document.getElementById(listId);
+  if (!list) return;
+  var q = (query || '').toLowerCase();
+  var filtered = projectsCache.filter(function(p) {
+    return p.type === 'project' && p.name.toLowerCase().includes(q);
+  });
+  if (!filtered.length && !q) { list.style.display = 'none'; return; }
+  list.style.display = 'block';
+  list.innerHTML = '';
+  filtered.forEach(function(p) {
+    var el = document.createElement('div');
+    el.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:12px;color:#e8e8ed;transition:background 0.1s;';
+    el.textContent = p.name;
+    el.onmouseenter = function(){ this.style.background='#ffffff08'; };
+    el.onmouseleave = function(){ this.style.background='transparent'; };
+    el.onclick = function() {
+      document.getElementById('create-project').value = p.name;
+      document.getElementById('create-project').dataset.id = p.id;
+      list.style.display = 'none';
+    };
+    list.appendChild(el);
+  });
+  if (query) {
+    var addNew = document.createElement('div');
+    addNew.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:12px;color:#4ade80;border-top:1px solid #ffffff08;';
+    addNew.textContent = '+ criar projeto "' + query + '"';
+    addNew.onclick = function() {
+      document.getElementById('create-project').dataset.id = '';
+      document.getElementById('create-project').dataset.newProject = query;
+      list.style.display = 'none';
+    };
+    list.appendChild(addNew);
+  }
+}
+
+function searchDeliverables(query) {
+  var list = document.getElementById('create-deliverable-list');
+  if (!list) return;
+  var projectName = document.getElementById('create-project').value;
+  var q = (query || '').toLowerCase();
+  var filtered = projectsCache.filter(function(p) {
+    return p.type === 'deliverable' && p.name.toLowerCase().includes(q) && (!projectName || p.parentName === projectName);
+  });
+  if (!filtered.length && !q) { list.style.display = 'none'; return; }
+  list.style.display = 'block';
+  list.innerHTML = '';
+  filtered.forEach(function(p) {
+    var el = document.createElement('div');
+    el.style.cssText = 'padding:8px 12px;cursor:pointer;font-size:12px;color:#e8e8ed;';
+    el.textContent = p.name;
+    el.onmouseenter = function(){ this.style.background='#ffffff08'; };
+    el.onmouseleave = function(){ this.style.background='transparent'; };
+    el.onclick = function() {
+      document.getElementById('create-deliverable').value = p.name;
+      document.getElementById('create-deliverable').dataset.id = p.id;
+      list.style.display = 'none';
+    };
+    list.appendChild(el);
+  });
+}
+
+function parseEstimate(val) {
+  if (!val) return null;
+  val = val.trim().toLowerCase();
+  var m = val.match(/^(\d+)\s*h\s*(\d+)?/);
+  if (m) return parseInt(m[1]) * 60 + (parseInt(m[2]) || 0);
+  m = val.match(/^(\d+)\s*min/);
+  if (m) return parseInt(m[1]);
+  m = val.match(/^(\d+\.?\d*)\s*h?$/);
+  if (m) { var n = parseFloat(m[1]); return n < 10 ? Math.round(n * 60) : Math.round(n); }
+  return null;
+}
+
+function openCreateModal(prefillText) {
+  document.getElementById('create-modal-title').textContent = 'Nova demanda';
+  document.getElementById('create-name').value = prefillText || '';
+  document.getElementById('create-project').value = '';
+  document.getElementById('create-project').dataset.id = '';
+  document.getElementById('create-deliverable').value = '';
+  document.getElementById('create-deliverable').dataset.id = '';
+  document.getElementById('create-deadline-date').value = '';
+  document.getElementById('create-deadline-time').value = '18:00';
+  document.getElementById('create-estimate').value = '';
+  document.getElementById('create-estimate-parsed').textContent = '';
+  document.getElementById('create-status').value = 'active';
+  document.getElementById('create-dtype').value = 'soft';
+  document.getElementById('create-task-type').value = 'task';
+  document.getElementById('create-holding-section').style.display = 'none';
+  document.getElementById('create-modal').classList.add('open');
+  loadProjectsCache();
+  setTimeout(function(){ document.getElementById('create-name').focus(); }, 50);
+}
+
+function closeCreateModal() {
+  document.getElementById('create-modal').classList.remove('open');
+}
+
+async function submitCreateModal() {
+  var name = document.getElementById('create-name').value.trim();
+  if (!name) return;
+  var projectInput = document.getElementById('create-project');
+  var deliverableInput = document.getElementById('create-deliverable');
+  var dateVal = document.getElementById('create-deadline-date').value;
+  var timeVal = document.getElementById('create-deadline-time').value || '18:00';
+  var estimate = parseEstimate(document.getElementById('create-estimate').value);
+  var status = document.getElementById('create-status').value;
+  var dtype = document.getElementById('create-dtype').value;
+  var taskType = document.getElementById('create-task-type').value;
+  var deadline = dateVal ? dateVal + 'T' + timeVal + ':00' : null;
+  var parentId = deliverableInput.dataset.id || projectInput.dataset.id || null;
+  var project = projectInput.value.trim();
+  var deliverable = deliverableInput.value.trim();
+  var title = name;
+  if (project && deliverable) title = project + ' | ' + deliverable + ' | ' + name;
+  else if (project) title = project + ' | ' + name;
+  var body = {
+    project: project,
+    title: title,
+    deadline: deadline,
+    deadline_type: dtype,
+    estimate: estimate || 120,
+    task_type: taskType,
+    parent_id: parentId || null,
+    status: status
+  };
+  if (status === 'on_holding') {
+    body.on_holding = true;
+    body.holding_reason = document.getElementById('create-holding-reason').value;
+    body.holding_until = document.getElementById('create-holding-until').value;
+  }
+  await apiPost('/dashboard/task/create-smart/confirm', body);
+  closeCreateModal();
   loadState();
 }
 
@@ -1987,51 +2237,11 @@ async function insertPause(minutes) {
 }
 
 // ── Create smart task ──────────────────────────────────
-async function createTaskSmart() {
+function createTaskSmart() {
   var input = document.getElementById('new-task-input');
-  var text = (input.value||'').trim();
-  if (!text) return;
-  var btn = document.querySelector('.bottom-create button');
-  if (btn) { btn.textContent = '...'; btn.disabled = true; btn.classList.add('loading-pulse'); }
-
-  try {
-    var result = await apiPost('/dashboard/task/create-smart', { raw_text: text });
-
-    if (result && result.needs_confirmation) {
-      showCreatePreview(result.parsed, text);
-    } else if (result && result.ok) {
-      input.value = '';
-      await loadState();
-    } else {
-      // Fallback: criar task simples direto
-      await apiPost('/dashboard/task/create-smart/confirm', {
-        project: '',
-        title: text,
-        deadline: null,
-        deadline_type: 'soft',
-        estimate: 120
-      });
-      input.value = '';
-      await loadState();
-    }
-  } catch(e) {
-    try {
-      await apiPost('/dashboard/task/create-smart/confirm', {
-        project: '',
-        title: text,
-        deadline: null,
-        deadline_type: 'soft',
-        estimate: 120
-      });
-      input.value = '';
-      await loadState();
-    } catch(e2) {
-      console.error('Erro ao criar task:', e2);
-      alert('Erro ao criar demanda. Tente novamente.');
-    }
-  } finally {
-    if (btn) { btn.textContent = '+ criar'; btn.disabled = false; btn.classList.remove('loading-pulse'); }
-  }
+  var text = (input.value || '').trim();
+  openCreateModal(text);
+  input.value = '';
 }
 
 function showCreatePreview(parsed) {
@@ -3093,10 +3303,38 @@ async function linkJiraToTask(key) {
   }
 }
 
+// ── Create modal helpers ───────────────────────────────
+(function() {
+  document.addEventListener('change', function(e) {
+    if (e.target && e.target.id === 'create-status') {
+      var holdSec = document.getElementById('create-holding-section');
+      if (holdSec) holdSec.style.display = e.target.value === 'on_holding' ? 'block' : 'none';
+    }
+  });
+  document.addEventListener('input', function(e) {
+    if (e.target && e.target.id === 'create-estimate') {
+      var mins = parseEstimate(e.target.value);
+      var el = document.getElementById('create-estimate-parsed');
+      if (el) el.textContent = mins ? '= ' + fmt_time(mins) : '';
+    }
+  });
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('#create-project') && !e.target.closest('#create-project-list')) {
+      var l = document.getElementById('create-project-list');
+      if (l) l.style.display = 'none';
+    }
+    if (!e.target.closest('#create-deliverable') && !e.target.closest('#create-deliverable-list')) {
+      var l2 = document.getElementById('create-deliverable-list');
+      if (l2) l2.style.display = 'none';
+    }
+  });
+})();
+
 // ── Init ──────────────────────────────────────────────
 updateClock();
 setInterval(updateClock, 15000);
 loadState();
+loadProjectsCache();
 setInterval(loadState, 60000);
 </script>
 
