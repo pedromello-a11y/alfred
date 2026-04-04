@@ -3,7 +3,7 @@ from datetime import datetime, date
 
 from sqlalchemy import (
     UUID, VARCHAR, TEXT, BOOLEAN, INTEGER, FLOAT, TIMESTAMP, DATE, Index, UniqueConstraint,
-    Boolean, String, DateTime
+    Boolean, String, DateTime, ForeignKey
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -16,11 +16,13 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=True)
+    task_type: Mapped[str] = mapped_column(String, default="task")  # "project", "deliverable", "subtask", "task"
     title: Mapped[str] = mapped_column(VARCHAR(500), nullable=False)
     description: Mapped[str | None] = mapped_column(TEXT)
     origin: Mapped[str | None] = mapped_column(VARCHAR(20))  # 'manual', 'jira', 'gchat'
     origin_ref: Mapped[str | None] = mapped_column(VARCHAR(100))
-    status: Mapped[str] = mapped_column(VARCHAR(20), default="pending")  # pending/in_progress/done/cancelled/delegated/dropped
+    status: Mapped[str] = mapped_column(VARCHAR(20), default="active")  # active/on_holding/backlog/done/cancelled (legacy: pending/in_progress)
     priority: Mapped[int | None] = mapped_column(INTEGER)  # 1 (urgente) a 5 (baixa)
     category: Mapped[str | None] = mapped_column(VARCHAR(20))  # 'work', 'personal'
     deadline: Mapped[datetime | None] = mapped_column(TIMESTAMP)
@@ -46,7 +48,32 @@ class Task(Base):
         Index("idx_tasks_status_priority", "status", "priority"),
         Index("idx_tasks_deadline", "deadline"),
         Index("idx_tasks_category", "category"),
+        Index("idx_tasks_parent_id", "parent_id"),
     )
+
+    @property
+    def on_holding(self):
+        return getattr(self, 'blocked', False)
+
+    @on_holding.setter
+    def on_holding(self, val):
+        self.blocked = val
+
+    @property
+    def holding_reason(self):
+        return getattr(self, 'blocked_reason', None)
+
+    @holding_reason.setter
+    def holding_reason(self, val):
+        self.blocked_reason = val
+
+    @property
+    def holding_until(self):
+        return getattr(self, 'blocked_until', None)
+
+    @holding_until.setter
+    def holding_until(self, val):
+        self.blocked_until = val
 
 
 class AgendaBlock(Base):
