@@ -840,13 +840,36 @@ async def confirm_smart_task(body: dict, db: AsyncSession = Depends(get_db)) -> 
             avg = sum(t.actual_minutes for t in hist_tasks) / len(hist_tasks)
             estimate = int(avg)
 
+    raw_deadline = body.get("deadline")
+    if raw_deadline and isinstance(raw_deadline, str) and "T" not in raw_deadline:
+        raw_deadline = raw_deadline + "T18:00:00"
+    if raw_deadline:
+        try:
+            deadline = datetime.fromisoformat(raw_deadline)
+        except ValueError:
+            pass
+
+    task_type = body.get("task_type") or "task"
+    parent_id_val = None
+    if body.get("parent_id"):
+        try:
+            parent_id_val = UUID(body["parent_id"])
+        except Exception:
+            pass
+
+    incoming_status = body.get("status") or "active"
+    if incoming_status in ("pending", "in_progress"):
+        incoming_status = "active"
+
     new_task = Task(
         title=full_title,
         origin="dashboard",
-        status="pending",
+        status=incoming_status,
         estimated_minutes=estimate,
         deadline=deadline,
         category="work",
+        task_type=task_type,
+        parent_id=parent_id_val,
     )
     if hasattr(new_task, "deadline_type"):
         new_task.deadline_type = body.get("deadline_type") or "soft"
@@ -859,6 +882,227 @@ async def confirm_smart_task(body: dict, db: AsyncSession = Depends(get_db)) -> 
     await db.commit()
     await db.refresh(new_task)
     return {"status": "ok", "id": str(new_task.id), "title": new_task.title}
+
+
+@router.get("/projects")
+async def get_projects(db: AsyncSession = Depends(get_db)) -> list:
+    from sqlalchemy import or_, and_
+    result = await db.execute(
+        select(Task).where(Task.status.notin_(["done", "cancelled", "dropped"]))
+    )
+    all_tasks = result.scalars().all()
+
+    tasks_by_id = {str(t.id): t for t in all_tasks}
+    children_of: dict[str | None, list[Task]] = {}
+    for t in all_tasks:
+        pid = str(t.parent_id) if t.parent_id else None
+        children_of.setdefault(pid, []).append(t)
+
+    def _task_dict(t: Task) -> dict:
+        project, task_name = _parse_project_task(t.title)
+        checklist = getattr(t, "checklist_json", None) or []
+        return {
+            "id": str(t.id),
+            "name": t.title,
+            "taskName": task_name,
+            "project": project,
+            "type": getattr(t, "task_type", "task") or "task",
+            "status": t.status,
+            "deadline": t.deadline.isoformat() if t.deadline else None,
+            "deadlineHuman": _humanize_deadline(t.deadline),
+            "estimated_minutes": t.estimated_minutes,
+            "parent_id": str(t.parent_id) if t.parent_id else None,
+            "checklistDone": sum(1 for i in checklist if i.get("done")),
+            "checklistTotal": len(checklist),
+        }
+
+    def _build_node(t: Task) -> dict:
+        node = _task_dict(t)
+        kids = sorted(children_of.get(str(t.id), []), key=lambda x: (x.deadline or datetime.max))
+        node["children"] = [_build_node(k) for k in kids]
+        return node
+
+    projects = [t for t in all_tasks if (getattr(t, "task_type", "task") or "task") == "project"]
+    # Tasks que têm filhos mas task_type != 'project'
+    implicit_roots = [
+        t for t in all_tasks
+        if (getattr(t, "task_type", "task") or "task") not in ("project",)
+        and not t.parent_id
+        and children_of.get(str(t.id))
+    ]
+    roots = sorted(set(projects + implicit_roots), key=lambda t: (t.deadline or datetime.max))
+
+    tree = [_build_node(t) for t in roots]
+
+    # Orphans: parent_id IS NULL, task_type='task', no children
+    root_project_ids = {str(t.id) for t in roots}
+    orphans = [
+        _task_dict(t) for t in all_tasks
+        if not t.parent_id
+        and str(t.id) not in root_project_ids
+    ]
+    if orphans:
+        tree.append({"id": None, "name": "Sem projeto", "type": "none", "children": orphans})
+
+    return tree
+
+
+def _task_to_flat(t: Task) -> dict:
+    project, task_name = _parse_project_task(t.title)
+    checklist = getattr(t, "checklist_json", None) or []
+    origin_ref = getattr(t, "origin_ref", None) or ""
+    jira_key = origin_ref if (getattr(t, "origin", "") == "jira") else ""
+    return {
+        "id": str(t.id),
+        "title": t.title,
+        "taskName": task_name,
+        "project": project,
+        "parent_id": str(t.parent_id) if t.parent_id else None,
+        "task_type": getattr(t, "task_type", "task") or "task",
+        "status": t.status,
+        "deadline": t.deadline.isoformat() if t.deadline else None,
+        "deadlineHuman": _humanize_deadline(t.deadline),
+        "estimated_minutes": t.estimated_minutes,
+        "on_holding": bool(getattr(t, "blocked", False)),
+        "holding_reason": getattr(t, "blocked_reason", None) or "",
+        "holding_until": t.blocked_until.isoformat() if getattr(t, "blocked_until", None) else None,
+        "jira_key": jira_key,
+        "checklistDone": sum(1 for i in checklist if i.get("done")),
+        "checklistTotal": len(checklist),
+    }
+
+
+@router.get("/all-tasks")
+async def get_all_tasks(db: AsyncSession = Depends(get_db)) -> dict:
+    result = await db.execute(
+        select(Task).where(Task.status.notin_(["done", "cancelled", "dropped"]))
+        .order_by(Task.deadline.asc().nulls_last(), Task.priority.asc().nulls_last())
+    )
+    tasks = result.scalars().all()
+
+    active, on_holding, backlog = [], [], []
+    for t in tasks:
+        status = t.status or "active"
+        is_blocked = bool(getattr(t, "blocked", False))
+        if is_blocked or status == "on_holding":
+            on_holding.append(_task_to_flat(t))
+        elif status in ("pending", "in_progress", "active"):
+            active.append(_task_to_flat(t))
+        elif status == "backlog":
+            backlog.append(_task_to_flat(t))
+
+    return {"active": active, "onHolding": on_holding, "backlog": backlog}
+
+
+@router.post("/task/{task_id}/rename")
+async def rename_task(task_id: str, body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    try:
+        tid = UUID(task_id)
+    except Exception:
+        return {"status": "error", "message": "invalid id"}
+    result = await db.execute(select(Task).where(Task.id == tid))
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"status": "error", "message": "not found"}
+    title = (body.get("title") or "").strip()
+    if not title:
+        return {"status": "error", "message": "title required"}
+    task.title = title
+    await db.commit()
+    return {"status": "ok"}
+
+
+@router.post("/task/{task_id}/update")
+async def update_task(task_id: str, body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    try:
+        tid = UUID(task_id)
+    except Exception:
+        return {"status": "error", "message": "invalid id"}
+    result = await db.execute(select(Task).where(Task.id == tid))
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"status": "error", "message": "not found"}
+
+    if "title" in body:
+        task.title = (body["title"] or "").strip()
+    if "status" in body:
+        s = body["status"]
+        if s in ("pending", "in_progress"):
+            s = "active"
+        task.status = s
+    if "deadline" in body:
+        raw = body["deadline"]
+        if raw and isinstance(raw, str) and "T" not in raw:
+            raw = raw + "T18:00:00"
+        try:
+            task.deadline = datetime.fromisoformat(raw) if raw else None
+        except Exception:
+            pass
+    if "deadline_type" in body:
+        task.deadline_type = body["deadline_type"]
+    if "estimated_minutes" in body:
+        task.estimated_minutes = body["estimated_minutes"]
+    if "parent_id" in body:
+        pid = body["parent_id"]
+        task.parent_id = UUID(pid) if pid else None
+    if "task_type" in body:
+        task.task_type = body["task_type"]
+    if "on_holding" in body:
+        task.blocked = bool(body["on_holding"])
+        if not task.blocked:
+            task.status = "active"
+        else:
+            task.status = "on_holding"
+    if "holding_reason" in body:
+        task.blocked_reason = body["holding_reason"]
+    if "holding_until" in body:
+        val = body["holding_until"]
+        try:
+            from datetime import date as _date
+            task.blocked_until = _date.fromisoformat(val) if val else None
+        except Exception:
+            pass
+
+    await db.commit()
+    await db.refresh(task)
+    return _task_to_flat(task)
+
+
+@router.get("/project-suggestions")
+async def project_suggestions(q: str = "", db: AsyncSession = Depends(get_db)) -> list:
+    from sqlalchemy import func as sqlfunc
+    stmt = (
+        select(Task)
+        .where(Task.task_type.in_(["project", "deliverable"]))
+        .where(Task.status.notin_(["done", "cancelled", "dropped"]))
+        .where(Task.title.ilike(f"%{q}%"))
+        .order_by(Task.title.asc())
+        .limit(10)
+    )
+    result = await db.execute(stmt)
+    tasks = result.scalars().all()
+
+    task_by_id = {str(t.id): t for t in tasks}
+    # Also fetch parents for deliverables
+    parent_ids = [t.parent_id for t in tasks if t.parent_id]
+    parent_tasks: dict[str, Task] = {}
+    if parent_ids:
+        p_result = await db.execute(select(Task).where(Task.id.in_(parent_ids)))
+        for pt in p_result.scalars().all():
+            parent_tasks[str(pt.id)] = pt
+
+    suggestions = []
+    for t in tasks:
+        parent_name = None
+        if t.parent_id and str(t.parent_id) in parent_tasks:
+            parent_name = parent_tasks[str(t.parent_id)].title
+        suggestions.append({
+            "id": str(t.id),
+            "name": t.title,
+            "type": t.task_type,
+            "parentName": parent_name,
+        })
+    return suggestions
 
 
 @router.get("/personal")
