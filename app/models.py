@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, time
 
 from sqlalchemy import (
-    UUID, VARCHAR, TEXT, BOOLEAN, INTEGER, FLOAT, TIMESTAMP, DATE, Index, UniqueConstraint,
+    UUID, VARCHAR, TEXT, BOOLEAN, INTEGER, FLOAT, TIMESTAMP, DATE, TIME, Index, UniqueConstraint,
     Boolean, String, DateTime, ForeignKey
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -260,6 +260,41 @@ class Achievement(Base):
 
     __table_args__ = (
         UniqueConstraint("code", name="uq_achievements_code"),
+    )
+
+
+class ScheduleBlock(Base):
+    __tablename__ = "schedule_blocks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[str] = mapped_column(String(50), default="default")
+    title: Mapped[str] = mapped_column(VARCHAR(200), nullable=False)
+    block_type: Mapped[str] = mapped_column(VARCHAR(30), default="other")  # meal/exercise/pet/home/other
+    date: Mapped[date] = mapped_column(DATE, nullable=False)
+    start_time: Mapped[time] = mapped_column(TIME, nullable=False)
+    end_time: Mapped[time] = mapped_column(TIME, nullable=False)
+    is_fixed: Mapped[bool] = mapped_column(BOOLEAN, default=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_schedule_blocks_date", "date"),
+        Index("idx_schedule_blocks_user_id", "user_id"),
+    )
+
+
+class PersonalItem(Base):
+    __tablename__ = "personal_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[str] = mapped_column(String(50), default="default")
+    title: Mapped[str] = mapped_column(VARCHAR(500), nullable=False)
+    position: Mapped[int] = mapped_column(INTEGER, default=0)
+    done: Mapped[bool] = mapped_column(BOOLEAN, default=False)
+    done_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_personal_items_user_position", "user_id", "position"),
     )
 
 

@@ -12,6 +12,7 @@ from app.services.alert_scheduler import start_scheduler
 from app.routers.admin import router as admin_router
 from app.routers.auth_google import router as auth_google_router
 from app.routers.dashboard import router as dashboard_router
+import app.routers._dashboard_addons  # noqa: F401 — registers extra routes on dashboard router
 from app.routers.health import router as health_router
 from app.routers.internal_whatsapp import router as internal_whatsapp_router
 from app.routers.webhook import router as webhook_router
