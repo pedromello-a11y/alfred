@@ -58,6 +58,7 @@ html,body{height:100%;background:var(--bg);color:var(--t1);font-family:system-ui
 .foco-state-label.ajustar{color:var(--yellow)}
 .foco-state-label.foco{color:var(--accent)}
 .foco-state-label.fim{color:var(--purple)}
+.foco-state-label.comecei{color:var(--blue)}
 .foco-state-sep{flex:1}
 
 /* ── Estado: ABERTURA ── */
@@ -108,17 +109,25 @@ html,body{height:100%;background:var(--bg);color:var(--t1);font-family:system-ui
 .focus-title{font-size:clamp(32px,5.5vw,72px);font-weight:800;letter-spacing:-.04em;color:var(--t1);text-align:center;max-width:700px;line-height:1.05;word-wrap:break-word;cursor:pointer}
 .focus-title:hover{color:#fff}
 
-.timer-ring-wrap{margin-top:20px;position:relative;width:180px;height:180px;flex-shrink:0}
-.timer-ring-wrap svg{position:absolute;top:0;left:0;width:180px;height:180px;transform:rotate(-90deg)}
-.timer-ring-bg{fill:none;stroke:var(--b2);stroke-width:6}
-.timer-ring-fill{fill:none;stroke-width:6;stroke-linecap:round;transition:stroke-dashoffset 1s linear, stroke .5s}
-.timer-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
-.timer-time{font-family:monospace;font-size:32px;font-weight:700;color:var(--t1);line-height:1}
-.timer-est{font-family:monospace;font-size:10px;color:var(--t3);margin-top:4px}
-.timer-state-green .timer-ring-fill{stroke:var(--accent)}
-.timer-state-yellow .timer-ring-fill{stroke:var(--yellow)}
-.timer-state-red .timer-ring-fill{stroke:var(--red)}
-.timer-state-red .timer-time{color:var(--red)}
+/* Estado: COMECEI */
+.estado-comecei{flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:20px}
+.comecei-title{font-size:22px;font-weight:700;color:var(--t1)}
+.comecei-subtitle{font-size:13px;color:var(--t3)}
+.comecei-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:center}
+.comecei-time-input{padding:8px 12px;border-radius:6px;border:1px solid var(--b2);background:var(--surface);color:var(--t1);font-size:14px;font-family:monospace;width:80px;text-align:center;outline:none}
+.comecei-time-input:focus{border-color:var(--b3)}
+
+/* Horizontal progress bar timer */
+.timer-bar-wrap{margin-top:20px;width:min(480px,90%);display:flex;flex-direction:column;gap:8px}
+.timer-bar-time{font-family:monospace;font-size:36px;font-weight:700;color:var(--t1);text-align:center;line-height:1}
+.timer-bar-est{font-family:monospace;font-size:11px;color:var(--t3);text-align:center}
+.timer-bar-track{width:100%;height:8px;border-radius:4px;background:var(--b2);overflow:hidden}
+.timer-bar-fill{height:100%;border-radius:4px;transition:width 1s linear, background .5s}
+.timer-bar-fill.green{background:var(--accent)}
+.timer-bar-fill.yellow{background:var(--yellow)}
+.timer-bar-fill.red{background:var(--red)}
+.timer-bar-meta{display:flex;gap:16px;font-size:11px;color:var(--t3);font-family:monospace;justify-content:center}
+.timer-bar-meta span{display:flex;gap:4px;align-items:center}
 
 .focus-actions{display:flex;gap:8px;margin-top:24px}
 
@@ -149,6 +158,12 @@ html,body{height:100%;background:var(--bg);color:var(--t1);font-family:system-ui
 .foco-tl-bsub{font-size:9px;color:var(--t3);font-family:monospace}
 .foco-tl-now-line{height:1px;background:var(--red);opacity:.5;position:relative}
 .foco-tl-now-line::before{content:'';position:absolute;left:-4px;top:-3px;width:7px;height:7px;border-radius:50%;background:var(--red)}
+
+/* sidebar summary */
+.foco-tl-summary{flex-shrink:0;padding:10px 12px;border-top:1px solid var(--b1);font-size:11px;color:var(--t3);display:flex;flex-direction:column;gap:4px}
+.foco-tl-summary-row{display:flex;justify-content:space-between;align-items:center}
+.foco-tl-summary-val{font-family:monospace;color:var(--t1)}
+.foco-tl-summary-emoji{font-size:18px;text-align:center;padding:4px 0}
 
 /* end of day */
 .estado-fim{flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:24px;padding:40px}
@@ -198,7 +213,13 @@ html,body{height:100%;background:var(--bg);color:var(--t1);font-family:system-ui
 .grid-block.fixed-meal{background:#f97316, 10;border:1px solid #f9731630;border-left:3px solid var(--orange)}
 .grid-block.fixed-exercise{background:#06b6d410;border:1px solid #06b6d430;border-left:3px solid var(--teal)}
 .grid-block.fixed-other{background:var(--yellow-bg);border:1px solid #f59e0b30;border-left:3px solid var(--yellow)}
-.grid-block.auto-block{background:var(--accent-bg);border:1px dashed #4ade8040;border-left:3px solid var(--accent)}
+.grid-block.auto-block{border:1px dashed;border-left:3px solid}
+/* deadline flag */
+.grid-deadline-flag{position:absolute;left:0;right:0;display:flex;align-items:center;gap:4px;pointer-events:none;z-index:4}
+.grid-deadline-flag-line{flex:1;height:1px}
+.grid-deadline-flag-label{font-size:8px;font-family:monospace;white-space:nowrap;padding-right:3px}
+/* day footer */
+.grid-day-footer{font-size:9px;font-family:monospace;color:var(--t3);text-align:center;padding:4px 2px;border-top:1px solid var(--b1);position:sticky;bottom:0;background:var(--bg);z-index:1}
 .grid-block-title{font-size:10px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .grid-block.gcal .grid-block-title{color:var(--purple)}
 .grid-block.auto-block .grid-block-title{color:var(--accent)}
@@ -463,12 +484,25 @@ select.form-input{cursor:pointer}
       <button class="btn btn-sm btn-red" onclick="setFocoState('fim')" id="btn-end-day" style="display:none">Encerrar dia</button>
     </div>
 
+    <!-- COMECEI state -->
+    <div id="estado-comecei" class="estado-comecei" style="display:none">
+      <div class="comecei-title">Que horas você começou?</div>
+      <div class="comecei-subtitle">Marcarei o início do seu dia de trabalho</div>
+      <div class="comecei-row">
+        <button class="btn btn-accent" onclick="comeceiAgora()">Agora</button>
+        <span style="color:var(--t3);font-size:12px">ou</span>
+        <input class="comecei-time-input" id="comecei-time-input" type="text" placeholder="08:30" maxlength="5" oninput="comeceiTimeFormat(this)">
+        <button class="btn btn-ghost" onclick="comeceiOutraHora()">Confirmar</button>
+      </div>
+    </div>
+
     <!-- ABERTURA state -->
     <div id="estado-abertura" class="estado-abertura">
       <div class="abertura-left">
         <div>
           <div class="abertura-greeting" id="abertura-greeting">Bom dia.</div>
           <div class="abertura-date" id="abertura-date">--</div>
+          <div id="abertura-calma" style="font-size:13px;color:var(--t3);margin-top:8px;font-style:italic"></div>
         </div>
 
         <div>
@@ -481,15 +515,28 @@ select.form-input{cursor:pointer}
         </div>
 
         <div>
-          <div class="abertura-section-title">fila de hoje</div>
-          <div class="task-queue-list" id="task-queue-list">
+          <div class="abertura-section-title">hoje</div>
+          <div class="task-queue-list" id="task-queue-today">
             <div class="loading-row"><div class="loading-spinner"></div>carregando...</div>
           </div>
         </div>
+        <div id="abertura-semana-section" style="display:none">
+          <div class="abertura-section-title">semana</div>
+          <div class="task-queue-list" id="task-queue-semana"></div>
+        </div>
+        <div id="abertura-backlog-section" style="display:none">
+          <div class="abertura-section-title">backlog</div>
+          <div class="task-queue-list" id="task-queue-backlog"></div>
+        </div>
+        <div id="abertura-holding-section" style="display:none">
+          <div class="abertura-section-title">aguardando</div>
+          <div class="task-queue-list" id="task-queue-holding"></div>
+        </div>
 
         <div class="abertura-actions">
-          <button class="btn btn-accent" onclick="startDay()">Iniciar dia →</button>
-          <button class="btn btn-ghost" onclick="setFocoState('ajustar')">Ajustar agenda</button>
+          <button class="btn btn-accent" onclick="startDay()">Começar →</button>
+          <button class="btn btn-ghost" onclick="setFocoState('ajustar')">Ajustar</button>
+          <button class="btn btn-ghost" onclick="switchTab('agenda')">Ver semana</button>
         </div>
       </div>
 
@@ -518,16 +565,16 @@ select.form-input{cursor:pointer}
           Nenhuma tarefa ativa
         </div>
 
-        <!-- Timer ring -->
-        <div class="timer-ring-wrap" id="timer-ring-wrap">
-          <svg viewBox="0 0 180 180">
-            <circle class="timer-ring-bg" cx="90" cy="90" r="82"/>
-            <circle class="timer-ring-fill" id="timer-ring-fill" cx="90" cy="90" r="82"
-              stroke-dasharray="515" stroke-dashoffset="0"/>
-          </svg>
-          <div class="timer-center">
-            <div class="timer-time" id="timer-time">0:00</div>
-            <div class="timer-est" id="timer-est">/ 0min est.</div>
+        <!-- Horizontal progress bar timer -->
+        <div class="timer-bar-wrap" id="timer-bar-wrap">
+          <div class="timer-bar-time" id="timer-time">0:00</div>
+          <div class="timer-bar-est" id="timer-est">/ 0min estimado</div>
+          <div class="timer-bar-track">
+            <div class="timer-bar-fill green" id="timer-bar-fill" style="width:0%"></div>
+          </div>
+          <div class="timer-bar-meta">
+            <span id="timer-meta-janela"></span>
+            <span id="timer-meta-prazo"></span>
           </div>
         </div>
 
@@ -547,6 +594,21 @@ select.form-input{cursor:pointer}
       <div class="foco-sidebar-tl">
         <div class="foco-tl-header">Hoje — linha do tempo</div>
         <div class="foco-tl-body" id="foco-tl-body"></div>
+        <div class="foco-tl-summary" id="foco-tl-summary" style="display:none">
+          <div class="foco-tl-summary-row">
+            <span>concluídas</span>
+            <span class="foco-tl-summary-val" id="tl-sum-done">0/0</span>
+          </div>
+          <div class="foco-tl-summary-row">
+            <span>gastas</span>
+            <span class="foco-tl-summary-val" id="tl-sum-time">0h</span>
+          </div>
+          <div class="foco-tl-summary-row">
+            <span>folga</span>
+            <span class="foco-tl-summary-val" id="tl-sum-folga">0min</span>
+          </div>
+          <div class="foco-tl-summary-emoji" id="tl-sum-emoji"></div>
+        </div>
       </div>
     </div>
 
@@ -1049,26 +1111,23 @@ function toast(msg, dur=2500) {
 // ════════════════════════════════════════════════
 function setFocoState(state) {
   focoState = state;
-  ['abertura','ajustar','foco','fim'].forEach(s => {
+  ['comecei','abertura','ajustar','foco','fim'].forEach(s => {
     const el = document.getElementById('estado-' + s);
-    if (el) el.style.display = s === state ? (s==='abertura'||s==='foco'?'flex':'flex') : 'none';
-    if (el && s === state) {
-      if (s === 'abertura' || s === 'foco') el.style.display = 'flex';
-      else el.style.display = 'flex';
-    }
+    if (el) el.style.display = s === state ? 'flex' : 'none';
   });
 
   const lbl = document.getElementById('foco-state-label');
   const desc = document.getElementById('foco-state-desc');
   const stateMap = {
+    comecei: ['COMECEI','início do dia'],
     abertura: ['ABERTURA','planejamento do dia'],
     ajustar: ['AJUSTAR','editando agenda'],
     foco: ['FOCO','trabalhando'],
     fim: ['FIM DO DIA','encerrando']
   };
   lbl.className = 'foco-state-label ' + state;
-  lbl.textContent = stateMap[state][0];
-  desc.textContent = stateMap[state][1];
+  lbl.textContent = (stateMap[state] || [state,''])[0];
+  desc.textContent = (stateMap[state] || ['',''])[1];
 
   document.getElementById('btn-start-day').style.display = state === 'abertura' ? '' : 'none';
   document.getElementById('btn-ajustar').style.display = state === 'foco' ? '' : 'none';
@@ -1087,6 +1146,9 @@ function setFocoState(state) {
 function loadFoco() {
   updateAberturaGreeting();
   loadFocoAgendaData();
+  if (!dayStarted) {
+    setFocoState('comecei');
+  }
 }
 
 function updateAberturaGreeting() {
@@ -1098,6 +1160,15 @@ function updateAberturaGreeting() {
   const months = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
   document.getElementById('abertura-date').textContent =
     days[now.getDay()] + ', ' + now.getDate() + ' de ' + months[now.getMonth()];
+
+  const calmas = [
+    'Uma tarefa de cada vez.',
+    'O importante é começar.',
+    'Foco no que importa hoje.',
+    'Progresso, não perfeição.',
+    'Você já está aqui — isso conta.',
+  ];
+  document.getElementById('abertura-calma').textContent = calmas[now.getDate() % calmas.length];
 }
 
 async function loadFocoAgendaData() {
@@ -1121,13 +1192,9 @@ async function loadFocoAgendaData() {
 }
 
 function renderAberturaQueue(todayData) {
-  const el = document.getElementById('task-queue-list');
   const autoBlocks = (todayData.blocks || []).filter(b => b.type === 'auto');
-  if (!autoBlocks.length) {
-    el.innerHTML = '<div style="color:var(--t3);font-size:13px;padding:8px 0">Nenhuma tarefa na fila</div>';
-    return;
-  }
-  el.innerHTML = autoBlocks.slice(0,8).map((b,i) => {
+
+  function tqItem(b, i) {
     const dlClass = b.deadline_human && b.deadline_human.includes('atrasada') ? 'urgent' :
                     b.deadline_human && (b.deadline_human.includes('hoje')||b.deadline_human.includes('amanhã')) ? 'soon' : '';
     return `<div class="tq-item" onclick="openTaskModal('${b.task_id}')">
@@ -1141,7 +1208,46 @@ function renderAberturaQueue(todayData) {
         ${b.deadline_human ? `<span class="tq-dl ${dlClass}">${b.deadline_human}</span>` : ''}
       </div>
     </div>`;
-  }).join('');
+  }
+
+  // Today blocks from agenda
+  const todayEl = document.getElementById('task-queue-today');
+  if (!autoBlocks.length) {
+    todayEl.innerHTML = '<div style="color:var(--t3);font-size:13px;padding:8px 0">Nenhuma tarefa na fila</div>';
+  } else {
+    todayEl.innerHTML = autoBlocks.map((b,i) => tqItem(b, i)).join('');
+  }
+
+  // Grouped from activeTasks: semana, backlog, holding
+  const today = todayStr();
+  const todayTaskIds = new Set(autoBlocks.map(b => b.task_id).filter(Boolean));
+
+  const semana = activeTasks.filter(t => !todayTaskIds.has(String(t.id)) && t.status === 'active');
+  const backlog = activeTasks.filter(t => t.status === 'backlog');
+  const holding = activeTasks.filter(t => t.status === 'on_holding');
+
+  function setGroup(sectionId, listId, tasks) {
+    const sec = document.getElementById(sectionId);
+    const list = document.getElementById(listId);
+    if (!tasks.length) { sec.style.display = 'none'; return; }
+    sec.style.display = '';
+    list.innerHTML = tasks.map((t,i) => {
+      const dlClass = t.deadline_human && t.deadline_human.includes('atrasada') ? 'urgent' :
+                      t.deadline_human && (t.deadline_human.includes('hoje')||t.deadline_human.includes('amanhã')) ? 'soon' : '';
+      const shortTitle = (t.title || '').split('|').pop().trim();
+      return `<div class="tq-item" onclick="openTaskModal('${t.id}')">
+        <span class="tq-num">${i+1}</span>
+        <div style="flex:1;min-width:0"><div class="tq-title">${shortTitle}</div></div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+          ${t.estimated_minutes ? `<span class="tq-est">${t.estimated_minutes}min</span>` : ''}
+          ${t.deadline_human ? `<span class="tq-dl ${dlClass}">${t.deadline_human}</span>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+  setGroup('abertura-semana-section', 'task-queue-semana', semana);
+  setGroup('abertura-backlog-section', 'task-queue-backlog', backlog);
+  setGroup('abertura-holding-section', 'task-queue-holding', holding);
 
   // Update factor badge
   document.getElementById('factor-num').textContent = 'x' + todayData.factor;
@@ -1169,10 +1275,40 @@ function renderMiniTimeline(todayData) {
   el.innerHTML = items.join('');
 }
 
-function startDay() {
-  dayStarted = true;
+function comeceiAgora() {
   dayStartTime = new Date();
+  dayStarted = true;
   fetch('/dashboard/day/start', {method:'POST'}).catch(()=>{});
+  setFocoState('abertura');
+}
+
+function comeceiOutraHora() {
+  const val = document.getElementById('comecei-time-input').value.trim();
+  if (val && /^\d{1,2}:\d{2}$/.test(val)) {
+    const [h, m] = val.split(':').map(Number);
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    dayStartTime = d;
+  } else {
+    dayStartTime = new Date();
+  }
+  dayStarted = true;
+  fetch('/dashboard/day/start', {method:'POST'}).catch(()=>{});
+  setFocoState('abertura');
+}
+
+function comeceiTimeFormat(input) {
+  let v = input.value.replace(/\D/g,'');
+  if (v.length > 2) v = v.slice(0,2) + ':' + v.slice(2,4);
+  input.value = v;
+}
+
+function startDay() {
+  if (!dayStarted) {
+    dayStarted = true;
+    dayStartTime = new Date();
+    fetch('/dashboard/day/start', {method:'POST'}).catch(()=>{});
+  }
   // Set first task
   if (activeTasks.length > 0) {
     currentTaskIdx = 0;
@@ -1186,6 +1322,8 @@ function renderFocoBlock() {
     document.getElementById('focus-title').textContent = 'Nenhuma tarefa ativa';
     document.getElementById('focus-project').textContent = '';
     document.getElementById('focus-deliverable').textContent = '';
+    document.getElementById('timer-meta-janela').textContent = '';
+    document.getElementById('timer-meta-prazo').textContent = '';
     stopTimer();
     return;
   }
@@ -1194,14 +1332,35 @@ function renderFocoBlock() {
   currentTaskId = task.id;
   taskData[task.id] = task;
 
-  // Parse title: may contain "Project | Task" or just task
-  const parts = task.title.split('|').map(s => s.trim());
-  const project = parts.length > 1 ? parts[0] : '';
-  const title = parts.length > 1 ? parts[1] : parts[0];
+  // Get project/deliverable from today's agenda blocks if available
+  const today = todayStr();
+  const todayData = agendaData && agendaData.days.find(d => d.date === today);
+  const agendaBlock = todayData && todayData.blocks && todayData.blocks.find(b => b.task_id === String(task.id));
 
-  document.getElementById('focus-project').textContent = project;
-  document.getElementById('focus-deliverable').textContent = task.deadline_human || '';
-  document.getElementById('focus-title').textContent = title;
+  const projectName = (agendaBlock && agendaBlock.project) ||
+    (task.title.includes('|') ? task.title.split('|')[0].trim() : '');
+  const delivName = (agendaBlock && agendaBlock.deliverable) || '';
+  const taskTitle = (task.title || '').split('|').pop().trim();
+
+  document.getElementById('focus-project').textContent = projectName;
+  document.getElementById('focus-deliverable').textContent = delivName;
+  document.getElementById('focus-title').textContent = taskTitle;
+
+  // Window and real deadline below bar
+  const janelaEl = document.getElementById('timer-meta-janela');
+  const prazoEl = document.getElementById('timer-meta-prazo');
+  if (agendaBlock && agendaBlock.end) {
+    janelaEl.textContent = '⏱ janela até ' + agendaBlock.end;
+  } else {
+    janelaEl.textContent = '';
+  }
+  if (task.deadline_human) {
+    prazoEl.textContent = '📅 prazo: ' + task.deadline_human;
+  } else if (task.deadline) {
+    prazoEl.textContent = '📅 prazo: ' + task.deadline.slice(0,10);
+  } else {
+    prazoEl.textContent = '';
+  }
 
   timerElapsed = 0;
   timerEstimate = (task.estimated_minutes || 60) * 60;
@@ -1246,8 +1405,9 @@ function renderFocoTimeline() {
     </div>`;
   }
 
-  // Blocks
+  // Blocks — no gap/respiro blocks, just real blocks with empty space between them
   blocks.forEach(b => {
+    if (b.type === 'respiro' || b.title === 'respiro') return; // skip respiro labels
     const [sh, sm] = b.start.split(':').map(Number);
     const [eh, em] = b.end.split(':').map(Number);
     const startMin = sh * 60 + sm;
@@ -1262,7 +1422,9 @@ function renderFocoTimeline() {
     else if (b.type === 'fixed') { bg='var(--yellow-bg)'; border='var(--yellow)'; titleColor='var(--t2)'; }
     else { bg='var(--accent-bg)'; border='var(--accent)'; titleColor='var(--accent)'; }
 
-    html += `<div style="position:absolute;top:${top}px;left:40px;right:4px;height:${height}px;background:${bg};border-left:2px solid ${border};border-radius:0 4px 4px 0;padding:2px 6px;overflow:hidden;cursor:pointer;${isDone?'opacity:.4':''}${isCurrent?';box-shadow:0 0 0 1px '+border+'40':''}" onclick="openTaskModal('${b.task_id||''}')">
+    const currentBorderStyle = isCurrent ? `border-left:3px solid var(--accent);` : `border-left:2px solid ${border};`;
+
+    html += `<div style="position:absolute;top:${top}px;left:40px;right:4px;height:${height}px;background:${bg};${currentBorderStyle}border-radius:0 4px 4px 0;padding:2px 6px;overflow:hidden;cursor:pointer;${isDone?'opacity:.4':''}${isCurrent?';outline:1px solid var(--accent);outline-offset:-1px':''}" onclick="openTaskModal('${b.task_id||''}')">
       <div style="font-size:10px;font-weight:600;color:${titleColor};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.title}</div>
       ${height > 28 ? `<div style="font-size:9px;font-family:monospace;color:var(--t3)">${b.start}–${b.end}</div>` : ''}
     </div>`;
@@ -1270,6 +1432,25 @@ function renderFocoTimeline() {
 
   html += '</div>';
   el.innerHTML = html;
+
+  // Summary below sidebar
+  const doneCount = blocks.filter(b => b.type === 'auto' && b.end <= nowStr).length;
+  const totalAuto = blocks.filter(b => b.type === 'auto').length;
+  const elapsedMins = dayStartTime ? Math.floor((Date.now() - dayStartTime.getTime()) / 60000) : 0;
+  const workMins = blocks.filter(b => b.type !== 'gcal' && b.end <= nowStr)
+    .reduce((s,b) => { const [sh,sm]=b.start.split(':').map(Number); const [eh,em]=b.end.split(':').map(Number); return s+(eh*60+em-sh*60-sm); }, 0);
+  const gcalMins = blocks.filter(b => b.type === 'gcal' && b.end <= nowStr)
+    .reduce((s,b) => { const [sh,sm]=b.start.split(':').map(Number); const [eh,em]=b.end.split(':').map(Number); return s+(eh*60+em-sh*60-sm); }, 0);
+  const folgaMins = Math.max(0, elapsedMins - workMins - gcalMins);
+  const workH = (workMins / 60).toFixed(1);
+  const doneEmoji = doneCount >= totalAuto ? '🎉' : doneCount > totalAuto / 2 ? '💪' : '⏳';
+
+  const sumEl = document.getElementById('foco-tl-summary');
+  sumEl.style.display = '';
+  document.getElementById('tl-sum-done').textContent = `${doneCount}/${totalAuto}`;
+  document.getElementById('tl-sum-time').textContent = `${workH}h`;
+  document.getElementById('tl-sum-folga').textContent = `${folgaMins}min`;
+  document.getElementById('tl-sum-emoji').textContent = doneEmoji;
 }
 
 // ════════════════════════════════════════════════
@@ -1296,24 +1477,23 @@ function tickTimer() {
 }
 
 function renderTimer() {
-  const el = document.getElementById('timer-time');
-  const ring = document.getElementById('timer-ring-fill');
-  const wrap = document.getElementById('timer-ring-wrap');
+  const timeEl = document.getElementById('timer-time');
+  const barFill = document.getElementById('timer-bar-fill');
 
   const mins = Math.floor(timerElapsed / 60);
   const secs = timerElapsed % 60;
-  el.textContent = mins + ':' + String(secs).padStart(2,'0');
-  document.getElementById('timer-est').textContent = '/ ' + Math.round(timerEstimate/60) + 'min est.';
+  timeEl.textContent = mins + ':' + String(secs).padStart(2,'0');
+  document.getElementById('timer-est').textContent = '/ ' + Math.round(timerEstimate/60) + 'min estimado';
 
-  const circumference = 515;
-  const pct = timerEstimate > 0 ? Math.min(timerElapsed / timerEstimate, 1.5) : 0;
-  ring.style.strokeDashoffset = circumference * (1 - Math.min(pct, 1));
+  const pct = timerEstimate > 0 ? Math.min(timerElapsed / timerEstimate, 1) : 0;
+  barFill.style.width = (pct * 100) + '%';
 
-  // Color states
-  wrap.className = 'timer-ring-wrap';
-  if (pct < 0.75) wrap.classList.add('timer-state-green');
-  else if (pct < 1.0) wrap.classList.add('timer-state-yellow');
-  else wrap.classList.add('timer-state-red');
+  // Color: remaining time
+  const remainingSecs = timerEstimate - timerElapsed;
+  barFill.className = 'timer-bar-fill';
+  if (remainingSecs <= 5 * 60) barFill.classList.add('red');
+  else if (remainingSecs <= 15 * 60) barFill.classList.add('yellow');
+  else barFill.classList.add('green');
 }
 
 function addMoreTime(mins) {
@@ -1645,6 +1825,24 @@ function blockTypeClass(b) {
   return 'auto-block';
 }
 
+// Project color palette by hash
+const PROJECT_COLORS = [
+  {h:'#3b82f6', bg:'#3b82f615', bd:'#3b82f640'}, // blue
+  {h:'#f97316', bg:'#f9731615', bd:'#f9731640'}, // orange
+  {h:'#22c55e', bg:'#22c55e15', bd:'#22c55e40'}, // green
+  {h:'#ec4899', bg:'#ec489915', bd:'#ec489940'}, // pink
+  {h:'#a78bfa', bg:'#a78bfa15', bd:'#a78bfa40'}, // purple
+  {h:'#14b8a6', bg:'#14b8a615', bd:'#14b8a640'}, // teal
+  {h:'#f59e0b', bg:'#f59e0b15', bd:'#f59e0b40'}, // amber
+  {h:'#ef4444', bg:'#ef444415', bd:'#ef444440'}, // red
+];
+function projectColor(name) {
+  if (!name) return PROJECT_COLORS[0];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) & 0xffffffff;
+  return PROJECT_COLORS[Math.abs(hash) % PROJECT_COLORS.length];
+}
+
 function renderAgendaBlocks(data) {
   const today = todayStr();
   data.days.forEach(day => {
@@ -1657,7 +1855,7 @@ function renderAgendaBlocks(data) {
     }
 
     // Clear existing blocks (keep hour lines)
-    bodyEl.querySelectorAll('.grid-block,.now-line').forEach(el => el.remove());
+    bodyEl.querySelectorAll('.grid-block,.now-line,.grid-deadline-flag,.grid-day-footer').forEach(el => el.remove());
 
     // Now line
     if (day.date === today) {
@@ -1672,7 +1870,12 @@ function renderAgendaBlocks(data) {
       }
     }
 
-    day.blocks.forEach(b => {
+    // Separate gcal/fixed from auto blocks
+    const gcalFixed = (day.blocks || []).filter(b => b.type !== 'auto');
+    const autoBs = (day.blocks || []).filter(b => b.type === 'auto');
+
+    // Render gcal/fixed blocks as-is (solid borders, no sizing change)
+    gcalFixed.forEach(b => {
       const startMins = minsFromMidnight(b.start);
       const endMins = minsFromMidnight(b.end);
       const top = minsToPx(startMins);
@@ -1683,7 +1886,7 @@ function renderAgendaBlocks(data) {
       div.className = 'grid-block ' + blockTypeClass(b);
       div.style.top = top + 'px';
       div.style.height = height + 'px';
-      div.draggable = b.draggable !== false && b.type === 'fixed';
+      div.draggable = b.type === 'fixed';
       div.dataset.blockId = b.block_id || '';
       div.dataset.type = b.type;
       div.dataset.taskId = b.task_id || '';
@@ -1692,7 +1895,7 @@ function renderAgendaBlocks(data) {
         <div class="grid-block-time">${b.start}–${b.end}</div>
         ${b.type === 'fixed' ? `<button class="grid-block-del" onclick="deleteBlock(event,'${b.block_id}')">×</button>` : ''}`;
 
-      if (b.draggable !== false && b.type === 'fixed') {
+      if (b.type === 'fixed') {
         div.addEventListener('dragstart', (e) => onBlockDragStart(e, b));
         div.addEventListener('dragend', onBlockDragEnd);
       }
@@ -1701,9 +1904,125 @@ function renderAgendaBlocks(data) {
         if (b.task_id) openTaskModal(b.task_id);
         else if (b.block_id) openEditBlock(b.block_id, b);
       });
-
       bodyEl.appendChild(div);
     });
+
+    // Render auto (demand) blocks: sequential, sized by estimate × multiplier, all shown
+    // Find first free slot after gcal/fixed blocks
+    const occupiedRanges = gcalFixed.map(b => [minsFromMidnight(b.start), minsFromMidnight(b.end)]).sort((a,b)=>a[0]-b[0]);
+    function nextFreeSlot(cursorMins, durationMins) {
+      let start = cursorMins;
+      let tries = 0;
+      while (tries < 100) {
+        const collision = occupiedRanges.find(r => r[0] < start + durationMins && r[1] > start);
+        if (!collision) break;
+        start = collision[1];
+        tries++;
+      }
+      return start;
+    }
+
+    // Available hours for this day (from agenda data)
+    const availHours = parseFloat(day.available_hours) || 8;
+    const totalDayMins = GRID_END * 60 - GRID_START * 60;
+    const occupiedMins = occupiedRanges.reduce((s, r) => s + r[1] - r[0], 0);
+    const freeMins = Math.max(0, totalDayMins - occupiedMins);
+
+    let cursorMins = GRID_START * 60;
+    let allocatedAutoMins = 0;
+    const deadlineFlags = [];
+
+    autoBs.forEach(b => {
+      const estMins = b.estimated_minutes || 30;
+      // Comfort-based multiplier: comfort = available_hours / (est/60)
+      const estHours = estMins / 60;
+      const comfort = estHours > 0 ? availHours / estHours : 3;
+      let mult = 1.0;
+      if (comfort > 3.0) mult = 1.25;
+      else if (comfort > 2.0) mult = 1.2;
+      else if (comfort > 1.5) mult = 1.15;
+      else if (comfort > 1.2) mult = 1.1;
+      const allocMins = Math.round(estMins * mult);
+
+      const startMins = nextFreeSlot(cursorMins, allocMins);
+      const endMins = startMins + allocMins;
+      // Add to occupied ranges so next block doesn't overlap
+      occupiedRanges.push([startMins, endMins]);
+      occupiedRanges.sort((a,c) => a[0]-c[0]);
+      cursorMins = endMins;
+      allocatedAutoMins += allocMins;
+
+      const top = minsToPx(startMins);
+      const height = Math.max(20, allocMins * PX_PER_MIN);
+      if (top < 0) return;
+
+      const col = projectColor(b.project || b.title);
+
+      const div = document.createElement('div');
+      div.className = 'grid-block auto-block';
+      div.style.top = top + 'px';
+      div.style.height = height + 'px';
+      div.style.background = col.bg;
+      div.style.borderColor = col.bd;
+      div.style.borderLeftColor = col.h;
+      div.style.color = col.h;
+      div.draggable = true;
+      div.dataset.type = 'auto';
+      div.dataset.taskId = b.task_id || '';
+
+      const shortTitle = (b.title || '').split('|').pop().trim();
+      div.innerHTML = `<div class="grid-block-title" style="color:${col.h}">${shortTitle}</div>
+        ${height > 28 ? `<div class="grid-block-time">${minsToTimeStr(startMins)}–${minsToTimeStr(endMins)}</div>` : ''}`;
+
+      div.addEventListener('dragstart', (e) => {
+        draggedTaskSrc = {id: b.task_id, title: b.title, estimated_minutes: estMins};
+        e.dataTransfer.effectAllowed = 'copy';
+      });
+      div.addEventListener('dragend', () => {
+        draggedTaskSrc = null;
+        document.querySelectorAll('.grid-day-col').forEach(el => el.classList.remove('drag-over'));
+      });
+      div.addEventListener('click', () => { if (b.task_id) openTaskModal(b.task_id); });
+      bodyEl.appendChild(div);
+
+      // Collect deadline flags
+      if (b.deadline && b.deadline.length >= 10) {
+        const dlDate = b.deadline.slice(0, 10);
+        if (dlDate === day.date) {
+          // show flag at deadline time (use end of block as approximation if no time)
+          const dlMins = endMins;
+          const comfort = b.deadline_human;
+          const flagColor = !comfort ? '#4ade80' :
+            comfort.includes('atrasada') || comfort.includes('hoje') ? '#ef4444' :
+            comfort.includes('amanhã') ? '#f59e0b' : '#4ade80';
+          deadlineFlags.push({mins: dlMins, title: shortTitle, color: flagColor});
+        }
+      }
+    });
+
+    // Render deadline flags
+    deadlineFlags.forEach(flag => {
+      const top = minsToPx(flag.mins);
+      if (top < 0 || top > (GRID_END - GRID_START) * PX_PER_HOUR) return;
+      const flagEl = document.createElement('div');
+      flagEl.className = 'grid-deadline-flag';
+      flagEl.style.top = top + 'px';
+      flagEl.innerHTML = `<span style="font-size:9px;padding-left:2px">🏁</span>
+        <div class="grid-deadline-flag-line" style="background:${flag.color}"></div>
+        <span class="grid-deadline-flag-label" style="color:${flag.color}">${flag.title}</span>`;
+      bodyEl.appendChild(flagEl);
+    });
+
+    // Day footer: Xh alocado · Xh livre · emoji
+    const totalAllocMins = occupiedRanges.reduce((s, r) => s + r[1] - r[0], 0);
+    const freeFooterMins = Math.max(0, totalDayMins - totalAllocMins);
+    const allocH = (totalAllocMins / 60).toFixed(1);
+    const freeH = (freeFooterMins / 60).toFixed(1);
+    const loadEmoji = parseFloat(allocH) > availHours ? '🔴' : parseFloat(freeH) > 3 ? '🟢' : '🟡';
+    const footer = document.createElement('div');
+    footer.className = 'grid-day-footer';
+    footer.textContent = `${allocH}h alocado · ${freeH}h livre · ${loadEmoji}`;
+    bodyEl.appendChild(footer);
   });
 }
 
@@ -1780,13 +2099,22 @@ function onDayDrop(e, dayStr) {
   const snapMins = Math.round(pxToMins(relY) / 15) * 15;
 
   if (draggedPreset) {
+    // Preset blocks still use modal
     const startMins = snapMins;
     const endMins = startMins + draggedPreset.duration;
     openBlockModalPrefilled(dayStr, minsToTimeStr(startMins), minsToTimeStr(endMins), draggedPreset.title, draggedPreset.block_type);
   } else if (draggedTaskSrc) {
+    // Sidebar task → schedule immediately without popup
     const dur = draggedTaskSrc.estimated_minutes || 60;
-    openBlockModalPrefilled(dayStr, minsToTimeStr(snapMins), minsToTimeStr(snapMins + dur), draggedTaskSrc.title, 'other');
+    const start = minsToTimeStr(snapMins);
+    const end = minsToTimeStr(snapMins + dur);
+    fetch('/dashboard/schedule-blocks', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({title: draggedTaskSrc.title, block_type: 'other', date: dayStr, start_time: start, end_time: end})
+    }).then(() => fetchAndRenderAgenda());
   } else if (draggedFixedBlock) {
+    // Move fixed block immediately without popup
     const dur = minsFromMidnight(draggedFixedBlock.end) - minsFromMidnight(draggedFixedBlock.start);
     const startMins = snapMins;
     const endMins = startMins + dur;

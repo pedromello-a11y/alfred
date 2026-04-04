@@ -407,6 +407,7 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
                     "window_minutes": window_mins,
                     "margin_minutes": margin_mins,
                     "is_continuation": is_continuation,
+                    "overflow": False,
                     "task_total_hours": round(original_est / 60, 1),
                     "task_remaining_hours": round(remaining / 60, 1),
                     "task_completes_today": (remaining <= window_mins),
@@ -426,6 +427,46 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
                     slot_list[slot_idx] = (_add_minutes_to_time(slot_start, window_mins), slot_end)
                 else:
                     slot_idx += 1
+
+            # Overflow: tarefas que não couberam nos slots — mostrar todas após o último bloco
+            if task_idx < len(work_queue):
+                if auto_blocks:
+                    last_end_str = max(b["end"] for b in auto_blocks)
+                    lh, lm = int(last_end_str[:2]), int(last_end_str[3:])
+                    overflow_cursor = _add_minutes_to_time(dt_time(lh, lm), 15)
+                else:
+                    overflow_cursor = DAY_END
+                while task_idx < len(work_queue):
+                    task = work_queue[task_idx]
+                    tid = str(task.id)
+                    remaining = task_remaining.get(tid, 0)
+                    if remaining <= 0:
+                        task_idx += 1
+                        continue
+                    project, task_name = _parse_project_task(task.title)
+                    original_est = task.estimated_minutes or 30
+                    block_end_t = _add_minutes_to_time(overflow_cursor, remaining)
+                    auto_blocks.append({
+                        "type": "auto",
+                        "title": task_name or task.title,
+                        "task_id": tid,
+                        "project": project,
+                        "start": overflow_cursor.strftime("%H:%M"),
+                        "end": block_end_t.strftime("%H:%M"),
+                        "estimated_minutes": remaining,
+                        "window_minutes": remaining,
+                        "margin_minutes": 0,
+                        "is_continuation": False,
+                        "overflow": True,
+                        "task_total_hours": round(original_est / 60, 1),
+                        "task_remaining_hours": round(remaining / 60, 1),
+                        "task_completes_today": False,
+                        "draggable": False,
+                        "deadline": task.deadline.isoformat() if task.deadline else None,
+                        "deadline_human": _humanize_deadline(task.deadline),
+                    })
+                    overflow_cursor = _add_minutes_to_time(block_end_t, 15)
+                    task_idx += 1
 
             estimated_hours = round(allocated_today / 60, 1)
             factor_day = round(total_available_mins / max(allocated_today, 1), 2) if allocated_today > 0 else 2.5
