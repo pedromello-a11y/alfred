@@ -1,13 +1,16 @@
 """Novos endpoints do dashboard — parte 2."""
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta, time as dt_time
 from uuid import UUID
 
+import anthropic
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models import AgendaBlock, PersonalItem, ScheduleBlock, Task
 from app.routers.dashboard import router, _today_brt, _humanize_deadline, _parse_project_task
@@ -564,3 +567,260 @@ async def seed_demo_data(db: AsyncSession = Depends(get_db)) -> dict:
 
     await db.commit()
     return {"ok": True, "message": "Seed data created successfully"}
+
+
+# ── Day management endpoints ─────────────────────────────────────────────────
+
+@router.post("/day/start")
+async def day_start(db: AsyncSession = Depends(get_db)) -> dict:
+    """Mark day as started — returns today's agenda snapshot."""
+    today = _today_brt()
+    # Return the agenda for today with start timestamp
+    return {"ok": True, "started_at": datetime.now().isoformat(), "date": today.isoformat()}
+
+
+@router.post("/day/end")
+async def day_end(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    """End of day — log summary."""
+    today = _today_brt()
+    energy = body.get("energy_level", 3)
+    notes = body.get("notes", "")
+
+    # Count tasks completed today
+    result = await db.execute(
+        select(Task)
+        .where(Task.status == "done")
+        .where(Task.completed_at >= datetime.combine(today, dt_time.min))
+    )
+    done_today = result.scalars().all()
+
+    return {
+        "ok": True,
+        "date": today.isoformat(),
+        "tasks_completed": len(done_today),
+        "energy_level": energy,
+        "notes": notes,
+    }
+
+
+# ── AI task parsing ──────────────────────────────────────────────────────────
+
+@router.post("/task/parse-natural")
+async def parse_natural_task(body: dict) -> dict:
+    """Use AI to parse a natural language task description into structured data."""
+    text = (body.get("text") or "").strip()
+    if not text:
+        return {"error": "text required"}
+
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    today = _today_brt()
+
+    prompt = f"""Hoje é {today.strftime('%d/%m/%Y')} ({['segunda','terça','quarta','quinta','sexta','sábado','domingo'][today.weekday()]}).
+
+O usuário digitou: "{text}"
+
+Classifique em uma das 4 categorias e retorne JSON:
+
+1. TASK - uma tarefa de trabalho a ser criada
+2. MICRO - uma micro-tarefa rápida (<30min) para fazer agora
+3. BLOCK - um bloqueio de agenda pessoal (ex: "tenho dentista às 15h")
+4. AMBIGUOUS - não está claro, precisa perguntar
+
+Retorne APENAS JSON válido, sem markdown:
+{{
+  "type": "TASK|MICRO|BLOCK|AMBIGUOUS",
+  "title": "título limpo da tarefa/bloco",
+  "estimated_minutes": 60,
+  "deadline": "2026-04-10" ou null,
+  "time": "15:00" ou null,
+  "duration_minutes": 60,
+  "clarification_question": "pergunta se AMBIGUOUS" ou null,
+  "confidence": 0.0-1.0
+}}"""
+
+    try:
+        response = client.messages.create(
+            model=settings.model_fast,
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.content[0].text.strip()
+        # Strip markdown code blocks if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        data = json.loads(raw)
+        data["original_text"] = text
+        return data
+    except Exception as e:
+        return {
+            "type": "TASK",
+            "title": text,
+            "estimated_minutes": 60,
+            "deadline": None,
+            "time": None,
+            "duration_minutes": 60,
+            "clarification_question": None,
+            "confidence": 0.5,
+            "original_text": text,
+            "parse_error": str(e),
+        }
+
+
+@router.post("/task/create-confirmed")
+async def create_confirmed_task(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    """Create a task from confirmed AI-parsed data."""
+    title = (body.get("title") or "").strip()
+    if not title:
+        return {"error": "title required"}
+
+    task = Task(
+        title=title,
+        task_type=body.get("task_type") or "task",
+        status="active",
+        category=body.get("category") or "work",
+        estimated_minutes=body.get("estimated_minutes") or 60,
+        priority=body.get("priority"),
+    )
+
+    if body.get("deadline"):
+        try:
+            dl = date.fromisoformat(body["deadline"])
+            task.deadline = datetime.combine(dl, dt_time(18, 0))
+        except Exception:
+            pass
+
+    if body.get("parent_id"):
+        try:
+            task.parent_id = UUID(body["parent_id"])
+        except Exception:
+            pass
+
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    return {
+        "id": str(task.id),
+        "title": task.title,
+        "task_type": task.task_type,
+        "status": task.status,
+        "estimated_minutes": task.estimated_minutes,
+        "deadline": task.deadline.isoformat() if task.deadline else None,
+    }
+
+
+# ── Projects tree endpoint ────────────────────────────────────────────────────
+
+@router.get("/projects")
+async def get_projects_tree(db: AsyncSession = Depends(get_db)) -> list:
+    """Return all projects with their full hierarchy."""
+    result = await db.execute(
+        select(Task).where(Task.task_type == "project").order_by(Task.created_at.asc())
+    )
+    projects = result.scalars().all()
+
+    all_tasks_result = await db.execute(
+        select(Task).where(Task.task_type != "project")
+    )
+    all_tasks = all_tasks_result.scalars().all()
+
+    def task_to_dict(t: Task, children: list = None) -> dict:
+        return {
+            "id": str(t.id),
+            "title": t.title,
+            "task_type": t.task_type,
+            "status": t.status,
+            "estimated_minutes": t.estimated_minutes,
+            "deadline": t.deadline.isoformat() if t.deadline else None,
+            "deadline_human": _humanize_deadline(t.deadline),
+            "blocked": t.blocked,
+            "blocked_reason": t.blocked_reason,
+            "children": children or [],
+        }
+
+    def build_tree(parent_id) -> list:
+        children = [t for t in all_tasks if str(t.parent_id) == str(parent_id)]
+        return [task_to_dict(c, build_tree(c.id)) for c in children]
+
+    return [task_to_dict(p, build_tree(p.id)) for p in projects]
+
+
+@router.put("/task/{task_id}")
+async def update_task_v2(task_id: str, body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    """Generic task update — accepts any subset of fields."""
+    try:
+        tid = UUID(task_id)
+    except Exception:
+        return {"error": "invalid id"}
+    result = await db.execute(select(Task).where(Task.id == tid))
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"error": "not found"}
+    updatable = ["title", "status", "estimated_minutes", "notes", "blocked", "blocked_reason", "priority", "category"]
+    for field in updatable:
+        if field in body:
+            setattr(task, field, body[field])
+    if "deadline" in body and body["deadline"]:
+        try:
+            from datetime import datetime as _dt
+            # Accept ISO datetime or date string
+            dl_str = body["deadline"]
+            if 'T' in dl_str:
+                task.deadline = _dt.fromisoformat(dl_str.replace('Z', '+00:00'))
+            else:
+                task.deadline = _dt.combine(date.fromisoformat(dl_str), dt_time(18, 0))
+        except Exception:
+            pass
+    elif "deadline" in body and not body["deadline"]:
+        task.deadline = None
+    if body.get("status") == "done" and not task.completed_at:
+        task.completed_at = datetime.now()
+    elif body.get("status") != "done":
+        pass  # keep completed_at if already set
+    await db.commit()
+    await db.refresh(task)
+    return {"id": str(task.id), "title": task.title, "status": task.status}
+
+
+@router.delete("/task/{task_id}")
+async def delete_task_v2(task_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    try:
+        tid = UUID(task_id)
+    except Exception:
+        return {"error": "invalid id"}
+    result = await db.execute(select(Task).where(Task.id == tid))
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"error": "not found"}
+    await db.delete(task)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/tasks/active")
+async def get_active_tasks(db: AsyncSession = Depends(get_db)) -> list:
+    """Return active/in-progress tasks (leaves only, for focus queue)."""
+    result = await db.execute(
+        select(Task)
+        .where(Task.status.in_(["active", "in_progress"]))
+        .where(Task.task_type.in_(["task", "subtask"]))
+        .order_by(Task.deadline.asc().nulls_last(), Task.priority.asc().nulls_last())
+    )
+    tasks = result.scalars().all()
+    return [
+        {
+            "id": str(t.id),
+            "title": t.title,
+            "task_type": t.task_type,
+            "status": t.status,
+            "estimated_minutes": t.estimated_minutes,
+            "deadline": t.deadline.isoformat() if t.deadline else None,
+            "deadline_human": _humanize_deadline(t.deadline),
+            "blocked": t.blocked,
+            "blocked_reason": t.blocked_reason,
+            "parent_id": str(t.parent_id) if t.parent_id else None,
+        }
+        for t in tasks
+    ]
