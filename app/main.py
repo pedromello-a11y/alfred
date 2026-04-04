@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from app.cron.scheduler import scheduler, setup_jobs
 from app.database import init_db
@@ -54,4 +54,6 @@ app.include_router(admin_router)
 
 @app.get("/")
 async def serve_dashboard():
-    return FileResponse(Path(__file__).parent.parent / "alfred-dashboard.html")
+    html_path = Path(__file__).parent.parent / "alfred-dashboard.html"
+    content = html_path.read_text(encoding="utf-8")
+    return HTMLResponse(content=content, headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
