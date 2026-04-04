@@ -499,6 +499,16 @@ async def get_agenda_v2(week: str | None = None, db: AsyncSession = Depends(get_
 
 @router.post("/seed-demo")
 async def seed_demo_data(db: AsyncSession = Depends(get_db)) -> dict:
+    from sqlalchemy import delete, text as sa_text
+    from app.models import DumpItem
+    # Clear all existing data to avoid duplicates
+    await db.execute(delete(PersonalItem))
+    await db.execute(delete(ScheduleBlock))
+    await db.execute(sa_text("UPDATE tasks SET parent_id = NULL"))
+    await db.execute(delete(Task))
+    await db.execute(delete(DumpItem))
+    await db.commit()
+
     today = _today_brt()
     monday = today - timedelta(days=today.weekday())
     next_monday = monday + timedelta(weeks=1)
@@ -510,54 +520,57 @@ async def seed_demo_data(db: AsyncSession = Depends(get_db)) -> dict:
     db.add(fire_proj)
     await db.flush()
 
-    filme = Task(title="Galaxy 26 | Filme Projetor", task_type="deliverable", status="active",
-                 category="work", parent_id=galaxy.id)
-    video = Task(title="Galaxy 26 | Video Abertura", task_type="deliverable", status="active",
+    filme = Task(title="Filme Projetor", task_type="deliverable", status="active",
+                 category="work", parent_id=galaxy.id,
+                 deadline=datetime.combine(next_monday, dt_time(18, 0)))
+    video = Task(title="Vídeo Abertura", task_type="deliverable", status="active",
                  category="work", parent_id=galaxy.id)
     db.add(filme)
     db.add(video)
     await db.flush()
 
+    motion_deliv = Task(title="Motion Kit", task_type="deliverable", status="active",
+                        category="work", parent_id=fire_proj.id,
+                        deadline=datetime.combine(next_wednesday, dt_time(18, 0)))
+    db.add(motion_deliv)
+    await db.flush()
+
     tasks_to_add = [
-        Task(title="Galaxy 26 | Desdobrar em 25 saidas", task_type="subtask", status="active",
+        Task(title="Desdobrar em 25 saídas", task_type="subtask", status="active",
              category="work", parent_id=filme.id,
-             deadline=datetime.combine(next_monday, dt_time(18, 0)), estimated_minutes=480),
-        Task(title="Galaxy 26 | Preparar projetor", task_type="subtask", status="active",
+             deadline=datetime.combine(next_monday, dt_time(18, 0)), estimated_minutes=240),
+        Task(title="Preparar projetor", task_type="subtask", status="active",
              category="work", parent_id=filme.id,
              deadline=datetime.combine(next_monday, dt_time(18, 0)), estimated_minutes=120),
-        Task(title="Galaxy 26 | Edicao final", task_type="subtask", status="backlog",
+        Task(title="Edição final", task_type="subtask", status="backlog",
              category="work", parent_id=video.id, estimated_minutes=480),
-        Task(title="FIRE 26 | Motion Kit: Logo + Letterings", task_type="task", status="active",
-             category="work", parent_id=fire_proj.id,
+        Task(title="Logo + Letterings", task_type="task", status="active",
+             category="work", parent_id=motion_deliv.id,
              deadline=datetime.combine(next_wednesday, dt_time(18, 0)), estimated_minutes=300),
         Task(title="Subir metas no sistema", task_type="task", status="active", category="work",
              deadline=datetime.combine(today, dt_time(18, 0)), estimated_minutes=30),
         Task(title="Comprar projetores", task_type="task", status="backlog",
              category="work", estimated_minutes=120),
         Task(title="Cosmos II - Divoom", task_type="task", status="on_holding",
-             category="work", blocked=True, blocked_reason="Esperando aprovacao cliente",
-             blocked_until=date(2025, 4, 10), estimated_minutes=120),
+             category="work", blocked=True, blocked_reason="Esperando aprovação cliente",
+             estimated_minutes=120),
     ]
     for t in tasks_to_add:
         db.add(t)
 
     for d in range(5):
         day = monday + timedelta(days=d)
-        db.add(ScheduleBlock(title="Almoco", block_type="meal", date=day,
+        db.add(ScheduleBlock(title="Almoço", block_type="meal", date=day,
                              start_time=dt_time(12, 0), end_time=dt_time(13, 0)))
     db.add(ScheduleBlock(title="Corrida", block_type="exercise",
                          date=monday + timedelta(days=5),
-                         start_time=dt_time(18, 0), end_time=dt_time(19, 0)))
-    for d in [5, 6]:
-        db.add(ScheduleBlock(title="Cachorro", block_type="pet",
-                             date=monday + timedelta(days=d),
-                             start_time=dt_time(8, 0), end_time=dt_time(8, 30)))
+                         start_time=dt_time(8, 0), end_time=dt_time(9, 0)))
 
     for title, pos, done in [
         ("Comprar porta", 1, False),
         ("Marcar dermatologista", 2, False),
-        ("Organizar armario", 3, False),
-        ("Trocar lampada cozinha", 4, False),
+        ("Organizar armário", 3, False),
+        ("Trocar lâmpada cozinha", 4, False),
         ("Pagar IPTU", 5, True),
     ]:
         p = PersonalItem(title=title, position=pos, done=done)
@@ -565,8 +578,101 @@ async def seed_demo_data(db: AsyncSession = Depends(get_db)) -> dict:
             p.done_at = datetime.now()
         db.add(p)
 
+    for text_val, cat in [
+        ("Kill Bill - assistir esse fim de semana", "filme"),
+        ("Senha portal XYZ: abc123", "senha"),
+        ("Lembrar de revisar sistema de legendas", "lembrete"),
+    ]:
+        db.add(DumpItem(raw_text=text_val, rewritten_title=text_val, category=cat,
+                        status="categorized", source="dashboard"))
+
     await db.commit()
     return {"ok": True, "message": "Seed data created successfully"}
+
+
+# ── Clear all data ────────────────────────────────────────────────────────────
+
+@router.post("/tasks/clear-all")
+async def clear_all_data(db: AsyncSession = Depends(get_db)) -> dict:
+    from sqlalchemy import delete, text as sa_text
+    from app.models import DumpItem
+    await db.execute(delete(PersonalItem))
+    await db.execute(delete(ScheduleBlock))
+    await db.execute(sa_text("UPDATE tasks SET parent_id = NULL"))
+    await db.execute(delete(Task))
+    await db.execute(delete(DumpItem))
+    await db.commit()
+    return {"ok": True}
+
+
+# ── Dumps CRUD ────────────────────────────────────────────────────────────────
+
+@router.get("/dumps")
+async def get_dumps(db: AsyncSession = Depends(get_db)) -> list:
+    from app.models import DumpItem
+    result = await db.execute(
+        select(DumpItem).where(DumpItem.status != "archived").order_by(DumpItem.created_at.desc())
+    )
+    items = result.scalars().all()
+    return [
+        {
+            "id": str(d.id),
+            "title": d.rewritten_title or (d.raw_text[:100] if d.raw_text else ""),
+            "raw_text": d.raw_text,
+            "category": d.category,
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+        }
+        for d in items
+    ]
+
+
+@router.post("/dumps")
+async def create_dump(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    from app.models import DumpItem
+    text = (body.get("text") or "").strip()
+    if not text:
+        return {"error": "text required"}
+    d = DumpItem(raw_text=text, rewritten_title=text, status="categorized", source="dashboard")
+    db.add(d)
+    await db.commit()
+    await db.refresh(d)
+    return {"id": str(d.id), "title": d.rewritten_title}
+
+
+@router.put("/dumps/{dump_id}")
+async def update_dump(dump_id: str, body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    from app.models import DumpItem
+    try:
+        did = UUID(dump_id)
+    except Exception:
+        return {"error": "invalid id"}
+    result = await db.execute(select(DumpItem).where(DumpItem.id == did))
+    d = result.scalar_one_or_none()
+    if not d:
+        return {"error": "not found"}
+    if "title" in body:
+        d.rewritten_title = body["title"]
+        d.raw_text = body["title"]
+    if "category" in body:
+        d.category = body["category"]
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/dumps/{dump_id}")
+async def delete_dump(dump_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    from app.models import DumpItem
+    try:
+        did = UUID(dump_id)
+    except Exception:
+        return {"error": "invalid id"}
+    result = await db.execute(select(DumpItem).where(DumpItem.id == did))
+    d = result.scalar_one_or_none()
+    if not d:
+        return {"error": "not found"}
+    await db.delete(d)
+    await db.commit()
+    return {"ok": True}
 
 
 # ── Day management endpoints ─────────────────────────────────────────────────
@@ -717,12 +823,16 @@ async def create_confirmed_task(body: dict, db: AsyncSession = Depends(get_db)) 
 async def get_projects_tree(db: AsyncSession = Depends(get_db)) -> list:
     """Return all projects with their full hierarchy."""
     result = await db.execute(
-        select(Task).where(Task.task_type == "project").order_by(Task.created_at.asc())
+        select(Task).where(Task.task_type == "project")
+        .where((Task.source != "dump") | (Task.source.is_(None)))
+        .where(Task.status.notin_(["done", "cancelled"]))
+        .order_by(Task.created_at.asc())
     )
     projects = result.scalars().all()
 
     all_tasks_result = await db.execute(
         select(Task).where(Task.task_type != "project")
+        .where((Task.source != "dump") | (Task.source.is_(None)))
     )
     all_tasks = all_tasks_result.scalars().all()
 
