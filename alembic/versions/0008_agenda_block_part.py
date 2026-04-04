@@ -14,8 +14,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table("agenda_blocks") as batch_op:
-        batch_op.add_column(sa.Column("part", sa.VARCHAR(10), nullable=True))
+    op.execute("""
+        ALTER TABLE agenda_blocks
+        ADD COLUMN IF NOT EXISTS part VARCHAR(10)
+    """)
 
 
 def downgrade() -> None:

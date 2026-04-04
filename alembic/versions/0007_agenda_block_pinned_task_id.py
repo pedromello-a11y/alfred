@@ -14,10 +14,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table("agenda_blocks") as batch_op:
-        batch_op.add_column(sa.Column("task_id", sa.UUID(), nullable=True))
-        batch_op.add_column(sa.Column("pinned", sa.Boolean(), nullable=False, server_default="false"))
-    op.create_index("idx_agenda_blocks_task_id", "agenda_blocks", ["task_id"])
+    op.execute("ALTER TABLE agenda_blocks ADD COLUMN IF NOT EXISTS task_id UUID")
+    op.execute("ALTER TABLE agenda_blocks ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT false")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_agenda_blocks_task_id ON agenda_blocks (task_id)")
 
 
 def downgrade() -> None:

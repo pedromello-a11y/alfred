@@ -15,18 +15,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "tasks",
-        sa.Column("checklist_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True, server_default="[]"),
-    )
-    op.add_column(
-        "tasks",
-        sa.Column("notes_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True, server_default="[]"),
-    )
-    op.add_column(
-        "tasks",
-        sa.Column("deadline_type", sa.VARCHAR(10), nullable=True, server_default="soft"),
-    )
+    op.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS checklist_json JSONB DEFAULT '[]'")
+    op.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS notes_json JSONB DEFAULT '[]'")
+    op.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deadline_type VARCHAR(10) DEFAULT 'soft'")
 
 
 def downgrade() -> None:

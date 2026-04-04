@@ -14,11 +14,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table("tasks") as batch_op:
-        batch_op.add_column(sa.Column("parent_id", sa.UUID(), nullable=True))
-        batch_op.add_column(sa.Column("task_type", sa.String(), nullable=False, server_default="task"))
-        batch_op.create_foreign_key("fk_tasks_parent_id", "tasks", ["parent_id"], ["id"])
-    op.create_index("idx_tasks_parent_id", "tasks", ["parent_id"])
+    op.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES tasks(id)")
+    op.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_type VARCHAR NOT NULL DEFAULT 'task'")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_tasks_parent_id ON tasks (parent_id)")
 
 
 def downgrade() -> None:

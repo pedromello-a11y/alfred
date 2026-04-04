@@ -14,34 +14,34 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "schedule_blocks",
-        sa.Column("id", sa.UUID(), nullable=False),
-        sa.Column("user_id", sa.String(), nullable=False, server_default="default"),
-        sa.Column("title", sa.String(200), nullable=False),
-        sa.Column("block_type", sa.String(30), nullable=False, server_default="other"),
-        sa.Column("date", sa.Date(), nullable=False),
-        sa.Column("start_time", sa.Time(), nullable=False),
-        sa.Column("end_time", sa.Time(), nullable=False),
-        sa.Column("is_fixed", sa.Boolean(), nullable=False, server_default="true"),
-        sa.Column("created_at", sa.TIMESTAMP(), server_default=sa.text("now()")),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("idx_schedule_blocks_date", "schedule_blocks", ["date"])
-    op.create_index("idx_schedule_blocks_user_id", "schedule_blocks", ["user_id"])
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS schedule_blocks (
+            id UUID PRIMARY KEY,
+            user_id VARCHAR NOT NULL DEFAULT 'default',
+            title VARCHAR(200) NOT NULL,
+            block_type VARCHAR(30) NOT NULL DEFAULT 'other',
+            date DATE NOT NULL,
+            start_time TIME NOT NULL,
+            end_time TIME NOT NULL,
+            is_fixed BOOLEAN NOT NULL DEFAULT true,
+            created_at TIMESTAMP DEFAULT now()
+        )
+    """)
+    op.execute("CREATE INDEX IF NOT EXISTS idx_schedule_blocks_date ON schedule_blocks (date)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_schedule_blocks_user_id ON schedule_blocks (user_id)")
 
-    op.create_table(
-        "personal_items",
-        sa.Column("id", sa.UUID(), nullable=False),
-        sa.Column("user_id", sa.String(), nullable=False, server_default="default"),
-        sa.Column("title", sa.String(500), nullable=False),
-        sa.Column("position", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("done", sa.Boolean(), nullable=False, server_default="false"),
-        sa.Column("done_at", sa.TIMESTAMP(), nullable=True),
-        sa.Column("created_at", sa.TIMESTAMP(), server_default=sa.text("now()")),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("idx_personal_items_user_position", "personal_items", ["user_id", "position"])
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS personal_items (
+            id UUID PRIMARY KEY,
+            user_id VARCHAR NOT NULL DEFAULT 'default',
+            title VARCHAR(500) NOT NULL,
+            position INTEGER NOT NULL DEFAULT 0,
+            done BOOLEAN NOT NULL DEFAULT false,
+            done_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT now()
+        )
+    """)
+    op.execute("CREATE INDEX IF NOT EXISTS idx_personal_items_user_position ON personal_items (user_id, position)")
 
 
 def downgrade() -> None:

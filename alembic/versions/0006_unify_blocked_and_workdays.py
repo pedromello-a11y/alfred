@@ -14,23 +14,22 @@ depends_on = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table("tasks") as batch_op:
-        batch_op.add_column(sa.Column("blocked", sa.Boolean(), nullable=False, server_default="false"))
-        batch_op.add_column(sa.Column("blocked_reason", sa.String(), nullable=True))
-        batch_op.add_column(sa.Column("blocked_until", sa.String(), nullable=True))
-        batch_op.add_column(sa.Column("blocked_at", sa.DateTime(), nullable=True))
-
-    op.create_table(
-        "work_days",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("date", sa.Date(), nullable=False, unique=True),
-        sa.Column("started_at", sa.DateTime(), nullable=True),
-        sa.Column("ended_at", sa.DateTime(), nullable=True),
-        sa.Column("summary", sa.Text(), nullable=True),
-        sa.Column("energy_level", sa.Integer(), nullable=True),
-        sa.Column("tasks_completed", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("total_minutes", sa.Integer(), nullable=False, server_default="0"),
-    )
+    op.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS blocked BOOLEAN NOT NULL DEFAULT false")
+    op.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS blocked_reason VARCHAR")
+    op.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS blocked_until VARCHAR")
+    op.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS blocked_at TIMESTAMP WITH TIME ZONE")
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS work_days (
+            id VARCHAR(36) PRIMARY KEY,
+            date DATE NOT NULL UNIQUE,
+            started_at TIMESTAMP,
+            ended_at TIMESTAMP,
+            summary TEXT,
+            energy_level INTEGER,
+            tasks_completed INTEGER NOT NULL DEFAULT 0,
+            total_minutes INTEGER NOT NULL DEFAULT 0
+        )
+    """)
 
 
 def downgrade() -> None:
