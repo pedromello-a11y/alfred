@@ -924,25 +924,35 @@ async def get_projects(db: AsyncSession = Depends(get_db)) -> list:
     def _task_dict(t: Task) -> dict:
         project, task_name = _parse_project_task(t.title)
         checklist = getattr(t, "checklist_json", None) or []
+        task_type = getattr(t, "task_type", "task") or "task"
+        jira_key = (t.origin_ref or "") if (getattr(t, "origin", "") == "jira") else ""
         return {
             "id": str(t.id),
             "name": t.title,
+            "title": t.title,
             "taskName": task_name,
             "project": project,
-            "type": getattr(t, "task_type", "task") or "task",
+            "type": task_type,
+            "task_type": task_type,
             "status": t.status,
             "deadline": t.deadline.isoformat() if t.deadline else None,
             "deadlineHuman": _humanize_deadline(t.deadline),
             "estimated_minutes": t.estimated_minutes,
             "parent_id": str(t.parent_id) if t.parent_id else None,
+            "jira_key": jira_key,
             "checklistDone": sum(1 for i in checklist if i.get("done")),
             "checklistTotal": len(checklist),
         }
 
-    def _build_node(t: Task) -> dict:
+    def _build_node(t: Task, depth: int = 0) -> dict:
         node = _task_dict(t)
         kids = sorted(children_of.get(str(t.id), []), key=lambda x: (x.deadline or datetime.max))
-        node["children"] = [_build_node(k) for k in kids]
+        built_kids = [_build_node(k, depth + 1) for k in kids]
+        node["children"] = built_kids
+        if depth == 0:
+            node["deliverables"] = built_kids
+        elif depth == 1:
+            node["tasks"] = built_kids
         return node
 
     projects = [t for t in all_tasks if (getattr(t, "task_type", "task") or "task") == "project"]
@@ -955,7 +965,7 @@ async def get_projects(db: AsyncSession = Depends(get_db)) -> list:
     ]
     roots = sorted(set(projects + implicit_roots), key=lambda t: (t.deadline or datetime.max))
 
-    tree = [_build_node(t) for t in roots]
+    tree = [_build_node(t, 0) for t in roots]
 
     # Orphans: parent_id IS NULL, task_type='task', no children
     root_project_ids = {str(t.id) for t in roots}
@@ -965,7 +975,16 @@ async def get_projects(db: AsyncSession = Depends(get_db)) -> list:
         and str(t.id) not in root_project_ids
     ]
     if orphans:
-        tree.append({"id": None, "name": "Sem projeto", "type": "none", "children": orphans})
+        tree.append({
+            "id": None,
+            "name": "Sem projeto",
+            "title": "Sem projeto",
+            "type": "none",
+            "task_type": "none",
+            "status": "active",
+            "children": orphans,
+            "deliverables": orphans,
+        })
 
     return tree
 
