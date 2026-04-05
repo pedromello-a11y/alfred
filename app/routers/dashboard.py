@@ -334,6 +334,7 @@ async def _build_active_queue(db: AsyncSession) -> list[dict]:
     result = await db.execute(
         select(Task)
         .where(Task.status.in_(("pending", "in_progress", "active")))
+        .where(Task.task_type.notin_(["project", "deliverable"]))
         .order_by(Task.deadline.asc().nulls_last(), Task.priority.asc().nulls_last())
         .limit(50)
     )
@@ -714,6 +715,14 @@ async def dashboard_state(db: AsyncSession = Depends(get_db), week_offset: int =
         for _block in _orphan_blocks.scalars().all():
             if _block.task_id not in _valid_ids:
                 await db.delete(_block)
+        # Limpar blocos que referenciam deliverables/projects
+        _wrong = await db.execute(
+            select(AgendaBlock)
+            .join(Task, AgendaBlock.task_id == Task.id)
+            .where(Task.task_type.in_(["project", "deliverable"]))
+        )
+        for _b in _wrong.scalars().all():
+            await db.delete(_b)
         await db.commit()
     except Exception:
         pass
