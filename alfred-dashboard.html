@@ -2390,8 +2390,12 @@ function renderDemandasTree() {
     html += `</div></div></div>`;
   });
 
-  // "Sem projeto" avulsas: tasks in demandasData that are not projects and have no parent shown
-  const avulsas = demandasData.filter(p => p.task_type !== 'project');
+  // "Sem projeto": nó com task_type="none" retornado pelo backend OU tasks avulsas diretas
+  const semProjNode = demandasData.find(p => p.task_type === 'none' || p.id === null);
+  const avulsas = semProjNode
+    ? (semProjNode.children || semProjNode.deliverables || [])
+    : demandasData.filter(p => p.task_type === 'task' && !p.parent_id);
+
   if (avulsas.length) {
     let avHtml = avulsas.filter(t => {
       if ((demFilter !== 'all' || demSearchQ) && !taskPassesFilter(t) && !taskMatchesSearch(t)) return false;
