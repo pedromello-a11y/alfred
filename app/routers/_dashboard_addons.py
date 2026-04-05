@@ -247,13 +247,14 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
     import logging
     log = logging.getLogger("alfred.agenda")
 
-    week_end = week_start + timedelta(days=6)
+    week_end = week_start + timedelta(days=4)  # seg-sex apenas
     today = _today_brt()
 
     tasks_result = await db.execute(
         select(Task)
         .where(Task.status.in_(("active", "pending", "in_progress")))
         .where(Task.category != "personal")
+        .where(Task.task_type == "task")  # NUNCA project/deliverable
         .order_by(Task.deadline.asc().nulls_last(), Task.estimated_minutes.asc().nulls_last())
     )
     active_tasks = tasks_result.scalars().all()
@@ -503,16 +504,12 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
                     local_task_idx += 1
                     cursor_mins = block_end_mins + GAP_MINS
                 else:
-                    # Task split across days — move to next day
-                    break
+                    # Task split across days — advance past it, continue with next task
+                    local_task_idx += 1
+                    cursor_mins = block_end_mins + GAP_MINS
 
-            # Update global task_idx to reflect tasks fully completed today
-            while task_idx < len(work_queue):
-                tid = str(work_queue[task_idx].id)
-                if task_remaining.get(tid, 0) == 0:
-                    task_idx += 1
-                else:
-                    break
+            # Update global task_idx: advance past all tasks that have been started or finished
+            task_idx = local_task_idx
 
             estimated_hours = round(allocated_today / 60, 1)
             factor_day = round(total_available_mins / max(allocated_today, 1), 2) if allocated_today > 0 else 2.5
