@@ -298,6 +298,21 @@ class PersonalItem(Base):
     )
 
 
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    role: Mapped[str] = mapped_column(VARCHAR(20), nullable=False)  # "user" or "assistant"
+    content: Mapped[str] = mapped_column(TEXT, nullable=False)
+    intent: Mapped[str | None] = mapped_column(VARCHAR(50), nullable=True)
+    result_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_chat_messages_created_at", "created_at"),
+    )
+
+
 class OAuthToken(Base):
     __tablename__ = "oauth_tokens"
 

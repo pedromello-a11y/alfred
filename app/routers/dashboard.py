@@ -601,6 +601,26 @@ async def _build_personal_suggestion(db: AsyncSession) -> dict | None:
 
 @router.get("/state")
 async def dashboard_state(db: AsyncSession = Depends(get_db), week_offset: int = 0) -> dict:
+    # One-time cleanup of orphan blocks on each state load
+    try:
+        from sqlalchemy import delete as sa_delete
+        _valid_result = await db.execute(
+            select(Task.id).where(Task.status.notin_(["done", "cancelled", "dropped"]))
+        )
+        _valid_ids = {row[0] for row in _valid_result.all()}
+        _orphan_blocks = await db.execute(
+            select(AgendaBlock).where(
+                AgendaBlock.task_id.isnot(None),
+                AgendaBlock.source != "gcal",
+            )
+        )
+        for _block in _orphan_blocks.scalars().all():
+            if _block.task_id not in _valid_ids:
+                await db.delete(_block)
+        await db.commit()
+    except Exception:
+        pass
+
     focus, next_task = await _build_focus_v3(db)
     today_tasks = await _build_today_tasks(db)
     active_queue = await _build_active_queue(db)
@@ -778,6 +798,10 @@ async def complete_task_v3(task_id: str, body: dict, db: AsyncSession = Depends(
     if actual:
         task.actual_minutes = int(actual)
 
+    # Cascade: remove agenda blocks for this task
+    from sqlalchemy import delete as sa_delete
+    await db.execute(sa_delete(AgendaBlock).where(AgendaBlock.task_id == task.id))
+
     await db.commit()
 
     # Log média do projeto para uso futuro
@@ -873,6 +897,8 @@ async def confirm_smart_task(body: dict, db: AsyncSession = Depends(get_db)) -> 
             pass
 
     task_type = body.get("task_type") or "task"
+    if task_type not in ("project", "deliverable", "task"):
+        task_type = "task"
     parent_id_val = None
     if body.get("parent_id"):
         try:
@@ -1072,6 +1098,9 @@ async def update_task(task_id: str, body: dict, db: AsyncSession = Depends(get_d
         if s in ("pending", "in_progress"):
             s = "active"
         task.status = s
+        if s in ("done", "cancelled", "dropped"):
+            from sqlalchemy import delete as sa_delete
+            await db.execute(sa_delete(AgendaBlock).where(AgendaBlock.task_id == task.id))
     if "deadline" in body:
         raw = body["deadline"]
         if raw and isinstance(raw, str) and "T" not in raw:
@@ -1108,6 +1137,37 @@ async def update_task(task_id: str, body: dict, db: AsyncSession = Depends(get_d
     await db.commit()
     await db.refresh(task)
     return _task_to_flat(task)
+
+
+@router.post("/cleanup-orphan-blocks")
+async def cleanup_orphan_blocks(db: AsyncSession = Depends(get_db)) -> dict:
+    """Remove AgendaBlocks whose task_id points to a deleted/done/cancelled task."""
+    from sqlalchemy import delete as sa_delete
+    valid_result = await db.execute(
+        select(Task.id).where(Task.status.notin_(["done", "cancelled", "dropped"]))
+    )
+    valid_ids = {row[0] for row in valid_result.all()}
+    blocks_result = await db.execute(
+        select(AgendaBlock).where(AgendaBlock.task_id.isnot(None))
+    )
+    deleted = 0
+    for block in blocks_result.scalars().all():
+        if block.task_id not in valid_ids:
+            await db.delete(block)
+            deleted += 1
+    await db.commit()
+    return {"status": "ok", "deleted": deleted}
+
+
+@router.get("/projects/completed")
+async def get_completed_projects(db: AsyncSession = Depends(get_db)) -> list:
+    result = await db.execute(
+        select(Task).where(Task.status.in_(["done", "completed"]))
+        .order_by(Task.completed_at.desc().nulls_last())
+        .limit(100)
+    )
+    tasks = result.scalars().all()
+    return [_task_to_flat(t) for t in tasks]
 
 
 @router.get("/project-suggestions")
@@ -1601,6 +1661,7 @@ async def dashboard_action(payload: ActionPayload, db: AsyncSession = Depends(ge
     if not task:
         return {"status": "error", "message": "task not found"}
     action = (payload.action or "").lower().strip()
+    from sqlalchemy import delete as sa_delete
     if action in ("concluida", "concluída", "done"):
         task.status = "done"
         task.completed_at = datetime.now(timezone.utc)
@@ -1608,10 +1669,12 @@ async def dashboard_action(payload: ActionPayload, db: AsyncSession = Depends(ge
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
             entry = f"[{ts}] {payload.note.strip()}"
             task.notes = f"{task.notes}\n{entry}" if task.notes else entry
+        await db.execute(sa_delete(AgendaBlock).where(AgendaBlock.task_id == task.id))
         await db.commit()
         return {"status": "ok", "action": "done", "title": task.title}
     if action in ("excluir", "delete", "remover"):
         task.status = "cancelled"
+        await db.execute(sa_delete(AgendaBlock).where(AgendaBlock.task_id == task.id))
         await db.commit()
         return {"status": "ok", "action": "cancelled", "title": task.title}
     if action in ("adiar", "postpone") and payload.date:
@@ -2029,3 +2092,191 @@ async def jira_import_issues(payload: JiraImportPayload, db: AsyncSession = Depe
     await db.commit()
     imported_count = sum(1 for t in imported_tasks if t.get("status") == "imported")
     return {"imported": imported_count, "tasks": imported_tasks}
+
+
+# ── Unified input + chat history ────────────────────────────────────────────
+
+@router.post("/input")
+async def alfred_unified_input(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    """Unified input: AI classifies intent and executes action."""
+    from app.models import ChatMessage
+    text = (body.get("text") or "").strip()
+    if not text:
+        return {"type": "error", "message": "texto vazio"}
+
+    # Fetch last 10 messages for context
+    try:
+        hist_result = await db.execute(
+            select(ChatMessage).order_by(ChatMessage.created_at.desc()).limit(10)
+        )
+        history = list(reversed(hist_result.scalars().all()))
+    except Exception:
+        history = []
+
+    # Current tasks for context
+    tasks_result = await db.execute(
+        select(Task).where(Task.status.in_(("active", "pending", "in_progress")))
+        .order_by(Task.deadline.asc().nulls_last()).limit(20)
+    )
+    current_tasks = tasks_result.scalars().all()
+    tasks_context = "\n".join([f"- {t.title} (id:{t.id}, deadline:{t.deadline})" for t in current_tasks])
+
+    history_text = "\n".join([
+        f"{'Usuário' if m.role == 'user' else 'Alfred'}: {m.content}" for m in history
+    ]) if history else ""
+
+    today = _today_brt()
+    prompt = f"""Você é o Alfred, assistente de produtividade pessoal. Classifique a intenção do usuário.
+
+Tarefas ativas:
+{tasks_context or '(nenhuma)'}
+
+Histórico recente:
+{history_text or '(nenhum)'}
+
+Data atual: {today.isoformat()}
+
+Entrada do usuário: "{text}"
+
+Responda APENAS com JSON válido (sem markdown):
+{{
+  "intent": "create_task" | "update_task" | "complete_task" | "create_dump" | "query" | "unclear",
+  "task_title": "título da tarefa se criar",
+  "project": "nome do projeto se detectado",
+  "deadline": "YYYY-MM-DD se mencionado ou null",
+  "target_task_id": "uuid da task existente se update/complete",
+  "dump_text": "texto se for dump/anotação",
+  "message": "resposta para o usuário"
+}}"""
+
+    result: dict = {"type": "error", "message": "Erro interno"}
+    intent = "unclear"
+
+    try:
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        msg = await client.messages.create(
+            model=settings.model_fast if hasattr(settings, 'model_fast') else "claude-haiku-4-5-20251001",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        response_text = msg.content[0].text.strip()
+        if "```" in response_text:
+            response_text = response_text.split("```")[1]
+            if response_text.startswith("json"):
+                response_text = response_text[4:]
+        parsed = json.loads(response_text.strip())
+        intent = parsed.get("intent", "unclear")
+
+        if intent == "create_task":
+            title = parsed.get("task_title") or text
+            project = parsed.get("project") or ""
+            full_title = f"{project} | {title}" if project else title
+            deadline = None
+            if parsed.get("deadline"):
+                try:
+                    deadline = datetime.fromisoformat(parsed["deadline"] + "T18:00:00")
+                except Exception:
+                    pass
+            new_task = Task(
+                title=full_title, origin="alfred_input", status="active",
+                estimated_minutes=120, deadline=deadline, category="work", task_type="task",
+                checklist_json=[], notes_json=[],
+            )
+            db.add(new_task)
+            await db.commit()
+            await db.refresh(new_task)
+            result = {"type": "task_created", "id": str(new_task.id), "title": full_title,
+                      "deadline": deadline.isoformat() if deadline else None,
+                      "message": f"Tarefa criada: {full_title}"}
+
+        elif intent == "complete_task":
+            task_id = parsed.get("target_task_id")
+            if task_id:
+                try:
+                    _r = await db.execute(select(Task).where(Task.id == UUID(task_id)))
+                    _t = _r.scalar_one_or_none()
+                    if _t:
+                        _t.status = "done"
+                        _t.completed_at = datetime.now(timezone.utc)
+                        from sqlalchemy import delete as sa_delete
+                        await db.execute(sa_delete(AgendaBlock).where(AgendaBlock.task_id == _t.id))
+                        await db.commit()
+                        result = {"type": "task_completed", "title": _t.title,
+                                  "message": f"✅ Concluída: {_t.title}"}
+                    else:
+                        result = {"type": "clarification", "message": "Tarefa não encontrada."}
+                except Exception:
+                    result = {"type": "clarification", "message": "Qual tarefa você quer concluir?"}
+            else:
+                result = {"type": "clarification", "message": parsed.get("message", "Qual tarefa concluir?")}
+
+        elif intent == "create_dump":
+            dump_text = parsed.get("dump_text") or text
+            new_dump = DumpItem(raw_text=dump_text, rewritten_title=dump_text[:100],
+                                status="categorized", source="alfred_input", category="anotacao")
+            db.add(new_dump)
+            await db.commit()
+            result = {"type": "dump_saved", "text": dump_text, "message": f"Anotado: {dump_text[:60]}"}
+
+        elif intent == "update_task":
+            task_id = parsed.get("target_task_id")
+            if task_id:
+                try:
+                    _r = await db.execute(select(Task).where(Task.id == UUID(task_id)))
+                    _t = _r.scalar_one_or_none()
+                    if _t:
+                        if parsed.get("deadline"):
+                            try:
+                                _t.deadline = datetime.fromisoformat(parsed["deadline"] + "T18:00:00")
+                            except Exception:
+                                pass
+                        await db.commit()
+                        result = {"type": "task_updated", "title": _t.title,
+                                  "message": f"Atualizado: {_t.title}"}
+                    else:
+                        result = {"type": "clarification", "message": "Tarefa não encontrada."}
+                except Exception:
+                    result = {"type": "clarification", "message": parsed.get("message", "Qual tarefa alterar?")}
+            else:
+                result = {"type": "clarification", "message": parsed.get("message", "Qual tarefa alterar?")}
+
+        elif intent == "query":
+            result = {"type": "query_response", "message": parsed.get("message", "Consulta processada.")}
+
+        else:
+            result = {"type": "clarification", "message": parsed.get("message", "Não entendi. Tente: 'criar tarefa X' ou 'anotar Y'")}
+
+    except Exception as e:
+        result = {"type": "error", "message": f"Erro: {str(e)}"}
+
+    # Save to chat history
+    try:
+        from app.models import ChatMessage as _CM
+        db.add(_CM(role="user", content=text))
+        db.add(_CM(role="assistant", content=result.get("message", ""), intent=intent, result_data=result))
+        await db.commit()
+    except Exception:
+        pass
+
+    return result
+
+
+@router.get("/chat/history")
+async def get_chat_history(limit: int = 50, db: AsyncSession = Depends(get_db)) -> dict:
+    from app.models import ChatMessage
+    result = await db.execute(
+        select(ChatMessage).order_by(ChatMessage.created_at.desc()).limit(limit)
+    )
+    messages = list(reversed(result.scalars().all()))
+    return {"messages": [
+        {
+            "id": str(m.id),
+            "role": m.role,
+            "content": m.content,
+            "intent": m.intent,
+            "result": m.result_data,
+            "time": m.created_at.strftime("%H:%M") if m.created_at else "",
+        }
+        for m in messages
+    ]}
+
