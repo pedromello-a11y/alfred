@@ -314,13 +314,15 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
             free += DAY_END_MINS - cursor
         return free
 
-    def _hours_until_deadline(deadline: date | None) -> float:
+    def _hours_until_deadline(deadline) -> float:
         """Sum free hours from today through deadline day (inclusive)."""
         if deadline is None:
             return 9999.0
+        # Normalize to date if datetime
+        dl_date = deadline.date() if hasattr(deadline, 'date') else deadline
         total = 0
         d = today
-        while d <= deadline:
+        while d <= dl_date:
             total += _day_free_mins(d)
             d += timedelta(days=1)
         return total / 60.0
