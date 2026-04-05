@@ -354,7 +354,7 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
     # cursor_task_idx: next task to allocate (tasks are consumed across days)
     task_idx = 0
 
-    for day_offset in range(7):
+    for day_offset in range(5):  # seg-sex apenas
         day_date = week_start + timedelta(days=day_offset)
         dow = day_date.weekday()
         is_weekend = dow >= 5
