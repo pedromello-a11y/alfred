@@ -632,11 +632,16 @@ select.form-input{cursor:pointer}
     <div class="agenda-sidebar">
       <div class="sidebar-tabs">
         <div class="stab on" onclick="switchStab('demandas')">TAREFAS</div>
+        <div class="stab" onclick="switchStab('pessoal-agenda')">PESSOAL</div>
         <div class="stab" onclick="switchStab('blocos')">BLOCOS</div>
       </div>
       <div class="sidebar-panel" id="stab-demandas">
         <div style="font-size:10px;color:var(--t3);padding:4px 2px 8px;letter-spacing:.05em">Arraste para a agenda</div>
         <div id="sidebar-tasks-list"></div>
+      </div>
+      <div class="sidebar-panel hidden" id="stab-pessoal-agenda">
+        <div style="font-size:10px;color:var(--t3);padding:4px 2px 8px;letter-spacing:.05em">Tarefas pessoais · arraste</div>
+        <div id="sidebar-pessoal-list"></div>
       </div>
       <div class="sidebar-panel hidden" id="stab-blocos">
         <div style="font-size:10px;color:var(--t3);padding:4px 2px 8px;letter-spacing:.05em">Arraste para criar bloco</div>
@@ -1690,10 +1695,33 @@ function renderPresets() {
 }
 
 function switchStab(tab) {
-  document.querySelectorAll('.stab').forEach((el,i) => el.classList.toggle('on', ['demandas','blocos'][i]===tab));
-  document.getElementById('stab-demandas').classList.toggle('hidden', tab!=='demandas');
-  document.getElementById('stab-blocos').classList.toggle('hidden', tab!=='blocos');
+  const tabs = ['demandas','pessoal-agenda','blocos'];
+  document.querySelectorAll('.stab').forEach((el,i) => el.classList.toggle('on', tabs[i]===tab));
+  tabs.forEach(t => document.getElementById('stab-'+t).classList.toggle('hidden', t!==tab));
   if (tab === 'blocos') renderPresets();
+  if (tab === 'pessoal-agenda') renderSidebarPessoal();
+}
+
+function renderSidebarPessoal() {
+  const el = document.getElementById('sidebar-pessoal-list');
+  fetch('/dashboard/personal-items').then(r => r.json()).then(items => {
+    if (!items.length) { el.innerHTML = '<div style="color:var(--t3);font-size:12px;padding:8px 0">Sem tarefas pessoais</div>'; return; }
+    el.innerHTML = items.filter(i => i.status !== 'done').map(i => `
+      <div class="sq-item" draggable="true"
+        ondragstart="onPersonalSidebarDragStart(event,${JSON.stringify(i.title).replace(/"/g,'&quot;')},${i.estimated_minutes||60})"
+        ondragend="onTaskSidebarDragEnd(event,'')">
+        <div class="sq-grip">⠿</div>
+        <div class="sq-info">
+          <div class="sq-title">${i.title}</div>
+          <div class="sq-est">${i.estimated_minutes||60}min</div>
+        </div>
+      </div>`).join('');
+  }).catch(() => { el.innerHTML = '<div style="color:var(--t3);font-size:12px">Erro ao carregar</div>'; });
+}
+
+function onPersonalSidebarDragStart(e, title, est) {
+  draggedTaskSrc = {id: null, title, estimated_minutes: est};
+  e.dataTransfer.effectAllowed = 'copy';
 }
 
 async function loadAgenda() {
@@ -1900,56 +1928,21 @@ function renderAgendaBlocks(data) {
       bodyEl.appendChild(div);
     });
 
-    // Render auto (demand) blocks: sequential, sized by estimate × multiplier, all shown
-    // Find first free slot after gcal/fixed blocks
-    const occupiedRanges = gcalFixed.map(b => [minsFromMidnight(b.start), minsFromMidnight(b.end)]).sort((a,b)=>a[0]-b[0]);
-    function nextFreeSlot(cursorMins, durationMins) {
-      let start = cursorMins;
-      let tries = 0;
-      while (tries < 100) {
-        const collision = occupiedRanges.find(r => r[0] < start + durationMins && r[1] > start);
-        if (!collision) break;
-        start = collision[1];
-        tries++;
-      }
-      return start;
-    }
-
-    // Available hours for this day (from agenda data)
+    // Render auto (demand) blocks using backend start/end directly
     const availHours = parseFloat(day.available_hours) || 8;
     const totalDayMins = GRID_END * 60 - GRID_START * 60;
-    const occupiedMins = occupiedRanges.reduce((s, r) => s + r[1] - r[0], 0);
-    const freeMins = Math.max(0, totalDayMins - occupiedMins);
-
-    let cursorMins = GRID_START * 60;
     let allocatedAutoMins = 0;
     const deadlineFlags = [];
 
     autoBs.forEach(b => {
-      const estMins = b.estimated_minutes || 30;
-      // Comfort-based multiplier: comfort = available_hours / (est/60)
-      const estHours = estMins / 60;
-      const comfort = estHours > 0 ? availHours / estHours : 3;
-      let mult = 1.0;
-      if (comfort > 3.0) mult = 1.25;
-      else if (comfort > 2.0) mult = 1.2;
-      else if (comfort > 1.5) mult = 1.15;
-      else if (comfort > 1.2) mult = 1.1;
-      const allocMins = Math.round(estMins * mult);
-
-      const startMins = nextFreeSlot(cursorMins, allocMins);
-      const endMins = startMins + allocMins;
-      // Add to occupied ranges so next block doesn't overlap
-      occupiedRanges.push([startMins, endMins]);
-      occupiedRanges.sort((a,c) => a[0]-c[0]);
-      cursorMins = endMins;
-      allocatedAutoMins += allocMins;
-
+      const startMins = minsFromMidnight(b.start);
+      const endMins = minsFromMidnight(b.end);
       const top = minsToPx(startMins);
-      const height = Math.max(20, allocMins * PX_PER_MIN);
+      const height = Math.max(20, (endMins - startMins) * PX_PER_MIN);
       if (top < 0) return;
 
       const col = projectColor(b.project || b.title);
+      const shortTitle = (b.title || '').split('|').pop().trim();
 
       const div = document.createElement('div');
       div.className = 'grid-block auto-block';
@@ -1958,17 +1951,15 @@ function renderAgendaBlocks(data) {
       div.style.background = col.bg;
       div.style.borderColor = col.bd;
       div.style.borderLeftColor = col.h;
-      div.style.color = col.h;
       div.draggable = true;
       div.dataset.type = 'auto';
       div.dataset.taskId = b.task_id || '';
 
-      const shortTitle = (b.title || '').split('|').pop().trim();
       div.innerHTML = `<div class="grid-block-title" style="color:${col.h}">${shortTitle}</div>
-        ${height > 28 ? `<div class="grid-block-time">${minsToTimeStr(startMins)}–${minsToTimeStr(endMins)}</div>` : ''}`;
+        ${height > 28 ? `<div class="grid-block-time">${b.start}–${b.end}</div>` : ''}`;
 
       div.addEventListener('dragstart', (e) => {
-        draggedTaskSrc = {id: b.task_id, title: b.title, estimated_minutes: estMins};
+        draggedTaskSrc = {id: b.task_id, title: b.title, estimated_minutes: b.estimated_minutes || 60};
         e.dataTransfer.effectAllowed = 'copy';
       });
       div.addEventListener('dragend', () => {
@@ -1978,22 +1969,18 @@ function renderAgendaBlocks(data) {
       div.addEventListener('click', () => { if (b.task_id) openTaskModal(b.task_id); });
       bodyEl.appendChild(div);
 
-      // Collect deadline flags
-      if (b.deadline && b.deadline.length >= 10) {
-        const dlDate = b.deadline.slice(0, 10);
-        if (dlDate === day.date) {
-          // show flag at deadline time (use end of block as approximation if no time)
-          const dlMins = endMins;
-          const comfort = b.deadline_human;
-          const flagColor = !comfort ? '#4ade80' :
-            comfort.includes('atrasada') || comfort.includes('hoje') ? '#ef4444' :
-            comfort.includes('amanhã') ? '#f59e0b' : '#4ade80';
-          deadlineFlags.push({mins: dlMins, title: shortTitle, color: flagColor});
-        }
+      allocatedAutoMins += (endMins - startMins);
+
+      // Deadline flags
+      if (b.deadline && b.deadline.length >= 10 && b.deadline.slice(0, 10) === day.date) {
+        const flagColor = !b.deadline_human ? '#4ade80' :
+          b.deadline_human.includes('atrasada') || b.deadline_human.includes('hoje') ? '#ef4444' :
+          b.deadline_human.includes('amanhã') ? '#f59e0b' : '#4ade80';
+        deadlineFlags.push({mins: endMins, title: shortTitle, color: flagColor});
       }
     });
 
-    // Render deadline flags
+    // Deadline flags
     deadlineFlags.forEach(flag => {
       const top = minsToPx(flag.mins);
       if (top < 0 || top > (GRID_END - GRID_START) * PX_PER_HOUR) return;
@@ -2007,11 +1994,15 @@ function renderAgendaBlocks(data) {
     });
 
     // Day footer: Xh alocado · Xh livre · emoji
-    const totalAllocMins = occupiedRanges.reduce((s, r) => s + r[1] - r[0], 0);
-    const freeFooterMins = Math.max(0, totalDayMins - totalAllocMins);
+    const gcalMins = gcalFixed.reduce((s, b) => {
+      const sm = minsFromMidnight(b.start), em = minsFromMidnight(b.end);
+      return s + Math.max(0, Math.min(em, GRID_END*60) - Math.max(sm, GRID_START*60));
+    }, 0);
+    const totalAllocMins = gcalMins + allocatedAutoMins;
+    const freeFooterMins = Math.max(0, availHours * 60 - totalAllocMins);
     const allocH = (totalAllocMins / 60).toFixed(1);
     const freeH = (freeFooterMins / 60).toFixed(1);
-    const loadEmoji = parseFloat(allocH) > availHours ? '🔴' : parseFloat(freeH) > 3 ? '🟢' : '🟡';
+    const loadEmoji = parseFloat(freeH) < 1 ? '🔴' : parseFloat(freeH) < 3 ? '🟡' : '🟢';
     const footer = document.createElement('div');
     footer.className = 'grid-day-footer';
     footer.textContent = `${allocH}h alocado · ${freeH}h livre · ${loadEmoji}`;
@@ -2614,8 +2605,9 @@ async function openTaskModal(taskId) {
   }
   taskData[taskId] = tmData;
 
-  // Populate
-  document.getElementById('tm-title').value = getShortName(tmData) || tmData.title || '';
+  // Populate — API returns fullTitle (not title)
+  const rawTitle = tmData.fullTitle || tmData.title || '';
+  document.getElementById('tm-title').value = rawTitle.split('|').pop().trim() || rawTitle;
   tmStatus = tmData.status || 'active';
 
   // Breadcrumb
