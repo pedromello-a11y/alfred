@@ -491,6 +491,7 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
                     "draggable": False,
                     "deadline": task.deadline.isoformat() if task.deadline else None,
                     "deadline_human": _humanize_deadline(task.deadline),
+                    "deadline_type": getattr(task, "deadline_type", None) or "soft",
                 })
 
                 allocated_today += alloc

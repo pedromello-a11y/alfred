@@ -854,6 +854,12 @@ select.form-input{cursor:pointer}
         <div class="form-group">
           <label class="form-label">Prazo</label>
           <input class="form-input" id="tm-deadline" type="date">
+          <div style="display:flex;gap:5px;margin-top:4px">
+            <button type="button" onclick="tmSetDeadlineType('soft')" id="tm-dltype-soft"
+                    style="padding:2px 9px;border-radius:4px;border:1px solid var(--accent);background:rgba(74,222,128,0.1);color:var(--accent);cursor:pointer;font-size:10px">~Estimulado</button>
+            <button type="button" onclick="tmSetDeadlineType('hard')" id="tm-dltype-hard"
+                    style="padding:2px 9px;border-radius:4px;border:1px solid #444;background:transparent;color:#888;cursor:pointer;font-size:10px">📌 Fixo</button>
+          </div>
         </div>
         <div class="form-group">
           <label class="form-label">Estimativa</label>
@@ -928,6 +934,10 @@ select.form-input{cursor:pointer}
         <button onclick="setCreateType('project')" class="create-type-btn" data-type="project"
                 style="padding:6px 14px;border-radius:6px;border:1px solid #444;background:transparent;color:#888;cursor:pointer;font-size:12px;">
           🗂️ Projeto
+        </button>
+        <button onclick="setCreateType('opportunity')" class="create-type-btn" data-type="opportunity"
+                style="padding:6px 14px;border-radius:6px;border:1px solid #444;background:transparent;color:#888;cursor:pointer;font-size:12px;">
+          ✨ Oportunidade
         </button>
       </div>
       <!-- Nome -->
@@ -2029,7 +2039,15 @@ function renderAgendaBlocks(data) {
       div.dataset.type = 'auto';
       div.dataset.taskId = b.task_id || '';
 
-      div.innerHTML = `<div class="grid-block-title" style="color:${col.h}">${shortTitle}</div>
+      const dlBadgeGrid = (() => {
+        if (!b.deadline) return '';
+        const isHard = b.deadline_type === 'hard';
+        const isOverdue = b.deadline && new Date(b.deadline) < new Date();
+        if (isOverdue) return `<span style="font-size:9px;color:#ef4444;margin-left:2px">⚠</span>`;
+        if (isHard) return `<span style="font-size:9px;color:#f59e0b;margin-left:2px">📌</span>`;
+        return `<span style="font-size:9px;color:#666;margin-left:2px">~</span>`;
+      })();
+      div.innerHTML = `<div class="grid-block-title" style="color:${col.h}">${shortTitle}${dlBadgeGrid}</div>
         ${height > 28 ? `<div class="grid-block-time">${b.start}–${b.end}</div>` : ''}`;
 
       div.addEventListener('dragstart', (e) => {
@@ -2881,13 +2899,14 @@ async function openTaskModal(taskId) {
 
   renderTmStatusBtns();
 
-  // Deadline
+  // Deadline + deadline_type
   if (tmData.deadline) {
     const d = new Date(tmData.deadline);
     document.getElementById('tm-deadline').value = d.toISOString().split('T')[0];
   } else {
     document.getElementById('tm-deadline').value = '';
   }
+  tmSetDeadlineType(tmData.deadline_type || tmData.deadlineType || 'soft');
 
   // Estimate
   const estMins = tmData.estimated_minutes || 0;
@@ -2968,6 +2987,21 @@ function renderTmStatusBtns() {
 function tmSetStatus(s) {
   tmStatus = s;
   renderTmStatusBtns();
+}
+
+let _tmDeadlineType = 'soft';
+function tmSetDeadlineType(type) {
+  _tmDeadlineType = type;
+  const soft = document.getElementById('tm-dltype-soft');
+  const hard = document.getElementById('tm-dltype-hard');
+  if (!soft || !hard) return;
+  if (type === 'hard') {
+    hard.style.borderColor = '#f59e0b'; hard.style.color = '#f59e0b'; hard.style.background = 'rgba(245,158,11,0.1)';
+    soft.style.borderColor = '#444'; soft.style.color = '#888'; soft.style.background = 'transparent';
+  } else {
+    soft.style.borderColor = 'var(--accent)'; soft.style.color = 'var(--accent)'; soft.style.background = 'rgba(74,222,128,0.1)';
+    hard.style.borderColor = '#444'; hard.style.color = '#888'; hard.style.background = 'transparent';
+  }
 }
 
 function tmEstPreview() {
@@ -3093,6 +3127,7 @@ async function tmSave() {
   };
   if (dl) body.deadline = dl;
   else if (!dl && tmData.deadline) body.deadline = null;
+  body.deadline_type = _tmDeadlineType;
   if (parentId) body.parent_id = parentId;
   if (tmStatus === 'on_holding') {
     body.blocked = true;
@@ -3224,6 +3259,18 @@ function setCreateType(type) {
     projectRow.style.display = 'block';
     deliverableRow.style.display = 'none';
     detailsRow.style.display = 'flex';
+  } else if (type === 'opportunity') {
+    title.textContent = '✨ Nova oportunidade';
+    nameLabel.textContent = 'Descreva a oportunidade';
+    projectRow.style.display = 'block';
+    deliverableRow.style.display = 'none';
+    // Oportunidade: sem deadline, sem estimativa obrigatória
+    detailsRow.style.display = 'flex';
+    // Limpar deadline e esconder deadline type row
+    document.getElementById('create-deadline').value = '';
+    document.getElementById('createAutoAgendaInfo').style.display = 'none';
+    const typeRow = document.getElementById('createDeadlineTypeRow');
+    if (typeRow) typeRow.style.display = 'none';
   } else {
     title.textContent = 'Nova tarefa';
     nameLabel.textContent = 'O que precisa ser feito?';
@@ -3342,6 +3389,23 @@ async function submitCreate() {
     const data = await resp.json();
     if (data.status === 'ok') { closeCreateModal(); reloadAfterCreate(name); }
     else toast('Erro ao criar demanda');
+    return;
+  }
+
+  // opportunity → task sem deadline, category=opportunity
+  if (createType === 'opportunity') {
+    const oppPayload = {
+      title: name, task_type: 'task', parent_id: projectId || undefined,
+      status: _createStatus || 'active', category: 'opportunity',
+      estimate: Math.round((parseFloat(document.getElementById('create-est').value) || 2) * 60),
+    };
+    const resp = await fetch('/dashboard/task/create-smart/confirm', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(oppPayload)
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') { closeCreateModal(); reloadAfterCreate(name); }
+    else toast('Erro ao criar oportunidade');
     return;
   }
 
