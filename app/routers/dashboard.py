@@ -138,6 +138,7 @@ def _task_to_queue_item(task: Task, today: date, parent_map: dict | None = None)
         "deadlineHuman": _humanize_deadline(task.deadline),
         "deadlineType": dl_type,
         "status": task.status,
+        "taskType": task.task_type or "task",
         "category": getattr(task, "category", "work") or "work",
         "estimate": task.estimated_minutes or 120,
         "group": _get_task_group(task, today),
@@ -343,6 +344,9 @@ async def _build_active_queue(db: AsyncSession) -> list[dict]:
 
 def _current_workweek_bounds(ref: date | None = None) -> tuple[date, date]:
     today = ref or _today_brt()
+    # Sunday (weekday=6) → treat as next week
+    if today.weekday() == 6:
+        today = today + timedelta(days=1)
     monday = today - timedelta(days=today.weekday())
     return monday, monday + timedelta(days=4)
 
@@ -423,13 +427,18 @@ async def _build_agenda_payload(db: AsyncSession, week_offset: int = 0) -> dict:
             risk_alert = None
 
     return {
-        "days": [{"day": d, "events": events} for d, events in days.items()],
+        "days": [
+            {"day": d, "date": (monday + timedelta(days=d)).isoformat(), "blocks": events, "events": events}
+            for d, events in days.items()
+        ],
         "suggestedBlocks": suggested,
         "pauses": [],
         "deadlines": deadlines,
         "weekStart": monday.isoformat(),
         "weekEnd": friday.isoformat(),
-        "_riskAlert": risk_alert,  # passado para cima pelo /state
+        "_riskAlert": risk_alert,
+        "_monday": monday,
+        "_friday": friday,
     }
 
 
@@ -713,6 +722,22 @@ async def dashboard_state(db: AsyncSession = Depends(get_db), week_offset: int =
     today_tasks = await _build_today_tasks(db)
     active_queue = await _build_active_queue(db)
     agenda_data = await _build_agenda_payload(db, week_offset)
+
+    # Se não há blocos do scheduler, dispara recalculo agora
+    if not agenda_data.get("suggestedBlocks") and week_offset == 0:
+        try:
+            from app.services.scheduler import rebuild_week_schedule
+            ws = agenda_data.get("_monday")
+            we = agenda_data.get("_friday")
+            if ws and we:
+                await rebuild_week_schedule(db, ws, we)
+                agenda_data = await _build_agenda_payload(db, week_offset)
+        except Exception:
+            pass
+
+    agenda_data.pop("_monday", None)
+    agenda_data.pop("_friday", None)
+
     projects = await _get_project_names(db)
 
     # Preenche startTime do nextTask com o próximo bloco sugerido
