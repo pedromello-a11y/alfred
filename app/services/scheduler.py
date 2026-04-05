@@ -159,10 +159,15 @@ async def rebuild_week_schedule(
     allocated_ids: set[UUID] = set()
 
     for task in fila_urgente:
+        try:
+            original_dl = task.deadline.date() if hasattr(task.deadline, "date") else task.deadline
+        except Exception:
+            original_dl = week_end
+        is_overdue = original_dl < today
         dl = _effective_deadline(task)
         minutes = task.estimated_minutes or 120
 
-        placements = _find_best_placement(availability, minutes, dl, today)
+        placements = _find_best_placement(availability, minutes, dl, today, is_overdue=is_overdue)
         if not placements:
             continue
 
@@ -308,6 +313,7 @@ def _find_best_placement(
     minutes: int,
     deadline: date,
     today: date,
+    is_overdue: bool = False,
 ) -> list[tuple[date, int, int]]:
     """Encontra melhor slot(s) para uma task.
 
@@ -320,8 +326,8 @@ def _find_best_placement(
     """
     all_slots = []
     for day, slots in availability.items():
-        # Overdue (deadline < today): permite qualquer dia da semana
-        if day > deadline and deadline >= today:
+        # Overdue: permite qualquer dia da semana (sem restrição de deadline)
+        if not is_overdue and day > deadline:
             continue
         for (s, e) in slots:
             dur = e - s
