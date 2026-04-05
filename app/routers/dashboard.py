@@ -564,6 +564,55 @@ async def _parse_task_with_ai(raw_text: str) -> dict:
 
 # ── endpoints ──────────────────────────────────────────────────────────────
 
+@router.post("/fix/cleanup")
+async def fix_cleanup(db: AsyncSession = Depends(get_db)) -> dict:
+    """One-time cleanup: remove orphan blocks + deduplicate tasks."""
+    from sqlalchemy import delete as sa_delete
+
+    valid_result = await db.execute(
+        select(Task.id).where(Task.status.notin_(["done", "cancelled", "dropped"]))
+    )
+    valid_ids = {row[0] for row in valid_result.all()}
+
+    orphan_result = await db.execute(
+        select(AgendaBlock).where(AgendaBlock.task_id.isnot(None))
+    )
+    deleted_blocks = 0
+    for block in orphan_result.scalars().all():
+        if block.task_id not in valid_ids:
+            await db.delete(block)
+            deleted_blocks += 1
+
+    all_tasks_result = await db.execute(
+        select(Task).where(Task.status.notin_(["done", "cancelled", "dropped"]))
+        .order_by(Task.created_at.asc())
+    )
+    seen_titles: dict = {}
+    deleted_dupes = 0
+    for task in all_tasks_result.scalars().all():
+        key = (task.title or "").strip().lower()
+        if key in seen_titles:
+            await db.delete(task)
+            deleted_dupes += 1
+        else:
+            seen_titles[key] = task
+
+    await db.commit()
+
+    remaining_tasks = await db.execute(
+        select(Task).where(Task.status.notin_(["done", "cancelled", "dropped"]))
+    )
+    remaining_blocks = await db.execute(
+        select(AgendaBlock).where(AgendaBlock.task_id.isnot(None))
+    )
+    return {
+        "status": "ok",
+        "deleted_orphan_blocks": deleted_blocks,
+        "deleted_duplicate_tasks": deleted_dupes,
+        "remaining_active_tasks": len(remaining_tasks.scalars().all()),
+        "remaining_task_blocks": len(remaining_blocks.scalars().all()),
+    }
+
 def _calc_deficit(active_queue: list[dict], agenda_data: dict, week_offset: int) -> dict:
     """Calcula déficit de horas para a semana exibida."""
     from app.services.time_utils import today_brt as _tb
