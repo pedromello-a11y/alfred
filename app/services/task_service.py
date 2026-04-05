@@ -105,8 +105,9 @@ async def delete_task_cascade(db: AsyncSession, task: Task) -> None:
 
 
 async def complete_task_cascade(db: AsyncSession, task: Task, actual_minutes: int | None = None) -> None:
-    """Marca task como done e limpa AgendaBlocks."""
+    """Marca task como done, limpa AgendaBlocks e recalcula semana."""
     from sqlalchemy import delete as sa_delete
+    deadline = task.deadline  # captura antes de alterar
     task.status = "done"
     task.completed_at = datetime.now()
     if actual_minutes:
@@ -114,9 +115,22 @@ async def complete_task_cascade(db: AsyncSession, task: Task, actual_minutes: in
     await db.execute(sa_delete(AgendaBlock).where(AgendaBlock.task_id == task.id))
     await db.commit()
 
+    if deadline:
+        try:
+            from app.services.scheduler import rebuild_week_schedule
+            dl = deadline.date() if hasattr(deadline, "date") else deadline
+            today = today_brt()
+            ws = dl - timedelta(days=dl.weekday())
+            we = ws + timedelta(days=4)
+            if ws < today:
+                ws = today
+            await rebuild_week_schedule(db, ws, we)
+        except Exception as e:
+            logger.warning(f"Reschedule pós-complete falhou: {e}")
+
 
 async def _auto_schedule(db: AsyncSession, task: Task) -> list[AgendaBlock]:
-    """Cria blocos na agenda para a task, respeitando buffer e eventos existentes."""
+    """Delega ao scheduler centralizado que recalcula a semana inteira."""
     if not task.deadline:
         return []
 
@@ -129,135 +143,13 @@ async def _auto_schedule(db: AsyncSession, task: Task) -> list[AgendaBlock]:
     if dl_date < today:
         return []
 
+    from app.services.scheduler import rebuild_week_schedule
     week_start = dl_date - timedelta(days=dl_date.weekday())
     week_end = week_start + timedelta(days=4)
-
     if week_start < today:
         week_start = today
 
-    estimate = task.estimated_minutes or 120
-    WORK_START = 8 * 60
-    WORK_END = 20 * 60
-    MAX_BLOCK = 120
-    MIN_BLOCK = 15
-
-    from datetime import time as dt_time
-    week_start_dt = datetime.combine(week_start, datetime.min.time())
-    week_end_dt = datetime.combine(week_end + timedelta(days=1), datetime.min.time())
-
-    existing_result = await db.execute(
-        select(AgendaBlock)
-        .where(AgendaBlock.start_at >= week_start_dt)
-        .where(AgendaBlock.start_at < week_end_dt)
-        .where(AgendaBlock.status != "cancelled")
-        .order_by(AgendaBlock.start_at.asc())
-    )
-    existing = existing_result.scalars().all()
-
-    occupied: dict = {}
-    for block in existing:
-        if not block.start_at or not block.end_at:
-            continue
-        d = block.start_at.date()
-        s_min = block.start_at.hour * 60 + block.start_at.minute
-        e_min = block.end_at.hour * 60 + block.end_at.minute
-        occupied.setdefault(d, []).append((s_min, e_min))
-
-    def _calc_buffer(available: int, allocated: int) -> int:
-        if available <= 0:
-            return 0
-        load = allocated / available
-        if load <= 0.5:
-            return 120
-        elif load <= 0.75:
-            return 60
-        else:
-            return 30
-
-    def _free_slots(day, max_to_allocate: int) -> list[tuple[int, int]]:
-        if day.weekday() >= 5 or day < today:
-            return []
-
-        total_available = WORK_END - WORK_START
-        busy = sorted(occupied.get(day, []), key=lambda x: x[0])
-        already_allocated = sum(max(0, e - s) for s, e in busy)
-
-        buffer = _calc_buffer(total_available, already_allocated)
-        max_allocatable = max(0, total_available - already_allocated - buffer)
-
-        if max_allocatable < MIN_BLOCK:
-            return []
-
-        max_allocatable = min(max_allocatable, max_to_allocate)
-
-        free = []
-        cursor = WORK_START
-        alloc_so_far = 0
-
-        for (bs, be) in busy:
-            if cursor < bs and alloc_so_far < max_allocatable:
-                gap = bs - cursor
-                usable = min(gap, max_allocatable - alloc_so_far)
-                if usable >= MIN_BLOCK:
-                    free.append((cursor, cursor + usable))
-                    alloc_so_far += usable
-            cursor = max(cursor, be)
-
-        if cursor < WORK_END and alloc_so_far < max_allocatable:
-            gap = WORK_END - cursor
-            usable = min(gap, max_allocatable - alloc_so_far)
-            if usable >= MIN_BLOCK:
-                free.append((cursor, cursor + usable))
-
-        return free
-
-    remaining = estimate
-    created = []
-    current_day = week_start
-
-    while current_day <= week_end and remaining > 0:
-        free = _free_slots(current_day, remaining)
-
-        for (slot_start, slot_end) in free:
-            if remaining <= 0:
-                break
-
-            available = slot_end - slot_start
-
-            if remaining <= available:
-                duration = remaining
-            else:
-                duration = min(available, MAX_BLOCK)
-
-            if duration < MIN_BLOCK:
-                continue
-
-            start_dt = datetime.combine(current_day, datetime.min.time()) + timedelta(minutes=slot_start)
-            end_dt = start_dt + timedelta(minutes=duration)
-
-            new_block = AgendaBlock(
-                title=task.title or "",
-                start_at=start_dt,
-                end_at=end_dt,
-                block_type="suggested",
-                source="alfred",
-                status="planned",
-                task_id=task.id,
-                pinned=False,
-            )
-            db.add(new_block)
-            created.append(new_block)
-
-            occupied.setdefault(current_day, []).append((slot_start, slot_start + duration))
-            remaining -= duration
-
-        current_day += timedelta(days=1)
-
-    if created:
-        await db.commit()
-        logger.info(f"Auto-agenda: {len(created)} blocos para task '{task.title}' ({estimate}min)")
-
-    return created
+    return await rebuild_week_schedule(db, week_start, week_end)
 
 
 async def prefetch_parent_names(tasks: list[Task], db: AsyncSession) -> dict[str, tuple[str, str]]:

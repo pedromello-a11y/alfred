@@ -1158,6 +1158,21 @@ async def update_task(task_id: str, body: dict, db: AsyncSession = Depends(get_d
 
     await db.commit()
     await db.refresh(task)
+
+    # Recalcular agenda se deadline mudou
+    if "deadline" in body and task.deadline and task.task_type == "task":
+        try:
+            from app.services.scheduler import rebuild_week_schedule
+            dl = task.deadline.date() if hasattr(task.deadline, "date") else task.deadline
+            _today = _today_brt()
+            ws = dl - timedelta(days=dl.weekday())
+            we = ws + timedelta(days=4)
+            if ws < _today:
+                ws = _today
+            await rebuild_week_schedule(db, ws, we)
+        except Exception:
+            pass
+
     return _task_to_flat(task)
 
 

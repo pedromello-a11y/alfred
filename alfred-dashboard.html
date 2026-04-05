@@ -290,7 +290,7 @@ html,body{height:100%;background:var(--bg);color:var(--t1);font-family:system-ui
 .d-deliv-icon{color:var(--t3);flex-shrink:0;font-size:11px}
 .d-deliv-info{font-size:11px;color:var(--t3);white-space:nowrap}
 
-/* Subtarefa row (was: task) */
+/* Tarefa row */
 .d-task-row{display:flex;align-items:center;gap:8px;padding:5px 4px;cursor:pointer;border-radius:4px;padding-left:48px}
 .d-task-row:hover{background:var(--b1)}
 .d-task-icon{flex-shrink:0;font-size:13px;width:14px;text-align:center}
@@ -759,7 +759,10 @@ select.form-input{cursor:pointer}
     </div>
     <div class="modal-body">
       <div class="dmod-summary" id="pm-summary"></div>
-      <label class="form-label">Demandas e subtarefas</label>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <label class="form-label" style="margin-bottom:0">Demandas e tarefas</label>
+        <button onclick="pmNewDeliverable()" style="background:none;border:1px solid #444;border-radius:4px;padding:3px 10px;color:var(--blue);font-size:11px;cursor:pointer">+ nova demanda</button>
+      </div>
       <div class="dmod-inner-tree" id="pm-inner-tree"></div>
       <div class="form-group">
         <label class="form-label">Notas</label>
@@ -801,9 +804,9 @@ select.form-input{cursor:pointer}
           <input class="form-input" id="dm-jira" placeholder="ex: SOM-6496" onblur="dmSave('origin_ref',this.value)">
         </div>
       </div>
-      <label class="form-label">Subtarefas</label>
-      <div class="dmod-inner-tree" id="dm-tasks-list" style="margin-bottom:8px"></div>
-      <button class="btn btn-sm btn-ghost" onclick="dmNewTask()">+ nova subtarefa</button>
+      <label class="form-label">Tarefas</label>
+<div class="dmod-inner-tree" id="dm-tasks-list" style="margin-bottom:8px"></div>
+      <button class="btn btn-sm btn-ghost" onclick="dmNewTask()">+ nova tarefa</button>
       <div class="form-group" style="margin-top:12px">
         <label class="form-label">Notas</label>
         <textarea class="form-input" id="dm-notes" rows="3" style="resize:vertical" onblur="dmSave('notes',this.value)"></textarea>
@@ -816,14 +819,14 @@ select.form-input{cursor:pointer}
   </div>
 </div>
 
-<!-- ── Modal SUBTAREFA (was: Tarefa) ── -->
+<!-- ── Modal TAREFA ── -->
 <div class="modal-bg hidden" id="task-modal-bg" onclick="closeTaskModal(event)">
   <div class="modal" style="width:560px;max-width:95vw">
     <div class="modal-header">
       <div style="flex:1;min-width:0">
         <div class="dmod-parent-ref" id="tm-breadcrumb"></div>
         <input class="form-input" id="tm-title" style="font-size:15px;font-weight:700;background:transparent;border-color:transparent;padding:2px 0;width:100%">
-        <div style="font-size:10px;color:var(--t3);font-family:monospace;letter-spacing:.08em;text-transform:uppercase;margin-top:2px">Subtarefa</div>
+        <div style="font-size:10px;color:var(--t3);font-family:monospace;letter-spacing:.08em;text-transform:uppercase;margin-top:2px">Tarefa</div>
       </div>
       <button class="modal-close" onclick="closeTaskModal()">×</button>
     </div>
@@ -955,13 +958,28 @@ select.form-input{cursor:pointer}
           <input class="form-input" id="create-deadline" type="date" onchange="updateAutoAgendaInfo()">
         </div>
         <div class="form-group">
-          <label class="form-label">Estimativa (min)</label>
-          <input class="form-input" id="create-est" type="number" value="120" min="15" step="15">
+          <label class="form-label">Estimativa</label>
+          <div style="display:flex;align-items:center;gap:4px">
+            <input class="form-input" id="create-est" type="number" value="2" min="0.5" step="0.5" style="width:80px;">
+            <span style="color:var(--t3);font-size:12px">h</span>
+          </div>
         </div>
       </div>
       <!-- Info auto-agenda -->
       <div id="createAutoAgendaInfo" style="background:#162a1e;border:1px solid #333;border-radius:6px;padding:8px 12px;margin-bottom:8px;display:none;">
         <span style="color:#4ade80;font-size:11px;">⚡ Com deadline, será agendada automaticamente</span>
+      </div>
+      <!-- Status -->
+      <div id="createStatusRow" class="form-group">
+        <label class="form-label">Status</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button type="button" onclick="setCreateStatus('active')" class="cstatus-btn" data-status="active"
+                  style="padding:4px 12px;border-radius:6px;border:1px solid #4ade80;background:rgba(74,222,128,0.15);color:#4ade80;cursor:pointer;font-size:11px">● Ativa</button>
+          <button type="button" onclick="setCreateStatus('on_holding')" class="cstatus-btn" data-status="on_holding"
+                  style="padding:4px 12px;border-radius:6px;border:1px solid #444;background:transparent;color:#888;cursor:pointer;font-size:11px">◐ Aguardando</button>
+          <button type="button" onclick="setCreateStatus('backlog')" class="cstatus-btn" data-status="backlog"
+                  style="padding:4px 12px;border-radius:6px;border:1px solid #444;background:transparent;color:#888;cursor:pointer;font-size:11px">○ No Radar</button>
+        </div>
       </div>
     </div>
     <div class="modal-footer">
@@ -1253,7 +1271,7 @@ function renderAberturaQueue(todayData) {
         ${b.project ? `<div style="font-size:10px;color:var(--accent);font-family:monospace">${b.project}</div>` : ''}
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
-        <span class="tq-est">${b.estimated_minutes}min</span>
+        <span class="tq-est">${fmtEst(b.estimated_minutes)}</span>
         ${b.deadline_human ? `<span class="tq-dl ${dlClass}">${b.deadline_human}</span>` : ''}
       </div>
     </div>`;
@@ -1288,7 +1306,7 @@ function renderAberturaQueue(todayData) {
         <span class="tq-num">${i+1}</span>
         <div style="flex:1;min-width:0"><div class="tq-title">${shortTitle}</div></div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
-          ${t.estimated_minutes ? `<span class="tq-est">${t.estimated_minutes}min</span>` : ''}
+          ${t.estimated_minutes ? `<span class="tq-est">${fmtEst(t.estimated_minutes)}</span>` : ''}
           ${t.deadline_human ? `<span class="tq-dl ${dlClass}">${t.deadline_human}</span>` : ''}
         </div>
       </div>`;
@@ -1763,7 +1781,7 @@ function renderSidebarPessoal() {
         <div class="sq-grip">⠿</div>
         <div class="sq-info">
           <div class="sq-title">${i.title}</div>
-          <div class="sq-est">${i.estimated_minutes||60}min</div>
+          <div class="sq-est">${fmtEst(i.estimated_minutes||60)}</div>
         </div>
       </div>`).join('');
   }).catch(() => { el.innerHTML = '<div style="color:var(--t3);font-size:12px">Erro ao carregar</div>'; });
@@ -2073,7 +2091,7 @@ function renderSidebarTasks() {
         <div class="sq-grip">⠿</div>
         <div class="sq-info">
           <div class="sq-title">${t.title}</div>
-          <div class="sq-est">${t.estimated_minutes||'?'}min${t.deadline_human ? ' · '+t.deadline_human : ''}</div>
+          <div class="sq-est">${fmtEst(t.estimated_minutes)}${t.deadline_human ? ' · '+t.deadline_human : ''}</div>
         </div>
       </div>`).join('');
   });
@@ -2353,10 +2371,13 @@ function renderDemandasTree() {
       if (!anyPasses(proj) && !taskMatchesSearch(proj)) return;
     }
 
+    const nearestDlStr = nextDls[0] ? new Date(nextDls[0]).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}) : '';
     html += `<div class="d-project-group">
       <div class="d-project-row" onclick="openProjModal('${proj.id}')">
-        <div class="d-project-name">${proj.title}</div>
-        <div class="d-project-stats">${statsStr} · ${fmtEst(totalMins)}</div>
+        <div style="flex:1;min-width:0">
+          <div class="d-project-name">${proj.title}</div>
+          <div class="d-project-stats">${statsStr} · ${fmtEst(totalMins)}${nearestDlStr ? ` · 📅 ${nearestDlStr}` : ''}</div>
+        </div>
         <span class="d-status-pill sp-${proj.status}">${proj.status}</span>
       </div>
       <div class="d-tree-body">
@@ -2369,7 +2390,7 @@ function renderDemandasTree() {
         html += `<div class="d-deliv-row" onclick="openDelivModal('${child.id}')">
           <span class="d-deliv-icon">◆</span>
           <div class="d-deliv-name">${getShortName(child)}</div>
-          <div class="d-deliv-info">${childCount} subtarefa${childCount!==1?'s':''} ${dlH ? '· ' + dlH : ''}</div>
+          <div class="d-deliv-info">${childCount} tarefa${childCount!==1?'s':''} ${dlH ? '· ' + dlH : ''}</div>
         </div>`;
         if (child.children && child.children.length) {
           child.children.forEach(task => {
@@ -2398,12 +2419,7 @@ function renderDemandasTree() {
       return true;
     }).map(t => renderDTaskRow(t)).join('');
     if (avHtml) {
-      html += `<div class="d-project-group">
-        <div class="d-project-row" style="cursor:default">
-          <div class="d-project-name" style="color:var(--t3)">Sem projeto</div>
-        </div>
-        <div class="d-tree-body"><div class="d-tree-line">${avHtml}</div></div>
-      </div>`;
+      html += `<div style="margin-top:24px;padding-top:16px;border-top:1px solid #222;opacity:.8">${avHtml}</div>`;
     }
   }
 
@@ -2484,7 +2500,7 @@ async function openProjModal(projId) {
 
   document.getElementById('pm-summary').innerHTML = [
     `<div class="dmod-stat"><strong>${delivCt}</strong>demandas</div>`,
-    `<div class="dmod-stat"><strong>${taskCt}</strong>subtarefas</div>`,
+    `<div class="dmod-stat"><strong>${taskCt}</strong>tarefas</div>`,
     `<div class="dmod-stat"><strong>${activeCt}</strong>ativas</div>`,
     `<div class="dmod-stat"><strong>${displayEst(totalMins)}</strong>estimado</div>`,
     `<div class="dmod-stat"><strong>${nextDl}</strong>próximo prazo</div>`,
@@ -2513,6 +2529,12 @@ function closeProjModal(e) {
   if (e && e.target !== document.getElementById('proj-modal-bg')) return;
   document.getElementById('proj-modal-bg').classList.add('hidden');
   pmId = null;
+}
+
+function pmNewDeliverable() {
+  const projId = pmId;
+  closeProjModal();
+  openCreateModal('deliverable', null, projId);
 }
 
 async function pmSave(field, value) {
@@ -2617,20 +2639,10 @@ async function dmSave(field, value) {
 }
 
 function dmNewTask() {
+  const delivId = dmId;
+  const projId = dmParentId;
   closeDelivModal();
-  openCreateModal('task').then(() => {
-    // Pré-seleciona a demanda atual no select
-    if (dmId) {
-      const sel = document.getElementById('createDeliverableSelect');
-      // Adiciona opção se não existir
-      if (!sel.querySelector(`option[value="${dmId}"]`)) {
-        const deliv = findNodeById(dmId, demandasData);
-        const dName = deliv ? getShortName(deliv) : dmId;
-        sel.innerHTML += `<option value="${dmId}">${dName}</option>`;
-      }
-      sel.value = dmId;
-    }
-  });
+  openCreateModal('task', null, projId, delivId);
 }
 
 async function deleteDelivCascata() {
@@ -2758,11 +2770,11 @@ async function openTaskModal(taskId) {
 
 function renderTmStatusBtns() {
   const statuses = [
-    {v:'active', label:'● ativa'},
-    {v:'on_holding', label:'◑ holding'},
-    {v:'backlog', label:'○ backlog'},
-    {v:'done', label:'✓ concluída'},
-    {v:'cancelled', label:'✕ cancelada'},
+    {v:'active', label:'● Ativa'},
+    {v:'on_holding', label:'◐ Aguardando'},
+    {v:'backlog', label:'○ No Radar'},
+    {v:'done', label:'✓ Concluída'},
+    {v:'cancelled', label:'✕ Cancelada'},
   ];
   document.getElementById('tm-status-btns').innerHTML = statuses.map(s =>
     `<button class="status-btn ${tmStatus===s.v?'on-'+s.v:''}" onclick="tmSetStatus('${s.v}')">${s.label}</button>`
@@ -2951,14 +2963,16 @@ function startDumpConvert(dumpId, dumpText) {
   openCreateModal('task', dumpText);
 }
 
-async function openCreateModal(presetType, prefilledTitle) {
+async function openCreateModal(presetType, prefilledTitle, presetProjectId, presetDeliverableId) {
   createType = presetType || 'task';
   document.getElementById('create-title').value = prefilledTitle || '';
   document.getElementById('create-deadline').value = '';
-  document.getElementById('create-est').value = '120';
+  document.getElementById('create-est').value = '2';
   document.getElementById('createNewProjectName').value = '';
   document.getElementById('createNewDeliverableName').value = '';
   document.getElementById('createAutoAgendaInfo').style.display = 'none';
+  _createStatus = 'active';
+  setCreateStatus('active');
 
   // Load projects
   try {
@@ -2969,6 +2983,16 @@ async function openCreateModal(presetType, prefilledTitle) {
     _projectsCache.forEach(p => {
       sel.innerHTML += `<option value="${p.id}">${p.name}</option>`;
     });
+    if (presetProjectId) {
+      sel.value = presetProjectId;
+      await onProjectChange();
+      if (presetDeliverableId) {
+        setTimeout(() => {
+          const dsel = document.getElementById('createDeliverableSelect');
+          if (dsel) dsel.value = presetDeliverableId;
+        }, 200);
+      }
+    }
   } catch(e) {}
 
   setCreateType(createType);
@@ -3048,6 +3072,26 @@ async function _createEntityIfNeeded(title, taskType, parentId) {
   return data.status === 'ok' ? data.id : null;
 }
 
+let _createStatus = 'active';
+
+function setCreateStatus(status) {
+  _createStatus = status;
+  const colors = { active: '#4ade80', on_holding: '#fbbf24', backlog: '#888' };
+  const bgs = { active: 'rgba(74,222,128,0.15)', on_holding: 'rgba(251,191,36,0.15)', backlog: 'rgba(100,100,100,0.15)' };
+  document.querySelectorAll('.cstatus-btn').forEach(btn => {
+    const s = btn.dataset.status;
+    if (s === status) {
+      btn.style.background = bgs[s] || 'rgba(100,100,100,0.15)';
+      btn.style.color = colors[s] || '#888';
+      btn.style.borderColor = colors[s] || '#888';
+    } else {
+      btn.style.background = 'transparent';
+      btn.style.color = '#888';
+      btn.style.borderColor = '#444';
+    }
+  });
+}
+
 async function submitCreate() {
   const name = document.getElementById('create-title').value.trim();
   if (!name) { toast('Nome é obrigatório'); return; }
@@ -3055,7 +3099,7 @@ async function submitCreate() {
   if (createType === 'project') {
     const resp = await fetch('/dashboard/task/create-smart/confirm', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ title: name, task_type: 'project', status: 'active' })
+      body: JSON.stringify({ title: name, task_type: 'project', status: _createStatus || 'active' })
     });
     const data = await resp.json();
     if (data.status === 'ok') { closeCreateModal(); reloadAfterCreate(name); }
@@ -3075,9 +3119,9 @@ async function submitCreate() {
       body: JSON.stringify({
         title: name, task_type: 'deliverable',
         parent_id: projectId || undefined,
-        status: 'active',
+        status: _createStatus || 'active',
         deadline: document.getElementById('create-deadline').value || undefined,
-        estimate: parseInt(document.getElementById('create-est').value) || 120,
+        estimate: Math.round((parseFloat(document.getElementById('create-est').value) || 2) * 60),
       })
     });
     const data = await resp.json();
@@ -3095,9 +3139,9 @@ async function submitCreate() {
 
   const parentId = deliverableId || projectId || undefined;
   const deadline = document.getElementById('create-deadline').value || undefined;
-  const estimate = parseInt(document.getElementById('create-est').value) || 120;
+  const estimate = Math.round((parseFloat(document.getElementById('create-est').value) || 2) * 60);
 
-  const taskPayload = { title: name, task_type: 'task', parent_id: parentId, deadline, estimate, status: 'active' };
+  const taskPayload = { title: name, task_type: 'task', parent_id: parentId, deadline, estimate, status: _createStatus || 'active' };
   const endpoint = _convertingDumpId
     ? '/dashboard/dump/' + _convertingDumpId + '/convert-to-task'
     : '/dashboard/task/create-smart/confirm';
