@@ -5,15 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AgendaBlock
 from app.services import task_manager
+from app.services.text_utils import split_title
 from app.services.time_utils import now_brt, today_brt
-
-
-def _split_title(value: str) -> tuple[str, str]:
-    text = (value or "").strip()
-    if "|" in text:
-        project, title = text.split("|", 1)
-        return project.strip(), title.strip()
-    return "", text
 
 
 async def build_tomorrow_board(db: AsyncSession) -> dict:
@@ -42,7 +35,7 @@ async def build_tomorrow_board(db: AsyncSession) -> dict:
 
     suggestion = None
     if priority_task:
-        project, title = _split_title(priority_task.title or "")
+        project, title = split_title(priority_task.title or "")
         suggestion = {
             "title": title or priority_task.title or "",
             "project": project,

@@ -5,15 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AgendaBlock, DailyPlan
 from app.services import task_manager
+from app.services.text_utils import split_title
 from app.services.time_utils import now_brt, now_brt_naive, today_brt
-
-
-def _split_title(value: str) -> tuple[str, str]:
-    text = (value or "").strip()
-    if "|" in text:
-        project, title = text.split("|", 1)
-        return project.strip(), title.strip()
-    return "", text
 
 
 async def build_focus_snapshot(db: AsyncSession) -> dict:
@@ -22,8 +15,11 @@ async def build_focus_snapshot(db: AsyncSession) -> dict:
     today = today_brt()
     end_today = datetime.combine(today + timedelta(days=1), time.min)
 
+    start_today = datetime.combine(today, time.min)
+
     result = await db.execute(
         select(AgendaBlock)
+        .where(AgendaBlock.start_at >= start_today)
         .where(AgendaBlock.start_at < end_today)
         .order_by(AgendaBlock.start_at.asc())
     )
@@ -70,7 +66,7 @@ async def build_focus_snapshot(db: AsyncSession) -> dict:
     def task_payload(task):
         if not task:
             return None
-        project, title = _split_title(task.title or "")
+        project, title = split_title(task.title or "")
         return {
             "id": str(task.id),
             "title": task.title,

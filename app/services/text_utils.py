@@ -34,3 +34,12 @@ def sanitize_json_strings(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: sanitize_json_strings(item) for key, item in value.items()}
     return value
+
+
+def split_title(value: str) -> tuple[str, str]:
+    """Separa 'Projeto | Tarefa' em (projeto, tarefa). Sem pipe retorna ('', valor)."""
+    text = (value or "").strip()
+    if "|" in text:
+        project, title = text.split("|", 1)
+        return project.strip(), title.strip()
+    return "", text

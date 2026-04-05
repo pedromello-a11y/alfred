@@ -1,3 +1,5 @@
+from collections.abc import AsyncGenerator
+
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 
@@ -18,9 +20,14 @@ class Base(DeclarativeBase):
     pass
 
 
-async def get_db() -> AsyncSession:
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
 
 _PLAYER_STAT_ATTRIBUTES = [
@@ -49,23 +56,25 @@ async def init_db() -> None:
 
 
 async def _seed_data() -> None:
-    """Seed inicial: player_stats e achievements (idempotente via INSERT OR IGNORE logic)."""
-    from sqlalchemy import select
+    """Seed inicial com upsert batch — idempotente via ON CONFLICT DO NOTHING."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
     from app.models import Achievement, PlayerStat
 
     async with AsyncSessionLocal() as db:
-        for attribute in _PLAYER_STAT_ATTRIBUTES:
-            result = await db.execute(
-                select(PlayerStat).where(PlayerStat.attribute == attribute)
+        for attr in _PLAYER_STAT_ATTRIBUTES:
+            stmt = (
+                pg_insert(PlayerStat.__table__)
+                .values(attribute=attr, xp=0, level=1, prestige=0)
+                .on_conflict_do_nothing(index_elements=["attribute"])
             )
-            if result.scalar_one_or_none() is None:
-                db.add(PlayerStat(attribute=attribute, xp=0, level=1, prestige=0))
+            await db.execute(stmt)
 
-        for code, name, description in _ACHIEVEMENTS:
-            result = await db.execute(
-                select(Achievement).where(Achievement.code == code)
+        for code, name, desc in _ACHIEVEMENTS:
+            stmt = (
+                pg_insert(Achievement.__table__)
+                .values(code=code, name=name, description=desc)
+                .on_conflict_do_nothing(index_elements=["code"])
             )
-            if result.scalar_one_or_none() is None:
-                db.add(Achievement(code=code, name=name, description=description))
+            await db.execute(stmt)
 
         await db.commit()
