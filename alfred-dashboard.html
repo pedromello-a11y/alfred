@@ -909,44 +909,62 @@ select.form-input{cursor:pointer}
 
 <!-- Create task modal -->
 <div class="modal-bg hidden" id="create-modal-bg" onclick="closeCreateModal(event)">
-  <div class="modal modal-sm">
+  <div class="modal modal-sm" style="max-width:480px;width:95vw;">
     <div class="modal-header">
-      <div class="modal-title">Nova tarefa</div>
+      <div class="modal-title" id="createModalTitle">Nova tarefa</div>
       <button class="modal-close" onclick="closeCreateModal()">×</button>
     </div>
     <div class="modal-body">
+      <!-- Tabs tipo -->
+      <div style="display:flex;gap:4px;margin-bottom:16px;" id="createTypeTabs">
+        <button onclick="setCreateType('task')" class="create-type-btn active" data-type="task"
+                style="padding:6px 14px;border-radius:6px;border:1px solid #444;background:#333;color:#fff;cursor:pointer;font-size:12px;">
+          📋 Tarefa
+        </button>
+        <button onclick="setCreateType('deliverable')" class="create-type-btn" data-type="deliverable"
+                style="padding:6px 14px;border-radius:6px;border:1px solid #444;background:transparent;color:#888;cursor:pointer;font-size:12px;">
+          📦 Demanda
+        </button>
+        <button onclick="setCreateType('project')" class="create-type-btn" data-type="project"
+                style="padding:6px 14px;border-radius:6px;border:1px solid #444;background:transparent;color:#888;cursor:pointer;font-size:12px;">
+          🗂️ Projeto
+        </button>
+      </div>
+      <!-- Nome -->
       <div class="form-group">
-        <label class="form-label">Título</label>
-        <input class="form-input" id="create-title" placeholder="título da tarefa" autofocus>
+        <label class="form-label" id="createNameLabel">O que precisa ser feito?</label>
+        <input class="form-input" id="create-title" placeholder="nome..." autofocus>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Tipo</label>
-          <select class="form-input" id="create-type">
-            <option value="task">subtarefa (task)</option>
-            <option value="subtask">subtarefa (subtask)</option>
-            <option value="deliverable">demanda (deliverable)</option>
-            <option value="project">projeto (project)</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Status</label>
-          <select class="form-input" id="create-status">
-            <option value="active">active</option>
-            <option value="backlog">backlog</option>
-            <option value="on_holding">on_holding</option>
-          </select>
-        </div>
+      <!-- Projeto (task e deliverable) -->
+      <div class="form-group" id="createProjectRow">
+        <label class="form-label">Projeto</label>
+        <select class="form-input" id="createProjectSelect" onchange="onProjectChange()">
+          <option value="">(nenhum — tarefa avulsa)</option>
+        </select>
+        <input class="form-input" id="createNewProjectName" placeholder="ou nome do novo projeto..." style="margin-top:4px;background:var(--bg2);font-size:12px;">
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Estimativa (min)</label>
-          <input class="form-input" id="create-est" type="number" placeholder="60">
-        </div>
+      <!-- Demanda (só task) -->
+      <div class="form-group" id="createDeliverableRow" style="display:none;">
+        <label class="form-label">Demanda</label>
+        <select class="form-input" id="createDeliverableSelect">
+          <option value="">(nenhuma — tarefa direto no projeto)</option>
+        </select>
+        <input class="form-input" id="createNewDeliverableName" placeholder="ou nome da nova demanda..." style="margin-top:4px;background:var(--bg2);font-size:12px;">
+      </div>
+      <!-- Deadline + Estimativa -->
+      <div class="form-row" id="createDetailsRow">
         <div class="form-group">
           <label class="form-label">Deadline</label>
-          <input class="form-input" id="create-deadline" type="date">
+          <input class="form-input" id="create-deadline" type="date" onchange="updateAutoAgendaInfo()">
         </div>
+        <div class="form-group">
+          <label class="form-label">Estimativa (min)</label>
+          <input class="form-input" id="create-est" type="number" value="120" min="15" step="15">
+        </div>
+      </div>
+      <!-- Info auto-agenda -->
+      <div id="createAutoAgendaInfo" style="background:#162a1e;border:1px solid #333;border-radius:6px;padding:8px 12px;margin-bottom:8px;display:none;">
+        <span style="color:#4ade80;font-size:11px;">⚡ Com deadline, será agendada automaticamente</span>
       </div>
     </div>
     <div class="modal-footer">
@@ -2600,7 +2618,19 @@ async function dmSave(field, value) {
 
 function dmNewTask() {
   closeDelivModal();
-  openCreateModal(dmId);
+  openCreateModal('task').then(() => {
+    // Pré-seleciona a demanda atual no select
+    if (dmId) {
+      const sel = document.getElementById('createDeliverableSelect');
+      // Adiciona opção se não existir
+      if (!sel.querySelector(`option[value="${dmId}"]`)) {
+        const deliv = findNodeById(dmId, demandasData);
+        const dName = deliv ? getShortName(deliv) : dmId;
+        sel.innerHTML += `<option value="${dmId}">${dName}</option>`;
+      }
+      sel.value = dmId;
+    }
+  });
 }
 
 async function deleteDelivCascata() {
@@ -2911,14 +2941,30 @@ async function deleteTask() { await tmDelete(); }
 // ════════════════════════════════════════════════
 // CREATE MODAL
 // ════════════════════════════════════════════════
-let createModalParentId = null;
-function openCreateModal(parentId) {
-  createModalParentId = parentId || null;
+let createType = 'task';
+let _projectsCache = [];
+
+async function openCreateModal(presetType) {
+  createType = presetType || 'task';
   document.getElementById('create-title').value = '';
-  document.getElementById('create-type').value = 'task';
-  document.getElementById('create-status').value = 'active';
-  document.getElementById('create-est').value = '60';
   document.getElementById('create-deadline').value = '';
+  document.getElementById('create-est').value = '120';
+  document.getElementById('createNewProjectName').value = '';
+  document.getElementById('createNewDeliverableName').value = '';
+  document.getElementById('createAutoAgendaInfo').style.display = 'none';
+
+  // Load projects
+  try {
+    const resp = await fetch('/dashboard/hierarchy/projects');
+    _projectsCache = await resp.json();
+    const sel = document.getElementById('createProjectSelect');
+    sel.innerHTML = '<option value="">(nenhum — tarefa avulsa)</option>';
+    _projectsCache.forEach(p => {
+      sel.innerHTML += `<option value="${p.id}">${p.name}</option>`;
+    });
+  } catch(e) {}
+
+  setCreateType(createType);
   document.getElementById('create-modal-bg').classList.remove('hidden');
   setTimeout(() => document.getElementById('create-title').focus(), 50);
 }
@@ -2928,36 +2974,145 @@ function closeCreateModal(e) {
   document.getElementById('create-modal-bg').classList.add('hidden');
 }
 
-async function submitCreate() {
-  const title = document.getElementById('create-title').value.trim();
-  if (!title) { toast('Título obrigatório'); return; }
+function setCreateType(type) {
+  createType = type;
+  document.querySelectorAll('.create-type-btn').forEach(btn => {
+    if (btn.dataset.type === type) {
+      btn.style.background = '#333'; btn.style.color = '#fff';
+    } else {
+      btn.style.background = 'transparent'; btn.style.color = '#888';
+    }
+  });
+  const projectRow = document.getElementById('createProjectRow');
+  const deliverableRow = document.getElementById('createDeliverableRow');
+  const detailsRow = document.getElementById('createDetailsRow');
+  const nameLabel = document.getElementById('createNameLabel');
+  const title = document.getElementById('createModalTitle');
+  if (type === 'project') {
+    title.textContent = 'Novo projeto';
+    nameLabel.textContent = 'Nome do projeto';
+    projectRow.style.display = 'none';
+    deliverableRow.style.display = 'none';
+    detailsRow.style.display = 'none';
+  } else if (type === 'deliverable') {
+    title.textContent = 'Nova demanda';
+    nameLabel.textContent = 'Nome da demanda';
+    projectRow.style.display = 'block';
+    deliverableRow.style.display = 'none';
+    detailsRow.style.display = 'flex';
+  } else {
+    title.textContent = 'Nova tarefa';
+    nameLabel.textContent = 'O que precisa ser feito?';
+    projectRow.style.display = 'block';
+    deliverableRow.style.display = 'block';
+    detailsRow.style.display = 'flex';
+  }
+}
 
-  const body = {
-    title,
-    task_type: document.getElementById('create-type').value,
-    status: document.getElementById('create-status').value,
-    estimated_minutes: parseInt(document.getElementById('create-est').value) || 60,
-    category: 'work',
-  };
-  if (createModalParentId) body.parent_id = createModalParentId;
-  const dl = document.getElementById('create-deadline').value;
-  if (dl) body.deadline = dl;
+async function onProjectChange() {
+  const projectId = document.getElementById('createProjectSelect').value;
+  const sel = document.getElementById('createDeliverableSelect');
+  sel.innerHTML = '<option value="">(nenhuma — tarefa direto no projeto)</option>';
+  if (!projectId) return;
+  try {
+    const resp = await fetch(`/dashboard/hierarchy/deliverables?project_id=${projectId}`);
+    const deliverables = await resp.json();
+    deliverables.forEach(d => {
+      sel.innerHTML += `<option value="${d.id}">${d.name}</option>`;
+    });
+  } catch(e) {}
+}
 
-  await fetch('/dashboard/task/create-confirmed', {
-    method:'POST', headers:{'Content-Type':'application/json'},
+function updateAutoAgendaInfo() {
+  const deadline = document.getElementById('create-deadline').value;
+  document.getElementById('createAutoAgendaInfo').style.display = deadline ? 'block' : 'none';
+}
+
+async function _createEntityIfNeeded(title, taskType, parentId) {
+  if (!title.trim()) return null;
+  const body = { title: title.trim(), task_type: taskType, status: 'active' };
+  if (parentId) body.parent_id = parentId;
+  const resp = await fetch('/dashboard/task/create-smart/confirm', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body)
   });
-  closeCreateModal();
-  // If came from "dump → demanda", delete the dump
-  if (window._dumpToDeleteAfterCreate) {
-    await fetch('/dashboard/dumps/' + window._dumpToDeleteAfterCreate, {method:'DELETE'}).catch(()=>{});
-    dumpsData = dumpsData.filter(d => d.id !== window._dumpToDeleteAfterCreate);
-    window._dumpToDeleteAfterCreate = null;
-    if (currentTab === 'dumps') renderDumps();
+  const data = await resp.json();
+  return data.status === 'ok' ? data.id : null;
+}
+
+async function submitCreate() {
+  const name = document.getElementById('create-title').value.trim();
+  if (!name) { toast('Nome é obrigatório'); return; }
+
+  if (createType === 'project') {
+    const resp = await fetch('/dashboard/task/create-smart/confirm', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ title: name, task_type: 'project', status: 'active' })
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') { closeCreateModal(); _afterCreate(name); }
+    else toast('Erro ao criar projeto');
+    return;
   }
+
+  let projectId = document.getElementById('createProjectSelect').value;
+  const newProjectName = document.getElementById('createNewProjectName').value.trim();
+  if (!projectId && newProjectName) {
+    projectId = await _createEntityIfNeeded(newProjectName, 'project', null) || '';
+  }
+
+  if (createType === 'deliverable') {
+    const resp = await fetch('/dashboard/task/create-smart/confirm', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        title: name, task_type: 'deliverable',
+        parent_id: projectId || undefined,
+        status: 'active',
+        deadline: document.getElementById('create-deadline').value || undefined,
+        estimate: parseInt(document.getElementById('create-est').value) || 120,
+      })
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') { closeCreateModal(); _afterCreate(name); }
+    else toast('Erro ao criar demanda');
+    return;
+  }
+
+  // task
+  let deliverableId = document.getElementById('createDeliverableSelect').value;
+  const newDeliverableName = document.getElementById('createNewDeliverableName').value.trim();
+  if (!deliverableId && newDeliverableName && projectId) {
+    deliverableId = await _createEntityIfNeeded(newDeliverableName, 'deliverable', projectId) || '';
+  }
+
+  const parentId = deliverableId || projectId || undefined;
+  const deadline = document.getElementById('create-deadline').value || undefined;
+  const estimate = parseInt(document.getElementById('create-est').value) || 120;
+
+  const resp = await fetch('/dashboard/task/create-smart/confirm', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ title: name, task_type: 'task', parent_id: parentId, deadline, estimate, status: 'active' })
+  });
+  const data = await resp.json();
+  if (data.status === 'ok') {
+    closeCreateModal();
+    // If came from "dump → demanda", delete the dump
+    if (window._dumpToDeleteAfterCreate) {
+      await fetch('/dashboard/dumps/' + window._dumpToDeleteAfterCreate, {method:'DELETE'}).catch(()=>{});
+      dumpsData = dumpsData.filter(d => d.id !== window._dumpToDeleteAfterCreate);
+      window._dumpToDeleteAfterCreate = null;
+      if (currentTab === 'dumps') renderDumps();
+    }
+    _afterCreate(name);
+  } else {
+    toast('Erro: ' + (data.message || 'desconhecido'));
+  }
+}
+
+function _afterCreate(name) {
+  toast('Criado: ' + name);
   loadDemandas();
   loadFocoAgendaData();
-  toast('Tarefa criada: ' + title);
 }
 
 // ════════════════════════════════════════════════

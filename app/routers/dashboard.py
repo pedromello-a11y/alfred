@@ -35,11 +35,46 @@ def _now_brt() -> datetime:
     return now_brt()
 
 
-def _parse_project_task(title: str) -> tuple[str, str]:
+def _parse_project_task(title: str, parent_map: dict | None = None, task_id: str | None = None) -> tuple[str, str]:
+    """Fallback: se parent_map não tem info, tenta split por pipe."""
+    if parent_map and task_id and task_id in parent_map:
+        project_name, _ = parent_map[task_id]
+        return project_name, title or ""
     if "|" in (title or ""):
         p, t = title.split("|", 1)
         return p.strip(), t.strip()
     return "", (title or "").strip()
+
+
+async def _prefetch_parents(tasks: list, db: AsyncSession) -> dict:
+    """Retorna {task_id: (project_name, deliverable_name)} para todas as tasks."""
+    all_parent_ids = {t.parent_id for t in tasks if t.parent_id}
+    if not all_parent_ids:
+        return {}
+    parents_result = await db.execute(select(Task).where(Task.id.in_(all_parent_ids)))
+    parents = {str(p.id): p for p in parents_result.scalars().all()}
+    grandparent_ids = {p.parent_id for p in parents.values() if p.parent_id}
+    grandparents: dict = {}
+    if grandparent_ids:
+        gp_result = await db.execute(select(Task).where(Task.id.in_(grandparent_ids)))
+        grandparents = {str(g.id): g for g in gp_result.scalars().all()}
+    result = {}
+    for task in tasks:
+        project_name = ""
+        deliverable_name = ""
+        if task.parent_id:
+            parent = parents.get(str(task.parent_id))
+            if parent:
+                if (getattr(parent, "task_type", None) or "task") == "deliverable":
+                    deliverable_name = parent.title or ""
+                    if parent.parent_id:
+                        gp = grandparents.get(str(parent.parent_id))
+                        if gp:
+                            project_name = gp.title or ""
+                elif (getattr(parent, "task_type", None) or "task") == "project":
+                    project_name = parent.title or ""
+        result[str(task.id)] = (project_name, deliverable_name)
+    return result
 
 
 def _humanize_deadline(deadline: datetime | None) -> str:
@@ -86,8 +121,11 @@ def _get_task_group(task: Task, today: date) -> str:
     return "noPrazo"
 
 
-def _task_to_queue_item(task: Task, today: date) -> dict:
-    project, task_name = _parse_project_task(task.title)
+def _task_to_queue_item(task: Task, today: date, parent_map: dict | None = None) -> dict:
+    project, _ = _parse_project_task(task.title, parent_map, str(task.id))
+    if parent_map and str(task.id) in parent_map:
+        project = parent_map[str(task.id)][0]
+    task_name = task.title or ""
     dl_type = getattr(task, "deadline_type", None) or "soft"
     checklist = getattr(task, "checklist_json", None) or []
     return {
@@ -299,7 +337,8 @@ async def _build_active_queue(db: AsyncSession) -> list[dict]:
         .limit(50)
     )
     tasks = result.scalars().all()
-    return [_task_to_queue_item(t, today) for t in tasks]
+    parent_map = await _prefetch_parents(tasks, db)
+    return [_task_to_queue_item(t, today, parent_map) for t in tasks]
 
 
 def _current_workweek_bounds(ref: date | None = None) -> tuple[date, date]:
@@ -855,38 +894,23 @@ async def create_task_smart(body: dict, db: AsyncSession = Depends(get_db)) -> d
 
 @router.post("/task/create-smart/confirm")
 async def confirm_smart_task(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
-    project = (body.get("project") or "").strip()
     title = (body.get("title") or "").strip()
     if not title:
         return {"status": "error", "message": "title required"}
-    full_title = f"{project} | {title}" if project else title
-    if hasattr(task_manager, "canonicalize_task_title"):
-        full_title = task_manager.canonicalize_task_title(full_title)
 
-    deadline = None
-    if body.get("deadline"):
+    task_type = body.get("task_type") or "task"
+    if task_type not in ("project", "deliverable", "task"):
+        task_type = "task"
+
+    parent_id_val = None
+    if body.get("parent_id"):
         try:
-            deadline = datetime.fromisoformat(body["deadline"])
-        except ValueError:
+            parent_id_val = UUID(body["parent_id"])
+        except Exception:
             pass
 
-    # Sugerir estimativa baseada no histórico do projeto
-    estimate = body.get("estimate") or 120
-    if project:
-        from sqlalchemy import and_
-        completed_hist = await db.execute(
-            select(Task).where(
-                and_(
-                    Task.status.in_(["done", "completed"]),
-                    Task.actual_minutes.isnot(None),
-                )
-            )
-        )
-        hist_tasks = [t for t in completed_hist.scalars().all() if (t.title or "").startswith(project)]
-        if len(hist_tasks) >= 3:
-            avg = sum(t.actual_minutes for t in hist_tasks) / len(hist_tasks)
-            estimate = int(avg)
-
+    # Deadline
+    deadline = None
     raw_deadline = body.get("deadline")
     if raw_deadline and isinstance(raw_deadline, str) and "T" not in raw_deadline:
         raw_deadline = raw_deadline + "T18:00:00"
@@ -896,25 +920,18 @@ async def confirm_smart_task(body: dict, db: AsyncSession = Depends(get_db)) -> 
         except ValueError:
             pass
 
-    task_type = body.get("task_type") or "task"
-    if task_type not in ("project", "deliverable", "task"):
-        task_type = "task"
-    parent_id_val = None
-    if body.get("parent_id"):
-        try:
-            parent_id_val = UUID(body["parent_id"])
-        except Exception:
-            pass
+    estimate = body.get("estimate") or 120
 
     incoming_status = body.get("status") or "active"
     if incoming_status in ("pending", "in_progress"):
         incoming_status = "active"
 
+    # Título LIMPO, sem pipes — projeto/demanda vêm via parent_id
     new_task = Task(
-        title=full_title,
+        title=title,
         origin="dashboard",
         status=incoming_status,
-        estimated_minutes=estimate,
+        estimated_minutes=int(estimate),
         deadline=deadline,
         category="work",
         task_type=task_type,
@@ -930,6 +947,21 @@ async def confirm_smart_task(body: dict, db: AsyncSession = Depends(get_db)) -> 
     db.add(new_task)
     await db.commit()
     await db.refresh(new_task)
+
+    # AUTO-AGENDA: só se tem deadline e é tarefa (task)
+    if deadline and task_type == "task":
+        try:
+            from app.services.block_engine import create_task_blocks
+            dl_date = deadline.date() if hasattr(deadline, "date") else deadline
+            today = _today_brt()
+            if dl_date >= today:
+                week_start = dl_date - timedelta(days=dl_date.weekday())
+                week_end = week_start + timedelta(days=4)
+                await create_task_blocks(db=db, task=new_task, week_start=week_start, week_end=week_end)
+        except Exception as _e:
+            import logging
+            logging.getLogger(__name__).warning(f"Auto-agenda failed: {_e}")
+
     return {"status": "ok", "id": str(new_task.id), "title": new_task.title}
 
 
@@ -1015,8 +1047,9 @@ async def get_projects(db: AsyncSession = Depends(get_db)) -> list:
     return tree
 
 
-def _task_to_flat(t: Task) -> dict:
-    project, task_name = _parse_project_task(t.title)
+def _task_to_flat(t: Task, parent_map: dict | None = None) -> dict:
+    project = parent_map[str(t.id)][0] if (parent_map and str(t.id) in parent_map) else _parse_project_task(t.title)[0]
+    task_name = t.title or ""
     checklist = getattr(t, "checklist_json", None) or []
     origin_ref = getattr(t, "origin_ref", None) or ""
     jira_key = origin_ref if (getattr(t, "origin", "") == "jira") else ""
@@ -1047,17 +1080,18 @@ async def get_all_tasks(db: AsyncSession = Depends(get_db)) -> dict:
         .order_by(Task.deadline.asc().nulls_last(), Task.priority.asc().nulls_last())
     )
     tasks = result.scalars().all()
+    parent_map = await _prefetch_parents(tasks, db)
 
     active, on_holding, backlog = [], [], []
     for t in tasks:
         status = t.status or "active"
         is_blocked = bool(getattr(t, "blocked", False))
         if is_blocked or status == "on_holding":
-            on_holding.append(_task_to_flat(t))
+            on_holding.append(_task_to_flat(t, parent_map))
         elif status in ("pending", "in_progress", "active"):
-            active.append(_task_to_flat(t))
+            active.append(_task_to_flat(t, parent_map))
         elif status == "backlog":
-            backlog.append(_task_to_flat(t))
+            backlog.append(_task_to_flat(t, parent_map))
 
     return {"active": active, "onHolding": on_holding, "backlog": backlog}
 
@@ -1117,7 +1151,10 @@ async def update_task(task_id: str, body: dict, db: AsyncSession = Depends(get_d
         pid = body["parent_id"]
         task.parent_id = UUID(pid) if pid else None
     if "task_type" in body:
-        task.task_type = body["task_type"]
+        tt = body["task_type"]
+        if tt not in ("project", "deliverable", "task"):
+            tt = "task"
+        task.task_type = tt
     if "on_holding" in body:
         task.blocked = bool(body["on_holding"])
         if not task.blocked:
@@ -1168,6 +1205,53 @@ async def get_completed_projects(db: AsyncSession = Depends(get_db)) -> list:
     )
     tasks = result.scalars().all()
     return [_task_to_flat(t) for t in tasks]
+
+
+@router.get("/hierarchy/projects")
+async def list_projects_for_select(db: AsyncSession = Depends(get_db)) -> list:
+    result = await db.execute(
+        select(Task)
+        .where(Task.task_type == "project")
+        .where(Task.status.notin_(["done", "cancelled", "dropped"]))
+        .order_by(Task.title.asc())
+    )
+    return [{"id": str(t.id), "name": t.title} for t in result.scalars().all()]
+
+
+@router.get("/hierarchy/deliverables")
+async def list_deliverables_for_select(project_id: str = "", db: AsyncSession = Depends(get_db)) -> list:
+    query = (
+        select(Task)
+        .where(Task.task_type == "deliverable")
+        .where(Task.status.notin_(["done", "cancelled", "dropped"]))
+        .order_by(Task.title.asc())
+    )
+    if project_id:
+        try:
+            query = query.where(Task.parent_id == UUID(project_id))
+        except ValueError:
+            pass
+    result = await db.execute(query)
+    return [
+        {"id": str(t.id), "name": t.title, "project_id": str(t.parent_id) if t.parent_id else None}
+        for t in result.scalars().all()
+    ]
+
+
+@router.post("/migrate-clean-titles")
+async def migrate_clean_titles(db: AsyncSession = Depends(get_db)) -> dict:
+    """One-time: extrai só o nome da task/demanda/projeto do title com pipes."""
+    result = await db.execute(select(Task))
+    tasks = result.scalars().all()
+    cleaned = 0
+    for task in tasks:
+        if not task.title or "|" not in task.title:
+            continue
+        parts = [p.strip() for p in task.title.split("|")]
+        task.title = parts[-1]
+        cleaned += 1
+    await db.commit()
+    return {"status": "ok", "cleaned": cleaned}
 
 
 @router.get("/project-suggestions")

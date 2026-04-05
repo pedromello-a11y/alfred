@@ -331,6 +331,101 @@ def _find_quick_tasks_for_gaps(
     return quick_suggestions
 
 
+async def create_task_blocks(
+    db: AsyncSession,
+    task: Task,
+    week_start: date,
+    week_end: date,
+) -> list:
+    """Cria blocos de agenda para uma task, respeitando eventos existentes.
+    - Blocos contínuos (1 bloco por slot, máx 2h)
+    - Só dias úteis (seg-sex), dentro do horário 8h-20h
+    - Nunca no passado
+    """
+    import uuid as _uuid
+    WORK_START_M = 8 * 60   # 480
+    WORK_END_M = 20 * 60    # 1200
+    MAX_BLOCK_M = 120
+    MIN_BLOCK_M = 15
+
+    today = today_brt()
+    estimate = task.estimated_minutes or 120
+
+    week_start_dt = datetime.combine(week_start, datetime.min.time())
+    week_end_dt = datetime.combine(week_end, time(23, 59, 59))
+
+    existing_result = await db.execute(
+        select(AgendaBlock)
+        .where(AgendaBlock.start_at >= week_start_dt)
+        .where(AgendaBlock.start_at <= week_end_dt)
+        .where(AgendaBlock.status != "cancelled")
+        .order_by(AgendaBlock.start_at.asc())
+    )
+    existing_blocks = existing_result.scalars().all()
+
+    # Mapa de ocupação por dia: {date: [(start_min, end_min), ...]}
+    occupied: dict[date, list[tuple[int, int]]] = {}
+    for block in existing_blocks:
+        if not block.start_at or not block.end_at:
+            continue
+        d = block.start_at.date()
+        s_min = block.start_at.hour * 60 + block.start_at.minute
+        e_min = block.end_at.hour * 60 + block.end_at.minute
+        occupied.setdefault(d, []).append((s_min, e_min))
+
+    def free_slots_on_day(day: date) -> list[tuple[int, int]]:
+        if day.weekday() >= 5 or day < today:
+            return []
+        busy = sorted(occupied.get(day, []), key=lambda x: x[0])
+        free = []
+        cursor = WORK_START_M
+        for bs, be in busy:
+            if cursor < bs and bs - cursor >= MIN_BLOCK_M:
+                free.append((cursor, bs))
+            cursor = max(cursor, be)
+        if cursor < WORK_END_M and WORK_END_M - cursor >= MIN_BLOCK_M:
+            free.append((cursor, WORK_END_M))
+        return free
+
+    remaining = estimate
+    created_blocks = []
+    current_day = week_start
+
+    while current_day <= week_end and remaining > 0:
+        for slot_start, slot_end in free_slots_on_day(current_day):
+            if remaining <= 0:
+                break
+            available = slot_end - slot_start
+            block_duration = min(available, MAX_BLOCK_M, remaining)
+            if block_duration < MIN_BLOCK_M:
+                continue
+
+            start_dt = datetime.combine(current_day, time(slot_start // 60, slot_start % 60))
+            end_dt = start_dt + timedelta(minutes=block_duration)
+
+            new_block = AgendaBlock(
+                title=task.title or "",
+                start_at=start_dt,
+                end_at=end_dt,
+                block_type="suggested",
+                source="alfred",
+                status="planned",
+                task_id=task.id,
+                pinned=False,
+            )
+            db.add(new_block)
+            created_blocks.append(new_block)
+            remaining -= block_duration
+
+            # Atualiza ocupação para não sobrepor mais blocos no mesmo dia
+            occupied.setdefault(current_day, []).append((slot_start, slot_start + block_duration))
+
+        current_day += timedelta(days=1)
+
+    await db.commit()
+    return created_blocks
+
+
 async def build_suggested_blocks(
     db: AsyncSession,
     week_start: date,
