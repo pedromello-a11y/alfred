@@ -954,7 +954,9 @@ async def confirm_smart_task(body: dict, db: AsyncSession = Depends(get_db)) -> 
 async def get_projects(db: AsyncSession = Depends(get_db)) -> list:
     from sqlalchemy import or_, and_
     result = await db.execute(
-        select(Task).where(Task.status.notin_(["done", "cancelled", "dropped"]))
+        select(Task)
+        .where(Task.status.notin_(["done", "cancelled", "dropped"]))
+        .order_by(Task.times_planned.asc().nulls_last(), Task.deadline.asc().nulls_last())
     )
     all_tasks = result.scalars().all()
 
@@ -969,6 +971,7 @@ async def get_projects(db: AsyncSession = Depends(get_db)) -> list:
         checklist = getattr(t, "checklist_json", None) or []
         task_type = getattr(t, "task_type", "task") or "task"
         jira_key = (t.origin_ref or "") if (getattr(t, "origin", "") == "jira") else ""
+        dl_type = getattr(t, "deadline_type", None) or "soft"
         return {
             "id": str(t.id),
             "name": t.title,
@@ -979,17 +982,26 @@ async def get_projects(db: AsyncSession = Depends(get_db)) -> list:
             "task_type": task_type,
             "status": t.status,
             "deadline": t.deadline.isoformat() if t.deadline else None,
+            "deadline_human": _humanize_deadline(t.deadline),
             "deadlineHuman": _humanize_deadline(t.deadline),
+            "deadline_type": dl_type,
+            "deadlineType": dl_type,
             "estimated_minutes": t.estimated_minutes,
+            "actual_minutes": t.actual_minutes,
             "parent_id": str(t.parent_id) if t.parent_id else None,
             "jira_key": jira_key,
             "checklistDone": sum(1 for i in checklist if i.get("done")),
             "checklistTotal": len(checklist),
+            "blocked": getattr(t, "blocked", False) or False,
+            "sort_order": getattr(t, "times_planned", 0) or 0,
         }
 
     def _build_node(t: Task, depth: int = 0) -> dict:
         node = _task_dict(t)
-        kids = sorted(children_of.get(str(t.id), []), key=lambda x: (x.deadline or datetime.max))
+        kids = sorted(
+            children_of.get(str(t.id), []),
+            key=lambda x: (getattr(x, "times_planned", 0) or 0, x.deadline or datetime.max),
+        )
         built_kids = [_build_node(k, depth + 1) for k in kids]
         node["children"] = built_kids
         if depth == 0:
@@ -1030,6 +1042,27 @@ async def get_projects(db: AsyncSession = Depends(get_db)) -> list:
         })
 
     return tree
+
+
+@router.post("/reorder")
+async def reorder_items(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    """Reordena items. Usa times_planned como sort_order (campo reaproveitado)."""
+    ordered_ids = body.get("ordered_ids", [])
+    if not ordered_ids:
+        return {"status": "ok"}
+
+    for i, item_id in enumerate(ordered_ids):
+        try:
+            item_uuid = UUID(item_id)
+        except (ValueError, AttributeError):
+            continue
+        result = await db.execute(select(Task).where(Task.id == item_uuid))
+        task = result.scalar_one_or_none()
+        if task:
+            task.times_planned = i
+
+    await db.commit()
+    return {"status": "ok", "reordered": len(ordered_ids)}
 
 
 def _task_to_flat(t: Task, parent_map: dict | None = None) -> dict:

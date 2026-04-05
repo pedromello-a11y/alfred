@@ -956,6 +956,12 @@ select.form-input{cursor:pointer}
         <div class="form-group">
           <label class="form-label">Deadline</label>
           <input class="form-input" id="create-deadline" type="date" onchange="updateAutoAgendaInfo()">
+          <div id="createDeadlineTypeRow" style="display:none;margin-top:5px;display:flex;gap:6px;flex-wrap:wrap">
+            <button type="button" onclick="setDeadlineType('soft')" class="dltype-btn" data-dltype="soft"
+                    style="padding:3px 10px;border-radius:4px;border:1px solid var(--accent);background:rgba(74,222,128,0.1);color:var(--accent);cursor:pointer;font-size:11px">~Estimulado</button>
+            <button type="button" onclick="setDeadlineType('hard')" class="dltype-btn" data-dltype="hard"
+                    style="padding:3px 10px;border-radius:4px;border:1px solid #444;background:transparent;color:#888;cursor:pointer;font-size:11px">📌 Fixo</button>
+          </div>
         </div>
         <div class="form-group">
           <label class="form-label">Estimativa</label>
@@ -2329,6 +2335,118 @@ function filterDemandas() {
   renderDemandasTree();
 }
 
+// ── Deadline badge (hard vs soft, overdue) ──────────────────────────────
+function renderDeadlineBadge(deadline, deadlineType) {
+  if (!deadline) return '<span style="color:#333;font-size:11px">—</span>';
+  const d = new Date(deadline);
+  const dateStr = d.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'});
+  const isHard = deadlineType === 'hard';
+  const isOverdue = d < new Date();
+  if (isOverdue) {
+    return `<span style="color:#ef4444;font-size:11px;font-weight:600">⚠️ ${dateStr}</span>`;
+  }
+  if (isHard) {
+    return `<span style="color:#f59e0b;font-size:11px;font-weight:600">📌 ${dateStr}</span>`;
+  }
+  return `<span style="color:#666;font-size:11px">~${dateStr}</span>`;
+}
+
+// ── Progress bar ──────────────────────────────────────────────────────────
+function getTaskProgress(task) {
+  if (task.checklistTotal > 0) return Math.round((task.checklistDone / task.checklistTotal) * 100);
+  if (task.actual_minutes > 0 && task.estimated_minutes > 0)
+    return Math.min(100, Math.round((task.actual_minutes / task.estimated_minutes) * 100));
+  return 0;
+}
+
+function renderProgressBar(pct) {
+  if (!pct) return `<div style="width:40px;height:3px;background:#222;border-radius:2px"></div>`;
+  const color = pct >= 100 ? 'var(--accent)' : pct >= 50 ? 'var(--blue)' : 'var(--yellow)';
+  return `<div style="width:40px;height:3px;background:#222;border-radius:2px;overflow:hidden" title="${pct}%">
+    <div style="width:${Math.min(100,pct)}%;height:100%;background:${color};border-radius:2px"></div>
+  </div>`;
+}
+
+// ── Drag & Drop state ─────────────────────────────────────────────────────
+let _dragData = null;
+
+function _onDemDragStart(e) {
+  const el = e.currentTarget;
+  _dragData = { id: el.dataset.id, level: el.dataset.level, parent: el.dataset.parent || null };
+  el.style.opacity = '0.4';
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', el.dataset.id);
+}
+
+function _onDemDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  const target = e.currentTarget;
+  if (!_dragData || target.dataset.level !== _dragData.level) return;
+  if (target.dataset.parent !== _dragData.parent) return;
+  target.style.borderColor = 'var(--accent)';
+  target.style.borderStyle = 'dashed';
+}
+
+function _onDemDragLeave(e) {
+  const target = e.currentTarget;
+  target.style.borderColor = 'transparent';
+  target.style.borderStyle = 'solid';
+}
+
+function _onDemDragEnd(e) {
+  _dragData = null;
+  document.querySelectorAll('.dem-draggable').forEach(el => {
+    el.style.opacity = '1';
+    el.style.borderColor = 'transparent';
+    el.style.borderStyle = 'solid';
+  });
+}
+
+async function _onDemDrop(e) {
+  e.preventDefault();
+  const target = e.currentTarget;
+  if (!_dragData) return;
+  if (target.dataset.level !== _dragData.level) return;
+  if (target.dataset.parent !== _dragData.parent) return;
+  if (target.dataset.id === _dragData.id) { _onDemDragEnd(e); return; }
+
+  const level = _dragData.level;
+  const parent = _dragData.parent;
+  const selector = parent
+    ? `.dem-draggable[data-level="${level}"][data-parent="${parent}"]`
+    : `.dem-draggable[data-level="${level}"]:not([data-parent])`;
+  const items = [...document.querySelectorAll(selector)];
+
+  const fromEl = items.find(el => el.dataset.id === _dragData.id);
+  const toEl = target;
+  if (!fromEl || !toEl) { _onDemDragEnd(e); return; }
+
+  const fromIdx = items.indexOf(fromEl);
+  const toIdx = items.indexOf(toEl);
+  const ids = items.map(el => el.dataset.id);
+  const [moved] = ids.splice(fromIdx, 1);
+  ids.splice(toIdx, 0, moved);
+
+  // DOM move
+  if (fromIdx < toIdx) toEl.parentNode.insertBefore(fromEl, toEl.nextSibling);
+  else toEl.parentNode.insertBefore(fromEl, toEl);
+
+  _onDemDragEnd(e);
+
+  try {
+    await fetch('/dashboard/reorder', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ level, parent_id: parent, ordered_ids: ids })
+    });
+  } catch(err) { console.error('Reorder failed', err); }
+}
+
+function _dragAttrs(id, level, parent) {
+  return `data-id="${id}" data-level="${level}" ${parent ? `data-parent="${parent}"` : ''}`;
+}
+
+// ── Main render ───────────────────────────────────────────────────────────
 function renderDemandasTree() {
   const el = document.getElementById('demandas-body');
   if (!demandasData.length) {
@@ -2337,18 +2455,15 @@ function renderDemandasTree() {
   }
 
   let html = '';
-
-  // Separate proper projects from orphan avulsas
   const projects = demandasData.filter(p => p.task_type === 'project');
 
   projects.forEach(proj => {
-    // Compute stats
     let totalTasks = 0, activeCt = 0, holdingCt = 0, totalMins = 0;
     const nextDls = [];
     function walkStats(node) {
       if (node.task_type !== 'project' && node.task_type !== 'deliverable') {
         totalTasks++;
-        if ((node.status === 'active'||node.status === 'in_progress') && !node.blocked) activeCt++;
+        if ((node.status === 'active' || node.status === 'in_progress') && !node.blocked) activeCt++;
         if (node.status === 'on_holding' || node.blocked) holdingCt++;
         if (node.estimated_minutes) totalMins += node.estimated_minutes;
         if (node.deadline) nextDls.push(node.deadline);
@@ -2357,12 +2472,12 @@ function renderDemandasTree() {
     }
     (proj.children||[]).forEach(walkStats);
     nextDls.sort();
+
     const statsStr = [
       activeCt && `${activeCt} ativa${activeCt!==1?'s':''}`,
       holdingCt && `${holdingCt} holding`,
     ].filter(Boolean).join(' · ') || 'sem tarefas ativas';
 
-    // Filter check: any task passes?
     function anyPasses(node) {
       if (taskPassesFilter(node) && taskMatchesSearch(node)) return true;
       return (node.children||[]).some(anyPasses);
@@ -2372,7 +2487,11 @@ function renderDemandasTree() {
     }
 
     const nearestDlStr = nextDls[0] ? new Date(nextDls[0]).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}) : '';
-    html += `<div class="d-project-group">
+
+    html += `<div class="d-project-group dem-draggable" draggable="true" ${_dragAttrs(proj.id,'project',null)}
+              style="border:2px solid transparent;border-radius:8px;transition:border-color .15s"
+              ondragstart="_onDemDragStart(event)" ondragover="_onDemDragOver(event)"
+              ondragleave="_onDemDragLeave(event)" ondrop="_onDemDrop(event)" ondragend="_onDemDragEnd(event)">
       <div class="d-project-row" onclick="openProjModal('${proj.id}')">
         <div style="flex:1;min-width:0">
           <div class="d-project-name">${proj.title}</div>
@@ -2380,46 +2499,107 @@ function renderDemandasTree() {
         </div>
         <span class="d-status-pill sp-${proj.status}">${proj.status}</span>
       </div>
-      <div class="d-tree-body">
-        <div class="d-tree-line">`;
+      <div class="d-tree-body"><div class="d-tree-line">`;
 
-    (proj.children||[]).forEach((child, ci, arr) => {
+    (proj.children||[]).forEach(child => {
       if (child.task_type === 'deliverable') {
         const childCount = (child.children||[]).length;
-        const dlH = child.deadline_human || '';
-        html += `<div class="d-deliv-row" onclick="openDelivModal('${child.id}')">
-          <span class="d-deliv-icon">◆</span>
-          <div class="d-deliv-name">${getShortName(child)}</div>
-          <div class="d-deliv-info">${childCount} tarefa${childCount!==1?'s':''} ${dlH ? '· ' + dlH : ''}</div>
-        </div>`;
+        const dlBadge = renderDeadlineBadge(child.deadline, child.deadline_type || child.deadlineType);
+
+        html += `<div class="d-deliv-row dem-draggable" draggable="true" ${_dragAttrs(child.id,'deliverable',proj.id)}
+                  style="border:1px solid transparent;border-radius:6px;transition:border-color .15s"
+                  ondragstart="_onDemDragStart(event)" ondragover="_onDemDragOver(event)"
+                  ondragleave="_onDemDragLeave(event)" ondrop="_onDemDrop(event)" ondragend="_onDemDragEnd(event)">
+          <div style="display:flex;align-items:center;gap:6px;cursor:pointer" onclick="openDelivModal('${child.id}')">
+            <span class="d-deliv-icon">◆</span>
+            <div class="d-deliv-name">${getShortName(child)}</div>
+            ${dlBadge}
+            <div class="d-deliv-info" style="margin-left:auto">${childCount} tarefa${childCount!==1?'s':''} · ${fmtEst(child.estimated_minutes||0)}</div>
+          </div>`;
+
         if (child.children && child.children.length) {
           child.children.forEach(task => {
             if ((demFilter !== 'all' || demSearchQ) && !taskPassesFilter(task) && !taskMatchesSearch(task)) return;
-            html += renderDTaskRow(task);
+            const pct = getTaskProgress(task);
+            const dlBadgeT = renderDeadlineBadge(task.deadline, task.deadline_type || task.deadlineType);
+            const statusColor = task.blocked ? 'var(--yellow)' : task.status==='active'?'var(--accent)':task.status==='on_holding'?'var(--yellow)':'var(--t3)';
+            const si = statusIcon(task.status, task.blocked);
+            html += `<div class="d-task-row dem-draggable" draggable="true" ${_dragAttrs(task.id,'task',child.id)}
+                      style="border:1px solid transparent;border-radius:4px;cursor:grab;transition:border-color .15s"
+                      ondragstart="_onDemDragStart(event)" ondragover="_onDemDragOver(event)"
+                      ondragleave="_onDemDragLeave(event)" ondrop="_onDemDrop(event)" ondragend="_onDemDragEnd(event)"
+                      onclick="openTaskModal('${task.id}')">
+              <span class="d-task-icon" style="color:${statusColor}">${si.txt}</span>
+              <div class="d-task-name">${getShortName(task)}</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+                ${dlBadgeT}
+                <span class="d-task-est">${fmtEst(task.estimated_minutes)}</span>
+                ${renderProgressBar(pct)}
+              </div>
+              ${task.blocked ? '<span class="d-blocked-tag">🔒</span>' : ''}
+            </div>`;
           });
         }
+        html += `</div>`;  // close d-deliv-row
+
       } else {
         if ((demFilter !== 'all' || demSearchQ) && !taskPassesFilter(child) && !taskMatchesSearch(child)) return;
-        html += renderDTaskRow(child);
+        const pct = getTaskProgress(child);
+        const dlBadgeC = renderDeadlineBadge(child.deadline, child.deadline_type || child.deadlineType);
+        const statusColor = child.blocked ? 'var(--yellow)' : child.status==='active'?'var(--accent)':child.status==='on_holding'?'var(--yellow)':'var(--t3)';
+        const si = statusIcon(child.status, child.blocked);
+        html += `<div class="d-task-row dem-draggable" draggable="true" ${_dragAttrs(child.id,'task',proj.id)}
+                  style="border:1px solid transparent;border-radius:4px;cursor:grab;transition:border-color .15s"
+                  ondragstart="_onDemDragStart(event)" ondragover="_onDemDragOver(event)"
+                  ondragleave="_onDemDragLeave(event)" ondrop="_onDemDrop(event)" ondragend="_onDemDragEnd(event)"
+                  onclick="openTaskModal('${child.id}')">
+          <span class="d-task-icon" style="color:${statusColor}">${si.txt}</span>
+          <div class="d-task-name">${getShortName(child)}</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+            ${dlBadgeC}
+            <span class="d-task-est">${fmtEst(child.estimated_minutes)}</span>
+            ${renderProgressBar(pct)}
+          </div>
+          ${child.blocked ? '<span class="d-blocked-tag">🔒</span>' : ''}
+        </div>`;
       }
     });
 
     html += `</div></div></div>`;
   });
 
-  // "Sem projeto": nó com task_type="none" retornado pelo backend OU tasks avulsas diretas
+  // Tarefas órfãs — sem header, lista discreta no final
   const semProjNode = demandasData.find(p => p.task_type === 'none' || p.id === null);
   const avulsas = semProjNode
     ? (semProjNode.children || semProjNode.deliverables || [])
     : demandasData.filter(p => p.task_type === 'task' && !p.parent_id);
 
   if (avulsas.length) {
-    let avHtml = avulsas.filter(t => {
+    const avItems = avulsas.filter(t => {
       if ((demFilter !== 'all' || demSearchQ) && !taskPassesFilter(t) && !taskMatchesSearch(t)) return false;
       return true;
-    }).map(t => renderDTaskRow(t)).join('');
-    if (avHtml) {
-      html += `<div style="margin-top:24px;padding-top:16px;border-top:1px solid #222;opacity:.8">${avHtml}</div>`;
+    });
+    if (avItems.length) {
+      html += `<div style="margin-top:24px;padding-top:16px;border-top:1px solid #222;opacity:.8">`;
+      avItems.forEach((t, idx) => {
+        const pct = getTaskProgress(t);
+        const dlBadge = renderDeadlineBadge(t.deadline, t.deadline_type || t.deadlineType);
+        html += `<div class="d-task-row dem-draggable" draggable="true"
+                  data-id="${t.id}" data-level="task" data-parent="orphan"
+                  style="border:1px solid transparent;border-radius:4px;cursor:grab;opacity:.75;transition:border-color .15s"
+                  ondragstart="_onDemDragStart(event)" ondragover="_onDemDragOver(event)"
+                  ondragleave="_onDemDragLeave(event)" ondrop="_onDemDrop(event)" ondragend="_onDemDragEnd(event)"
+                  onclick="openTaskModal('${t.id}')">
+          <span class="d-task-icon" style="color:var(--t3)">○</span>
+          <div class="d-task-name">${getShortName(t)}</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+            ${dlBadge}
+            <span class="d-task-est">${fmtEst(t.estimated_minutes)}</span>
+            ${renderProgressBar(pct)}
+          </div>
+        </div>`;
+      });
+      html += `</div>`;
     }
   }
 
@@ -2972,7 +3152,11 @@ async function openCreateModal(presetType, prefilledTitle, presetProjectId, pres
   document.getElementById('createNewDeliverableName').value = '';
   document.getElementById('createAutoAgendaInfo').style.display = 'none';
   _createStatus = 'active';
+  _createDeadlineType = 'soft';
   setCreateStatus('active');
+  setDeadlineType('soft');
+  const typeRow = document.getElementById('createDeadlineTypeRow');
+  if (typeRow) typeRow.style.display = 'none';
 
   // Load projects
   try {
@@ -2987,10 +3171,18 @@ async function openCreateModal(presetType, prefilledTitle, presetProjectId, pres
       sel.value = presetProjectId;
       await onProjectChange();
       if (presetDeliverableId) {
-        setTimeout(() => {
-          const dsel = document.getElementById('createDeliverableSelect');
-          if (dsel) dsel.value = presetDeliverableId;
-        }, 200);
+        const dsel = document.getElementById('createDeliverableSelect');
+        if (dsel) dsel.value = presetDeliverableId;
+
+        // Herdar deadline da demanda
+        try {
+          const dr = await fetch('/dashboard/task/' + presetDeliverableId);
+          const dd = await dr.json();
+          if (dd.deadline) {
+            document.getElementById('create-deadline').value = dd.deadline.slice(0,10);
+            updateAutoAgendaInfo();
+          }
+        } catch(e2) {}
       }
     }
   } catch(e) {}
@@ -3057,7 +3249,10 @@ async function onProjectChange() {
 
 function updateAutoAgendaInfo() {
   const deadline = document.getElementById('create-deadline').value;
-  document.getElementById('createAutoAgendaInfo').style.display = deadline ? 'block' : 'none';
+  const hasDl = !!deadline;
+  document.getElementById('createAutoAgendaInfo').style.display = hasDl ? 'block' : 'none';
+  const typeRow = document.getElementById('createDeadlineTypeRow');
+  if (typeRow) typeRow.style.display = hasDl ? 'flex' : 'none';
 }
 
 async function _createEntityIfNeeded(title, taskType, parentId) {
@@ -3073,6 +3268,25 @@ async function _createEntityIfNeeded(title, taskType, parentId) {
 }
 
 let _createStatus = 'active';
+let _createDeadlineType = 'soft';
+
+function setDeadlineType(type) {
+  _createDeadlineType = type;
+  const colors = { soft: 'var(--accent)', hard: '#f59e0b' };
+  const bgs = { soft: 'rgba(74,222,128,0.1)', hard: 'rgba(245,158,11,0.1)' };
+  document.querySelectorAll('.dltype-btn').forEach(btn => {
+    const t = btn.dataset.dltype;
+    if (t === type) {
+      btn.style.borderColor = colors[t];
+      btn.style.color = colors[t];
+      btn.style.background = bgs[t];
+    } else {
+      btn.style.borderColor = '#444';
+      btn.style.color = '#888';
+      btn.style.background = 'transparent';
+    }
+  });
+}
 
 function setCreateStatus(status) {
   _createStatus = status;
@@ -3121,6 +3335,7 @@ async function submitCreate() {
         parent_id: projectId || undefined,
         status: _createStatus || 'active',
         deadline: document.getElementById('create-deadline').value || undefined,
+        deadline_type: _createDeadlineType,
         estimate: Math.round((parseFloat(document.getElementById('create-est').value) || 2) * 60),
       })
     });
@@ -3141,7 +3356,7 @@ async function submitCreate() {
   const deadline = document.getElementById('create-deadline').value || undefined;
   const estimate = Math.round((parseFloat(document.getElementById('create-est').value) || 2) * 60);
 
-  const taskPayload = { title: name, task_type: 'task', parent_id: parentId, deadline, estimate, status: _createStatus || 'active' };
+  const taskPayload = { title: name, task_type: 'task', parent_id: parentId, deadline, deadline_type: _createDeadlineType, estimate, status: _createStatus || 'active' };
   const endpoint = _convertingDumpId
     ? '/dashboard/dump/' + _convertingDumpId + '/convert-to-task'
     : '/dashboard/task/create-smart/confirm';
