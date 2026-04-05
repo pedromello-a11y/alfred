@@ -269,10 +269,11 @@ html,body{height:100%;background:var(--bg);color:var(--t1);font-family:system-ui
 .demandas-body{flex:1;overflow-y:auto;padding:16px 24px;max-width:1100px}
 
 /* Tree structure */
-.d-project-group{margin-bottom:28px}
-.d-project-row{display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--b2);cursor:pointer;gap:10px;margin-bottom:4px}
+.d-project-group{margin-bottom:12px;margin-top:32px}
+.d-project-group:first-child{margin-top:0}
+.d-project-row{display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--b2);cursor:pointer;gap:10px;margin-bottom:6px}
 .d-project-row:hover .d-project-name{color:#fff}
-.d-project-name{font-size:16px;font-weight:700;color:var(--t1);flex:1;letter-spacing:-.01em}
+.d-project-name{font-size:18px;font-weight:700;color:var(--t1);flex:1;letter-spacing:-.01em}
 .d-project-stats{font-size:12px;font-weight:400;color:var(--t3);white-space:nowrap}
 .d-status-pill{padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap;flex-shrink:0}
 .sp-active{background:var(--accent-bg);color:var(--accent)}
@@ -281,33 +282,24 @@ html,body{height:100%;background:var(--bg);color:var(--t1);font-family:system-ui
 .sp-done{background:var(--b1);color:var(--t3)}
 
 .d-tree-body{padding-left:0;position:relative}
-.d-tree-line{position:relative;padding-left:24px}
-.d-tree-line::before{content:'';position:absolute;left:8px;top:0;bottom:12px;width:1px;background:var(--b2)}
 
-.d-deliv-row{display:flex;align-items:center;gap:8px;padding:6px 0 4px;cursor:pointer;position:relative}
-.d-deliv-row::before{content:'';position:absolute;left:-16px;top:50%;width:14px;height:1px;background:var(--b2)}
+/* Demanda row (was: deliverable) */
+.d-deliv-row{display:flex;align-items:center;gap:8px;padding:6px 0 4px;cursor:pointer;padding-left:24px;margin-top:12px}
 .d-deliv-row:hover .d-deliv-name{color:var(--t1)}
-.d-deliv-name{font-size:14px;font-weight:600;color:var(--t2);flex:1}
+.d-deliv-name{font-size:15px;font-weight:600;color:var(--t2);flex:1}
+.d-deliv-icon{color:var(--t3);flex-shrink:0;font-size:11px}
 .d-deliv-info{font-size:11px;color:var(--t3);white-space:nowrap}
 
-.d-tasks-line{position:relative;padding-left:24px}
-.d-tasks-line::before{content:'';position:absolute;left:8px;top:0;bottom:12px;width:1px;background:var(--b2)}
-
-.d-task-row{display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;position:relative;border-radius:4px;padding-right:4px}
-.d-task-row::before{content:'';position:absolute;left:-16px;top:50%;width:14px;height:1px;background:var(--b2)}
+/* Subtarefa row (was: task) */
+.d-task-row{display:flex;align-items:center;gap:8px;padding:5px 4px;cursor:pointer;border-radius:4px;padding-left:48px}
 .d-task-row:hover{background:var(--b1)}
-.d-task-icon{width:10px;height:10px;border-radius:50%;flex-shrink:0}
-.d-task-icon.si-active{background:var(--accent)}
-.d-task-icon.si-on_holding{background:var(--yellow)}
-.d-task-icon.si-blocked{background:var(--yellow)}
-.d-task-icon.si-backlog{background:var(--t3);opacity:.5}
-.d-task-icon.si-done{background:var(--t3);opacity:.3}
-.d-task-name{font-size:14px;color:var(--t2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.d-task-icon{flex-shrink:0;font-size:13px;width:14px;text-align:center}
+.d-task-name{font-size:14px;font-weight:400;color:var(--t1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .d-task-dl{font-size:11px;color:var(--t3);white-space:nowrap;flex-shrink:0}
 .d-task-dl.dl-urgent{color:var(--red)}
 .d-task-dl.dl-soon{color:var(--yellow)}
 .d-task-est{font-size:11px;font-family:monospace;color:var(--t3);white-space:nowrap;flex-shrink:0}
-.d-task-bar{width:80px;height:4px;background:var(--b2);border-radius:2px;flex-shrink:0;overflow:hidden}
+.d-task-bar{width:60px;height:3px;background:var(--b2);border-radius:2px;flex-shrink:0;overflow:hidden}
 .d-task-bar-fill{height:100%;background:var(--accent);border-radius:2px}
 .d-blocked-tag{font-size:9px;padding:1px 5px;border-radius:3px;background:var(--red-bg);color:var(--red);flex-shrink:0}
 
@@ -739,14 +731,14 @@ select.form-input{cursor:pointer}
   <div class="modal" style="width:700px;max-width:95vw">
     <div class="modal-header">
       <div style="flex:1;min-width:0">
+        <div style="font-size:10px;color:var(--t3);font-family:monospace;letter-spacing:.08em;text-transform:uppercase;margin-bottom:2px">Projeto</div>
         <input class="form-input" id="pm-title" style="font-size:16px;font-weight:700;background:transparent;border-color:transparent;padding:2px 0;width:100%" onblur="pmSave('title',this.value)">
-        <div style="font-size:11px;color:var(--t3);margin-top:2px">Projeto</div>
       </div>
       <button class="modal-close" onclick="closeProjModal()">×</button>
     </div>
     <div class="modal-body">
       <div class="dmod-summary" id="pm-summary"></div>
-      <label class="form-label">Entregas e tarefas</label>
+      <label class="form-label">Demandas e subtarefas</label>
       <div class="dmod-inner-tree" id="pm-inner-tree"></div>
       <div class="form-group">
         <label class="form-label">Notas</label>
@@ -760,14 +752,14 @@ select.form-input{cursor:pointer}
   </div>
 </div>
 
-<!-- ── Modal ENTREGA ── -->
+<!-- ── Modal DEMANDA (was: Entrega) ── -->
 <div class="modal-bg hidden" id="deliv-modal-bg" onclick="closeDelivModal(event)">
   <div class="modal" style="width:600px;max-width:95vw">
     <div class="modal-header">
       <div style="flex:1;min-width:0">
         <div class="dmod-parent-ref" id="dm-parent-ref"></div>
         <input class="form-input" id="dm-title" style="font-size:15px;font-weight:600;background:transparent;border-color:transparent;padding:2px 0;width:100%" onblur="dmSave('title',this.value)">
-        <div style="font-size:11px;color:var(--t3);margin-top:2px">Entrega</div>
+        <div style="font-size:10px;color:var(--t3);font-family:monospace;letter-spacing:.08em;text-transform:uppercase;margin-top:2px">Demanda</div>
       </div>
       <button class="modal-close" onclick="closeDelivModal()">×</button>
     </div>
@@ -788,28 +780,29 @@ select.form-input{cursor:pointer}
           <input class="form-input" id="dm-jira" placeholder="ex: SOM-6496" onblur="dmSave('origin_ref',this.value)">
         </div>
       </div>
-      <label class="form-label">Tarefas</label>
+      <label class="form-label">Subtarefas</label>
       <div class="dmod-inner-tree" id="dm-tasks-list" style="margin-bottom:8px"></div>
-      <button class="btn btn-sm btn-ghost" onclick="dmNewTask()">+ nova tarefa nessa entrega</button>
+      <button class="btn btn-sm btn-ghost" onclick="dmNewTask()">+ nova subtarefa</button>
       <div class="form-group" style="margin-top:12px">
         <label class="form-label">Notas</label>
         <textarea class="form-input" id="dm-notes" rows="3" style="resize:vertical" onblur="dmSave('notes',this.value)"></textarea>
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-red btn-sm" onclick="deleteDelivCascata()">🗑 excluir entrega</button>
+      <button class="btn btn-red btn-sm" onclick="deleteDelivCascata()">🗑 excluir demanda</button>
       <button class="btn btn-accent btn-sm" onclick="closeDelivModal()">Fechar</button>
     </div>
   </div>
 </div>
 
-<!-- ── Modal TAREFA ── -->
+<!-- ── Modal SUBTAREFA (was: Tarefa) ── -->
 <div class="modal-bg hidden" id="task-modal-bg" onclick="closeTaskModal(event)">
   <div class="modal" style="width:560px;max-width:95vw">
     <div class="modal-header">
       <div style="flex:1;min-width:0">
         <div class="dmod-parent-ref" id="tm-breadcrumb"></div>
         <input class="form-input" id="tm-title" style="font-size:15px;font-weight:700;background:transparent;border-color:transparent;padding:2px 0;width:100%">
+        <div style="font-size:10px;color:var(--t3);font-family:monospace;letter-spacing:.08em;text-transform:uppercase;margin-top:2px">Subtarefa</div>
       </div>
       <button class="modal-close" onclick="closeTaskModal()">×</button>
     </div>
@@ -819,7 +812,7 @@ select.form-input{cursor:pointer}
         <label class="form-label">Status</label>
         <div class="status-btns-row" id="tm-status-btns"></div>
       </div>
-      <!-- Hierarquia -->
+      <!-- Hierarquia (read-only reference) -->
       <div class="form-row">
         <div class="form-group autocomplete-wrap">
           <label class="form-label">Projeto</label>
@@ -827,8 +820,8 @@ select.form-input{cursor:pointer}
           <div class="autocomplete-drop hidden" id="tm-proj-drop"></div>
         </div>
         <div class="form-group autocomplete-wrap">
-          <label class="form-label">Entrega</label>
-          <input class="form-input" id="tm-deliv-input" placeholder="buscar entrega..." autocomplete="off" oninput="tmDelivInput()" onblur="tmDelivBlur()">
+          <label class="form-label">Demanda</label>
+          <input class="form-input" id="tm-deliv-input" placeholder="buscar demanda..." autocomplete="off" oninput="tmDelivInput()" onblur="tmDelivBlur()">
           <div class="autocomplete-drop hidden" id="tm-deliv-drop"></div>
         </div>
       </div>
@@ -906,10 +899,10 @@ select.form-input{cursor:pointer}
         <div class="form-group">
           <label class="form-label">Tipo</label>
           <select class="form-input" id="create-type">
-            <option value="task">task</option>
-            <option value="subtask">subtask</option>
-            <option value="deliverable">deliverable</option>
-            <option value="project">project</option>
+            <option value="task">subtarefa (task)</option>
+            <option value="subtask">subtarefa (subtask)</option>
+            <option value="deliverable">demanda (deliverable)</option>
+            <option value="project">projeto (project)</option>
           </select>
         </div>
         <div class="form-group">
@@ -2333,16 +2326,15 @@ function renderDemandasTree() {
         const childCount = (child.children||[]).length;
         const dlH = child.deadline_human || '';
         html += `<div class="d-deliv-row" onclick="openDelivModal('${child.id}')">
+          <span class="d-deliv-icon">◆</span>
           <div class="d-deliv-name">${getShortName(child)}</div>
-          <div class="d-deliv-info">${childCount} tarefa${childCount!==1?'s':''} ${dlH ? '· ' + dlH : ''}</div>
+          <div class="d-deliv-info">${childCount} subtarefa${childCount!==1?'s':''} ${dlH ? '· ' + dlH : ''}</div>
         </div>`;
         if (child.children && child.children.length) {
-          html += `<div class="d-tasks-line">`;
           child.children.forEach(task => {
             if ((demFilter !== 'all' || demSearchQ) && !taskPassesFilter(task) && !taskMatchesSearch(task)) return;
             html += renderDTaskRow(task);
           });
-          html += `</div>`;
         }
       } else {
         if ((demFilter !== 'all' || demSearchQ) && !taskPassesFilter(child) && !taskMatchesSearch(child)) return;
@@ -2383,7 +2375,7 @@ function renderDTaskRow(task) {
   const name = getShortName(task);
   const pct = (task.estimated_minutes && task.actual_minutes) ? Math.min(100, Math.round(task.actual_minutes/task.estimated_minutes*100)) : 0;
   return `<div class="d-task-row" onclick="openTaskModal('${task.id}')">
-    <div class="d-task-icon ${si.cls}" title="${task.status}"></div>
+    <span class="d-task-icon" title="${task.status}" style="color:${task.blocked?'var(--yellow)':task.status==='active'?'var(--accent)':task.status==='on_holding'?'var(--yellow)':'var(--t3)'}">${si.txt}</span>
     <div class="d-task-name">${name}</div>
     ${task.deadline_human ? `<div class="d-task-dl ${dl}">${task.deadline_human}</div>` : ''}
     ${task.estimated_minutes ? `<div class="d-task-est">${fmtEst(task.estimated_minutes)}</div>` : ''}
@@ -2446,8 +2438,8 @@ async function openProjModal(projId) {
   const nextDl = dls[0] ? new Date(dls[0]).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}) : '—';
 
   document.getElementById('pm-summary').innerHTML = [
-    `<div class="dmod-stat"><strong>${delivCt}</strong>entregas</div>`,
-    `<div class="dmod-stat"><strong>${taskCt}</strong>tarefas</div>`,
+    `<div class="dmod-stat"><strong>${delivCt}</strong>demandas</div>`,
+    `<div class="dmod-stat"><strong>${taskCt}</strong>subtarefas</div>`,
     `<div class="dmod-stat"><strong>${activeCt}</strong>ativas</div>`,
     `<div class="dmod-stat"><strong>${displayEst(totalMins)}</strong>estimado</div>`,
     `<div class="dmod-stat"><strong>${nextDl}</strong>próximo prazo</div>`,
