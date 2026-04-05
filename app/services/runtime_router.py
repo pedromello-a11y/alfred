@@ -865,15 +865,28 @@ def _make_item(origin: str, raw_text: str, item_type: str, extracted_title: str)
     return InboundItem(item_type=item_type, origin=origin, raw_text=raw_text, extracted_title=extracted_title)
 
 
-_BOM_DIA_TRIGGERS = ("bom dia", "bdia", "começando", "comecando", "start", "inicio", "início")
-_FIM_TRIGGERS = ("vou parar", "acabou", "fim do dia", "boa noite", "fui", "encerrar", "stop", "parando")
+_BOM_DIA_TRIGGERS = ("bom dia", "bdia", "começando", "comecando", "inicio", "início")
+_FIM_TRIGGERS = ("vou parar", "acabou", "fim do dia", "boa noite", "encerrar", "parando")
+# triggers de palavra inteira (não devem disparar dentro de outras palavras)
+_BOM_DIA_WORD_TRIGGERS = ("fui",)
+_FIM_WORD_TRIGGERS = ("stop",)
+
+
+def _has_word_trigger(text_lower: str, triggers: tuple) -> bool:
+    import re
+    for t in triggers:
+        if re.search(r'\b' + re.escape(t) + r'\b', text_lower):
+            return True
+    return False
 
 
 async def _check_day_commands(text: str, db: AsyncSession) -> str | None:
     """Checa se é comando de bom dia / vou parar. Retorna resposta ou None."""
     text_lower = text.strip().lower()
-    is_bom_dia = any(t in text_lower for t in _BOM_DIA_TRIGGERS)
-    is_fim = any(t in text_lower for t in _FIM_TRIGGERS)
+    is_bom_dia = (any(t in text_lower for t in _BOM_DIA_TRIGGERS)
+                  or _has_word_trigger(text_lower, _BOM_DIA_WORD_TRIGGERS))
+    is_fim = (any(t in text_lower for t in _FIM_TRIGGERS)
+              or _has_word_trigger(text_lower, _FIM_WORD_TRIGGERS))
     if not is_bom_dia and not is_fim:
         return None
 
@@ -1068,6 +1081,11 @@ async def handle(raw_text: str, origin: str = "whatsapp", db: AsyncSession | Non
 
     decision = await interpreter.interpret_message(raw_text, db)
     if not decision or decision.get("confidence", 0) < 0.6:
+        # ── Context update (long summaries / status dumps) ────────────
+        from app.services.message_handler import _looks_like_context_update, _handle_context_update
+        if _looks_like_context_update(raw_text):
+            response = await _handle_context_update(raw_text, db)
+            return _make_item(origin, raw_text, "update", "context_update"), response, "context_update"
         response, classification = await _handle_unknown_without_legacy(raw_text, db)
         if response:
             return _make_item(origin, raw_text, "idea", classification or "fallback"), response, classification or "fallback"

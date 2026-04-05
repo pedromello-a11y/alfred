@@ -121,9 +121,7 @@ html,body{height:100%;background:var(--bg);color:var(--t1);font-family:system-ui
 
 /* Horizontal progress bar timer */
 .timer-bar-wrap{margin-top:20px;width:min(480px,90%);display:flex;flex-direction:column;gap:8px}
-.timer-bar-time{font-family:monospace;font-size:36px;font-weight:700;color:var(--t1);text-align:center;line-height:1}
-.timer-bar-est{font-family:monospace;font-size:11px;color:var(--t3);text-align:center}
-.timer-bar-track{width:100%;height:8px;border-radius:4px;background:var(--b2);overflow:hidden}
+.timer-bar-track{width:100%;height:22px;border-radius:4px;background:var(--b2);overflow:hidden}
 .timer-bar-fill{height:100%;border-radius:4px;transition:width 1s linear, background .5s}
 .timer-bar-fill.green{background:var(--accent)}
 .timer-bar-fill.yellow{background:var(--yellow)}
@@ -574,10 +572,9 @@ select.form-input{cursor:pointer}
 
         <!-- Horizontal progress bar timer -->
         <div class="timer-bar-wrap" id="timer-bar-wrap">
-          <div class="timer-bar-time" id="timer-time">0:00</div>
-          <div class="timer-bar-est" id="timer-est">/ 0min estimado</div>
-          <div class="timer-bar-track">
+          <div class="timer-bar-track" style="position:relative">
             <div class="timer-bar-fill green" id="timer-bar-fill" style="width:0%"></div>
+            <div id="timer-bar-label" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:monospace;font-size:10px;font-weight:700;color:var(--t2);pointer-events:none;text-shadow:0 1px 2px var(--bg)">0min / 0min</div>
           </div>
           <div class="timer-bar-meta">
             <span id="timer-meta-janela"></span>
@@ -1529,13 +1526,12 @@ function tickTimer() {
 }
 
 function renderTimer() {
-  const timeEl = document.getElementById('timer-time');
   const barFill = document.getElementById('timer-bar-fill');
+  const labelEl = document.getElementById('timer-bar-label');
 
-  const mins = Math.floor(timerElapsed / 60);
-  const secs = timerElapsed % 60;
-  timeEl.textContent = mins + ':' + String(secs).padStart(2,'0');
-  document.getElementById('timer-est').textContent = '/ ' + Math.round(timerEstimate/60) + 'min estimado';
+  const elapsedMins = Math.floor(timerElapsed / 60);
+  const totalMins = Math.round(timerEstimate / 60);
+  if (labelEl) labelEl.textContent = elapsedMins + 'min / ' + totalMins + 'min';
 
   const pct = timerEstimate > 0 ? Math.min(timerElapsed / timerEstimate, 1) : 0;
   barFill.style.width = (pct * 100) + '%';
@@ -2948,9 +2944,16 @@ async function deleteTask() { await tmDelete(); }
 let createType = 'task';
 let _projectsCache = [];
 
-async function openCreateModal(presetType) {
+let _convertingDumpId = null;
+
+function startDumpConvert(dumpId, dumpText) {
+  _convertingDumpId = dumpId;
+  openCreateModal('task', dumpText);
+}
+
+async function openCreateModal(presetType, prefilledTitle) {
   createType = presetType || 'task';
-  document.getElementById('create-title').value = '';
+  document.getElementById('create-title').value = prefilledTitle || '';
   document.getElementById('create-deadline').value = '';
   document.getElementById('create-est').value = '120';
   document.getElementById('createNewProjectName').value = '';
@@ -2976,6 +2979,7 @@ async function openCreateModal(presetType) {
 function closeCreateModal(e) {
   if (e && e.target !== document.getElementById('create-modal-bg')) return;
   document.getElementById('create-modal-bg').classList.add('hidden');
+  _convertingDumpId = null;
 }
 
 function setCreateType(type) {
@@ -3054,7 +3058,7 @@ async function submitCreate() {
       body: JSON.stringify({ title: name, task_type: 'project', status: 'active' })
     });
     const data = await resp.json();
-    if (data.status === 'ok') { closeCreateModal(); _afterCreate(name); }
+    if (data.status === 'ok') { closeCreateModal(); reloadAfterCreate(name); }
     else toast('Erro ao criar projeto');
     return;
   }
@@ -3077,7 +3081,7 @@ async function submitCreate() {
       })
     });
     const data = await resp.json();
-    if (data.status === 'ok') { closeCreateModal(); _afterCreate(name); }
+    if (data.status === 'ok') { closeCreateModal(); reloadAfterCreate(name); }
     else toast('Erro ao criar demanda');
     return;
   }
@@ -3093,31 +3097,34 @@ async function submitCreate() {
   const deadline = document.getElementById('create-deadline').value || undefined;
   const estimate = parseInt(document.getElementById('create-est').value) || 120;
 
-  const resp = await fetch('/dashboard/task/create-smart/confirm', {
+  const taskPayload = { title: name, task_type: 'task', parent_id: parentId, deadline, estimate, status: 'active' };
+  const endpoint = _convertingDumpId
+    ? '/dashboard/dump/' + _convertingDumpId + '/convert-to-task'
+    : '/dashboard/task/create-smart/confirm';
+  const resp = await fetch(endpoint, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ title: name, task_type: 'task', parent_id: parentId, deadline, estimate, status: 'active' })
+    body: JSON.stringify(taskPayload)
   });
   const data = await resp.json();
   if (data.status === 'ok') {
     closeCreateModal();
-    // If came from "dump → demanda", delete the dump
-    if (window._dumpToDeleteAfterCreate) {
-      await fetch('/dashboard/dumps/' + window._dumpToDeleteAfterCreate, {method:'DELETE'}).catch(()=>{});
-      dumpsData = dumpsData.filter(d => d.id !== window._dumpToDeleteAfterCreate);
-      window._dumpToDeleteAfterCreate = null;
+    if (_convertingDumpId) {
+      dumpsData = dumpsData.filter(d => d.id !== _convertingDumpId);
+      _convertingDumpId = null;
       if (currentTab === 'dumps') renderDumps();
     }
-    _afterCreate(name);
+    reloadAfterCreate(name);
   } else {
     toast('Erro: ' + (data.message || 'desconhecido'));
   }
 }
 
-function _afterCreate(name) {
+function reloadAfterCreate(name) {
   toast('Criado: ' + name);
   loadDemandas();
   loadFocoAgendaData();
 }
+
 
 // ════════════════════════════════════════════════
 // PERSONAL ITEMS
@@ -3266,7 +3273,7 @@ function renderDumpItem(d) {
       </div>
     </div>
     <div class="dump-actions">
-      <button class="dump-btn" onclick="dumpToTask('${d.id}')">→ demanda</button>
+      <button class="dump-btn" onclick="startDumpConvert('${d.id}', \`${(d.title||'').replace(/`/g,"'")}\`)">🔄 virar tarefa</button>
       <button class="dump-btn" onclick="dumpToPessoal('${d.id}')">→ pessoal</button>
       <button class="dump-btn" onclick="dumpCatMenu(event,'${d.id}')">🏷</button>
       <button class="dump-btn del" onclick="dumpDel('${d.id}')">✕</button>
@@ -3307,17 +3314,6 @@ async function dumpDel(id) {
   toast('Dump deletado');
 }
 
-function dumpToTask(id) {
-  const d = dumpsData.find(x => x.id === id);
-  if (!d) return;
-  openCreateModal();
-  setTimeout(() => {
-    document.getElementById('create-title').value = d.title;
-    // After create, delete dump
-    const origSubmit = window._origSubmitCreate;
-    window._dumpToDeleteAfterCreate = id;
-  }, 50);
-}
 
 async function dumpToPessoal(id) {
   const d = dumpsData.find(x => x.id === id);

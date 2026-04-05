@@ -880,36 +880,9 @@ async def complete_task_v3(task_id: str, body: dict, db: AsyncSession = Depends(
     if not task:
         return {"status": "error", "message": "not found"}
 
-    task.status = "done"
-    task.completed_at = datetime.now(timezone.utc)
+    from app.services.task_service import complete_task_cascade
     actual = body.get("actual_minutes")
-    if actual:
-        task.actual_minutes = int(actual)
-
-    # Cascade: remove agenda blocks for this task
-    from sqlalchemy import delete as sa_delete
-    await db.execute(sa_delete(AgendaBlock).where(AgendaBlock.task_id == task.id))
-
-    await db.commit()
-
-    # Log média do projeto para uso futuro
-    project = getattr(task, "project", None) or (task.title.split("|")[0].strip() if task.title and "|" in task.title else "")
-    if project and task.actual_minutes:
-        from sqlalchemy import and_
-        import logging as _logging
-        completed = await db.execute(
-            select(Task).where(
-                and_(
-                    Task.status.in_(["done", "completed"]),
-                    Task.actual_minutes.isnot(None),
-                )
-            )
-        )
-        done_tasks = [t for t in completed.scalars().all() if (t.title or "").startswith(project)]
-        if len(done_tasks) >= 3:
-            avg = sum(t.actual_minutes for t in done_tasks) / len(done_tasks)
-            _logging.getLogger(__name__).info(f"Projeto {project}: média real {avg:.0f}min ({len(done_tasks)} tasks)")
-
+    await complete_task_cascade(db, task, actual_minutes=int(actual) if actual else None)
     return {"status": "ok", "title": task.title}
 
 
@@ -943,73 +916,36 @@ async def create_task_smart(body: dict, db: AsyncSession = Depends(get_db)) -> d
 
 @router.post("/task/create-smart/confirm")
 async def confirm_smart_task(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    from app.services.task_service import create_task_unified
+
     title = (body.get("title") or "").strip()
     if not title:
         return {"status": "error", "message": "title required"}
 
-    task_type = body.get("task_type") or "task"
-    if task_type not in ("project", "deliverable", "task"):
-        task_type = "task"
-
-    parent_id_val = None
-    if body.get("parent_id"):
-        try:
-            parent_id_val = UUID(body["parent_id"])
-        except Exception:
-            pass
-
-    # Deadline
     deadline = None
     raw_deadline = body.get("deadline")
-    if raw_deadline and isinstance(raw_deadline, str) and "T" not in raw_deadline:
-        raw_deadline = raw_deadline + "T18:00:00"
     if raw_deadline:
+        if isinstance(raw_deadline, str) and "T" not in raw_deadline:
+            raw_deadline = raw_deadline + "T18:00:00"
         try:
             deadline = datetime.fromisoformat(raw_deadline)
         except ValueError:
             pass
 
-    estimate = body.get("estimate") or 120
-
-    incoming_status = body.get("status") or "active"
-    if incoming_status in ("pending", "in_progress"):
-        incoming_status = "active"
-
-    # Título LIMPO, sem pipes — projeto/demanda vêm via parent_id
-    new_task = Task(
-        title=title,
-        origin="dashboard",
-        status=incoming_status,
-        estimated_minutes=int(estimate),
-        deadline=deadline,
-        category="work",
-        task_type=task_type,
-        parent_id=parent_id_val,
-    )
-    if hasattr(new_task, "deadline_type"):
-        new_task.deadline_type = body.get("deadline_type") or "soft"
-    if hasattr(new_task, "checklist_json"):
-        new_task.checklist_json = []
-    if hasattr(new_task, "notes_json"):
-        new_task.notes_json = []
-
-    db.add(new_task)
-    await db.commit()
-    await db.refresh(new_task)
-
-    # AUTO-AGENDA: só se tem deadline e é tarefa (task)
-    if deadline and task_type == "task":
-        try:
-            from app.services.block_engine import create_task_blocks
-            dl_date = deadline.date() if hasattr(deadline, "date") else deadline
-            today = _today_brt()
-            if dl_date >= today:
-                week_start = dl_date - timedelta(days=dl_date.weekday())
-                week_end = week_start + timedelta(days=4)
-                await create_task_blocks(db=db, task=new_task, week_start=week_start, week_end=week_end)
-        except Exception as _e:
-            import logging
-            logging.getLogger(__name__).warning(f"Auto-agenda failed: {_e}")
+    try:
+        new_task = await create_task_unified(
+            db,
+            title=title,
+            task_type=body.get("task_type") or "task",
+            parent_id=body.get("parent_id"),
+            deadline=deadline,
+            deadline_type=body.get("deadline_type") or "soft",
+            estimated_minutes=body.get("estimate") or 120,
+            origin="dashboard",
+            status=body.get("status") or "active",
+        )
+    except ValueError as e:
+        return {"status": "error", "message": str(e)}
 
     return {"status": "ok", "id": str(new_task.id), "title": new_task.title}
 
@@ -1509,6 +1445,59 @@ async def edit_dump_item(dump_id: str, body: dict, db: AsyncSession = Depends(ge
     return {"ok": True}
 
 
+@router.post("/dump/{dump_id}/convert-to-task")
+async def convert_dump_to_task(dump_id: str, body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    """Converte dump em tarefa. Dump vira nota da task."""
+    from app.services.task_service import create_task_unified
+    try:
+        from uuid import UUID as _UUID
+        dump_uuid = _UUID(dump_id)
+    except ValueError:
+        return {"status": "error", "message": "invalid dump_id"}
+
+    dump_result = await db.execute(select(DumpItem).where(DumpItem.id == dump_uuid))
+    dump = dump_result.scalar_one_or_none()
+    if not dump:
+        return {"status": "error", "message": "dump not found"}
+
+    title = (body.get("title") or dump.rewritten_title or dump.raw_text or "").strip()
+    if not title:
+        return {"status": "error", "message": "title required"}
+
+    deadline = None
+    raw_dl = body.get("deadline")
+    if raw_dl:
+        if isinstance(raw_dl, str) and "T" not in raw_dl:
+            raw_dl = raw_dl + "T18:00:00"
+        try:
+            deadline = datetime.fromisoformat(raw_dl)
+        except ValueError:
+            pass
+
+    notes_initial = f"[Dump original] {dump.raw_text or ''}"
+    if dump.summary:
+        notes_initial += f"\n[Resumo] {dump.summary}"
+
+    try:
+        new_task = await create_task_unified(
+            db,
+            title=title,
+            task_type=body.get("task_type") or "task",
+            parent_id=body.get("parent_id"),
+            deadline=deadline,
+            estimated_minutes=body.get("estimate") or 120,
+            origin="dump_converted",
+            notes_initial=notes_initial,
+        )
+    except ValueError as e:
+        return {"status": "error", "message": str(e)}
+
+    dump.status = "converted"
+    await db.commit()
+
+    return {"status": "ok", "task_id": str(new_task.id), "title": new_task.title, "dump_id": str(dump.id)}
+
+
 @router.post("/task/{task_id}/deadline-type")
 async def update_deadline_type(task_id: str, body: dict, db: AsyncSession = Depends(get_db)):
     try:
@@ -1829,23 +1818,24 @@ class CreateTaskPayload(BaseModel):
 
 @router.post("/create-task")
 async def dashboard_create_task(payload: CreateTaskPayload, db: AsyncSession = Depends(get_db)) -> dict:
+    from app.services.task_service import create_task_unified
+
     title = (payload.title or "").strip()
     if not title:
         return {"status": "error", "message": "title is required"}
-    project = (payload.project or "").strip()
-    full_title = f"{project} | {title}" if project else title
-    if hasattr(task_manager, "canonicalize_task_title"):
-        full_title = task_manager.canonicalize_task_title(full_title)
+
     deadline = None
     if payload.date:
         try:
             deadline = datetime.fromisoformat(payload.date)
         except ValueError:
             pass
-    new_task = Task(title=full_title, origin="dashboard", status="pending", priority=payload.priority, deadline=deadline, category="work")
-    db.add(new_task)
-    await db.commit()
-    await db.refresh(new_task)
+
+    try:
+        new_task = await create_task_unified(db, title=title, deadline=deadline, origin="dashboard")
+    except ValueError as e:
+        return {"status": "error", "message": str(e)}
+
     return {"status": "ok", "id": str(new_task.id), "title": new_task.title}
 
 
@@ -1992,17 +1982,6 @@ def _jira_auth_headers() -> dict:
 def _jira_configured() -> bool:
     return bool(settings.jira_base_url and settings.jira_email and settings.jira_api_token)
 
-
-_JIRA_PRIORITY_MAP = {"Lowest": 1, "Low": 2, "Medium": 3, "High": 4, "Highest": 5}
-
-_JIRA_PROJECT_NAMES: dict[str, str] = {
-    "SOM": "Squad Operação Marcom",
-}
-
-
-def _jira_project_name(key: str) -> str:
-    prefix = key.split("-")[0] if "-" in key else key
-    return _JIRA_PROJECT_NAMES.get(prefix, prefix)
 
 
 def _jira_issue_to_dict(issue: dict, linked_keys: set[str]) -> dict:
@@ -2163,9 +2142,7 @@ async def jira_import_issues(payload: JiraImportPayload, db: AsyncSession = Depe
             continue
 
         fields = issue.get("fields", {})
-        project_name = _jira_project_name(key)
         summary = fields.get("summary", key)
-        full_title = f"{project_name} | {summary}"
 
         deadline = None
         if fields.get("duedate"):
@@ -2173,9 +2150,6 @@ async def jira_import_issues(payload: JiraImportPayload, db: AsyncSession = Depe
                 deadline = datetime.fromisoformat(fields["duedate"])
             except Exception:
                 pass
-
-        priority_name = (fields.get("priority") or {}).get("name", "Medium")
-        priority_int = _JIRA_PRIORITY_MAP.get(priority_name, 3)
 
         description_raw = fields.get("description") or {}
         desc_text = ""
@@ -2197,32 +2171,28 @@ async def jira_import_issues(payload: JiraImportPayload, db: AsyncSession = Depe
                 "created_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             })
 
-        new_task = Task(
-            title=full_title,
-            origin="jira",
-            origin_ref=key,
-            status="pending",
-            priority=priority_int,
-            deadline=deadline,
-            category="work",
-            estimated_minutes=120,
-            notes_json=notes_json if notes_json else None,
-        )
-        db.add(new_task)
+        from app.services.task_service import create_task_unified
+        notes_initial = f"[Jira] {desc_text[:500]}" if desc_text.strip() else None
         try:
-            await db.flush()
+            new_task = await create_task_unified(
+                db,
+                title=summary,
+                task_type="task",
+                deadline=deadline,
+                estimated_minutes=120,
+                origin="jira",
+                origin_ref=key,
+                notes_initial=notes_initial,
+            )
             imported_tasks.append({
-                "key": key,
-                "status": "imported",
-                "id": str(new_task.id),
-                "title": full_title,
+                "key": key, "status": "imported",
+                "id": str(new_task.id), "title": summary,
             })
         except Exception as e:
-            await db.rollback()
             imported_tasks.append({"key": key, "status": "error", "message": str(e)})
             continue
 
-    await db.commit()
+
     imported_count = sum(1 for t in imported_tasks if t.get("status") == "imported")
     return {"imported": imported_count, "tasks": imported_tasks}
 
@@ -2301,39 +2271,31 @@ Responda APENAS com JSON válido (sem markdown):
         intent = parsed.get("intent", "unclear")
 
         if intent == "create_task":
-            title = parsed.get("task_title") or text
-            project = parsed.get("project") or ""
-            full_title = f"{project} | {title}" if project else title
+            from app.services.task_service import create_task_unified
+            title = (parsed.get("task_title") or text).strip()
             deadline = None
             if parsed.get("deadline"):
                 try:
                     deadline = datetime.fromisoformat(parsed["deadline"] + "T18:00:00")
                 except Exception:
                     pass
-            new_task = Task(
-                title=full_title, origin="alfred_input", status="active",
-                estimated_minutes=120, deadline=deadline, category="work", task_type="task",
-                checklist_json=[], notes_json=[],
+            new_task = await create_task_unified(
+                db, title=title, task_type="task", deadline=deadline,
+                origin="alfred_input",
             )
-            db.add(new_task)
-            await db.commit()
-            await db.refresh(new_task)
-            result = {"type": "task_created", "id": str(new_task.id), "title": full_title,
+            result = {"type": "task_created", "id": str(new_task.id), "title": new_task.title,
                       "deadline": deadline.isoformat() if deadline else None,
-                      "message": f"Tarefa criada: {full_title}"}
+                      "message": f"Tarefa criada: {new_task.title}"}
 
         elif intent == "complete_task":
+            from app.services.task_service import complete_task_cascade
             task_id = parsed.get("target_task_id")
             if task_id:
                 try:
                     _r = await db.execute(select(Task).where(Task.id == UUID(task_id)))
                     _t = _r.scalar_one_or_none()
                     if _t:
-                        _t.status = "done"
-                        _t.completed_at = datetime.now(timezone.utc)
-                        from sqlalchemy import delete as sa_delete
-                        await db.execute(sa_delete(AgendaBlock).where(AgendaBlock.task_id == _t.id))
-                        await db.commit()
+                        await complete_task_cascade(db, _t)
                         result = {"type": "task_completed", "title": _t.title,
                                   "message": f"✅ Concluída: {_t.title}"}
                     else:
