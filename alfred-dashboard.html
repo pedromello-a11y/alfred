@@ -269,12 +269,35 @@ html,body{height:100%;background:var(--bg);color:var(--t1);font-family:system-ui
 .demandas-body{flex:1;overflow-y:auto;padding:16px 24px;max-width:1100px}
 
 /* Tree structure */
-.d-project-group{margin-bottom:12px;margin-top:32px}
-.d-project-group:first-child{margin-top:0}
-.d-project-row{display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--b2);cursor:pointer;gap:10px;margin-bottom:6px}
-.d-project-row:hover .d-project-name{color:#fff}
-.d-project-name{font-size:18px;font-weight:700;color:var(--t1);flex:1;letter-spacing:-.01em}
-.d-project-stats{font-size:12px;font-weight:400;color:var(--t3);white-space:nowrap}
+.dem-tree{font-size:14px}
+.dem-project{padding:10px 0;border-bottom:1px solid var(--b2);cursor:default}
+.dem-project.radar{opacity:.5}
+.dem-project.holding{opacity:.75}
+.dem-project-header{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700;cursor:pointer;padding:2px 0}
+.dem-project-header:hover .dem-project-name{color:#fff}
+.dem-toggle{width:16px;color:var(--t3);cursor:pointer;user-select:none;flex-shrink:0;font-size:12px}
+.dem-project-name{flex:1;color:var(--t1)}
+.dem-project-status{font-size:11px;padding:2px 8px;border-radius:10px;white-space:nowrap;flex-shrink:0}
+.dem-project-status.active{color:var(--accent)}
+.dem-project-status.holding{color:var(--yellow)}
+.dem-project-status.radar{color:var(--t3)}
+.dem-project-stats{font-size:11px;color:var(--t3);white-space:nowrap}
+.dem-tree-line{border-left:1px solid var(--b2);margin-left:8px;padding-left:16px;margin-top:4px}
+.dem-deliverable{padding:6px 0;display:flex;align-items:center;gap:8px;cursor:pointer}
+.dem-deliverable:hover .dem-deliv-name{color:var(--t1)}
+.dem-deliv-name{font-size:14px;font-weight:600;color:var(--t2);flex:1}
+.dem-task{display:flex;align-items:center;gap:8px;padding:4px 0 4px 20px;cursor:pointer;border-radius:4px}
+.dem-task:hover{background:var(--b1)}
+.dem-task-name{flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t1)}
+.dem-deadline{font-size:11px;white-space:nowrap;flex-shrink:0}
+.dem-deadline.hard{color:var(--yellow)}
+.dem-deadline.soft{color:var(--t3)}
+.dem-deadline.overdue{color:var(--red);font-weight:600}
+.dem-est{font-size:11px;font-family:monospace;color:var(--t3);white-space:nowrap;flex-shrink:0}
+.dem-progress{width:60px;height:4px;background:var(--b2);border-radius:2px;overflow:hidden;flex-shrink:0}
+.dem-progress-fill{height:100%;border-radius:2px}
+.dem-blocked{font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(239,68,68,.15);color:var(--red);flex-shrink:0}
+/* compat: keep old classes used elsewhere */
 .d-status-pill{padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap;flex-shrink:0}
 .sp-active{background:var(--accent-bg);color:var(--accent)}
 .sp-on_holding{background:var(--yellow-bg);color:var(--yellow)}
@@ -2464,6 +2487,45 @@ function _dragAttrs(id, level, parent) {
   return `data-id="${id}" data-level="${level}" ${parent ? `data-parent="${parent}"` : ''}`;
 }
 
+// ── Collapse state ────────────────────────────────────────────────────────
+function _demCollapsed(id) {
+  try { return JSON.parse(localStorage.getItem('dem_collapsed') || '{}')[id] === true; } catch { return false; }
+}
+function _demToggleCollapse(id, defaultExpanded) {
+  let state = {};
+  try { state = JSON.parse(localStorage.getItem('dem_collapsed') || '{}'); } catch {}
+  const cur = state[id] !== undefined ? state[id] : !defaultExpanded;
+  state[id] = !cur;
+  localStorage.setItem('dem_collapsed', JSON.stringify(state));
+  renderDemandasTree();
+}
+function _demIsExpanded(id, defaultExpanded) {
+  try {
+    const state = JSON.parse(localStorage.getItem('dem_collapsed') || '{}');
+    return state[id] !== undefined ? !state[id] : defaultExpanded;
+  } catch { return defaultExpanded; }
+}
+
+// ── Deadline badge ─────────────────────────────────────────────────────────
+function _demDlBadge(deadline, deadlineType) {
+  if (!deadline) return '';
+  const d = new Date(deadline + 'T00:00:00');
+  const today = new Date(); today.setHours(0,0,0,0);
+  const str = d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+  if (d < today) return `<span class="dem-deadline overdue">⚠ ${str}</span>`;
+  if (deadlineType === 'hard') return `<span class="dem-deadline hard">📌 ${str}</span>`;
+  if (deadline) return `<span class="dem-deadline soft">~${str}</span>`;
+  return '';
+}
+
+// ── Progress bar ──────────────────────────────────────────────────────────
+function _demProgress(task) {
+  const pct = getTaskProgress(task);
+  if (!pct) return `<div class="dem-progress"><div class="dem-progress-fill" style="width:0%;background:var(--b2)"></div></div>`;
+  const color = pct >= 100 ? 'var(--accent)' : pct >= 50 ? 'var(--blue)' : 'var(--yellow)';
+  return `<div class="dem-progress"><div class="dem-progress-fill" style="width:${Math.min(100,pct)}%;background:${color}"></div></div>`;
+}
+
 // ── Main render ───────────────────────────────────────────────────────────
 function renderDemandasTree() {
   const el = document.getElementById('demandas-body');
@@ -2472,156 +2534,180 @@ function renderDemandasTree() {
     return;
   }
 
-  let html = '';
+  let html = '<div class="dem-tree">';
   const projects = demandasData.filter(p => p.task_type === 'project');
 
-  projects.forEach(proj => {
-    let totalTasks = 0, activeCt = 0, holdingCt = 0, totalMins = 0;
-    const nextDls = [];
-    function walkStats(node) {
-      if (node.task_type !== 'project' && node.task_type !== 'deliverable') {
-        totalTasks++;
-        if ((node.status === 'active' || node.status === 'in_progress') && !node.blocked) activeCt++;
-        if (node.status === 'on_holding' || node.blocked) holdingCt++;
-        if (node.estimated_minutes) totalMins += node.estimated_minutes;
-        if (node.deadline) nextDls.push(node.deadline);
-      }
-      (node.children||[]).forEach(walkStats);
-    }
-    (proj.children||[]).forEach(walkStats);
-    nextDls.sort();
+  // Sort projects: by sort_order first, then nearest deadline, then no deadline
+  const sortedProjects = [...projects].sort((a, b) => {
+    const aOrder = a.sort_order != null ? a.sort_order : 9999;
+    const bOrder = b.sort_order != null ? b.sort_order : 9999;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    const aDl = a.deadline || '9999';
+    const bDl = b.deadline || '9999';
+    return aDl < bDl ? -1 : aDl > bDl ? 1 : 0;
+  });
 
-    const statsStr = [
-      activeCt && `${activeCt} ativa${activeCt!==1?'s':''}`,
-      holdingCt && `${holdingCt} holding`,
-    ].filter(Boolean).join(' · ') || 'sem tarefas ativas';
+  function anyPasses(node) {
+    if (taskPassesFilter(node) && taskMatchesSearch(node)) return true;
+    return (node.children||[]).some(anyPasses);
+  }
 
-    function anyPasses(node) {
-      if (taskPassesFilter(node) && taskMatchesSearch(node)) return true;
-      return (node.children||[]).some(anyPasses);
-    }
+  sortedProjects.forEach(proj => {
     if (demFilter !== 'all' || demSearchQ) {
       if (!anyPasses(proj) && !taskMatchesSearch(proj)) return;
     }
 
-    const nearestDlStr = nextDls[0] ? new Date(nextDls[0]).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}) : '';
+    // Collect stats
+    let totalTasks = 0, activeCt = 0, totalMins = 0;
+    const taskDls = [];
+    function walkStats(node) {
+      if (node.task_type === 'task') {
+        totalTasks++;
+        if (node.status === 'active' || node.status === 'in_progress') activeCt++;
+        if (node.estimated_minutes) totalMins += node.estimated_minutes;
+        if (node.deadline) taskDls.push(node.deadline);
+      }
+      (node.children||[]).forEach(walkStats);
+    }
+    (proj.children||[]).forEach(walkStats);
+    taskDls.sort();
 
-    html += `<div class="d-project-group dem-draggable" draggable="true" ${_dragAttrs(proj.id,'project',null)}
-              style="border:2px solid transparent;border-radius:8px;transition:border-color .15s"
+    const projStatus = proj.status || 'active';
+    const projClass = projStatus === 'backlog' ? 'radar' : projStatus === 'on_holding' ? 'holding' : '';
+    const statusLabel = projStatus === 'active' ? '● Ativa' : projStatus === 'on_holding' ? '◐ Aguardando' : '○ No Radar';
+    const statusCls = projStatus === 'active' ? 'active' : projStatus === 'on_holding' ? 'holding' : 'radar';
+    const defaultExpanded = projStatus === 'active';
+    const expanded = _demIsExpanded(proj.id, defaultExpanded);
+    const toggle = expanded ? '▼' : '▶';
+    const nearestDl = taskDls[0] || null;
+    const nearestDlBadge = nearestDl ? _demDlBadge(nearestDl, 'hard') : '';
+    const statsStr = `${activeCt} ativa${activeCt!==1?'s':''} · ${fmtEst(totalMins)}`;
+
+    html += `<div class="dem-project ${projClass} dem-draggable" draggable="true" ${_dragAttrs(proj.id,'project',null)}
+              style="border:2px solid transparent;border-radius:6px;transition:border-color .15s"
               ondragstart="_onDemDragStart(event)" ondragover="_onDemDragOver(event)"
               ondragleave="_onDemDragLeave(event)" ondrop="_onDemDrop(event)" ondragend="_onDemDragEnd(event)">
-      <div class="d-project-row" onclick="openProjModal('${proj.id}')">
-        <div style="flex:1;min-width:0">
-          <div class="d-project-name">${proj.title}</div>
-          <div class="d-project-stats">${statsStr} · ${fmtEst(totalMins)}${nearestDlStr ? ` · 📅 ${nearestDlStr}` : ''}</div>
-        </div>
-        <span class="d-status-pill sp-${proj.status}">${proj.status}</span>
-      </div>
-      <div class="d-tree-body"><div class="d-tree-line">`;
+      <div class="dem-project-header" onclick="event.stopPropagation();_demToggleCollapse('${proj.id}',${defaultExpanded})">
+        <span class="dem-toggle">${toggle}</span>
+        <span class="dem-project-name">${proj.title}</span>
+        ${nearestDlBadge}
+        <span class="dem-project-stats">${statsStr}</span>
+        <span class="dem-project-status ${statusCls}" onclick="event.stopPropagation();openProjModal('${proj.id}')">${statusLabel}</span>
+      </div>`;
 
-    (proj.children||[]).forEach(child => {
-      if (child.task_type === 'deliverable') {
-        const childCount = (child.children||[]).length;
-        const dlBadge = renderDeadlineBadge(child.deadline, child.deadline_type || child.deadlineType);
+    if (expanded) {
+      html += `<div class="dem-tree-line">`;
 
-        html += `<div class="d-deliv-row dem-draggable" draggable="true" ${_dragAttrs(child.id,'deliverable',proj.id)}
-                  style="border:1px solid transparent;border-radius:6px;transition:border-color .15s"
+      // Sort children: deliverables first by deadline_type+deadline, then tasks
+      const children = proj.children || [];
+      const delivs = children.filter(c => c.task_type === 'deliverable');
+      const directTasks = children.filter(c => c.task_type === 'task');
+
+      // Sort deliverables: hard deadline ASC, soft ASC, no deadline last
+      const sortedDelivs = [...delivs].sort((a, b) => {
+        const aHard = (a.deadline_type||a.deadlineType) === 'hard' ? 0 : (a.deadline_type||a.deadlineType) === 'soft' ? 1 : 2;
+        const bHard = (b.deadline_type||b.deadlineType) === 'hard' ? 0 : (b.deadline_type||b.deadlineType) === 'soft' ? 1 : 2;
+        if (aHard !== bHard) return aHard - bHard;
+        return (a.deadline||'9999') < (b.deadline||'9999') ? -1 : 1;
+      });
+
+      sortedDelivs.forEach(deliv => {
+        const delivExpanded = _demIsExpanded(deliv.id, true);
+        const delivToggle = delivExpanded ? '▼' : '▶';
+        const childCount = (deliv.children||[]).length;
+        const dlBadge = _demDlBadge(deliv.deadline, deliv.deadline_type || deliv.deadlineType);
+        const delivMins = (deliv.children||[]).reduce((s,t) => s+(t.estimated_minutes||0), 0);
+
+        html += `<div class="dem-deliverable dem-draggable" draggable="true" ${_dragAttrs(deliv.id,'deliverable',proj.id)}
+                  style="border:1px solid transparent;border-radius:4px;transition:border-color .15s"
                   ondragstart="_onDemDragStart(event)" ondragover="_onDemDragOver(event)"
                   ondragleave="_onDemDragLeave(event)" ondrop="_onDemDrop(event)" ondragend="_onDemDragEnd(event)">
-          <div style="display:flex;align-items:center;gap:6px;cursor:pointer" onclick="openDelivModal('${child.id}')">
-            <span class="d-deliv-icon">◆</span>
-            <div class="d-deliv-name">${getShortName(child)}</div>
-            ${dlBadge}
-            <div class="d-deliv-info" style="margin-left:auto">${childCount} tarefa${childCount!==1?'s':''} · ${fmtEst(child.estimated_minutes||0)}</div>
-          </div>`;
+          <span class="dem-toggle" onclick="event.stopPropagation();_demToggleCollapse('${deliv.id}',true)">${delivToggle}</span>
+          <span style="color:var(--t3);font-size:11px">◆</span>
+          <span class="dem-deliv-name" onclick="openDelivModal('${deliv.id}')">${getShortName(deliv)}</span>
+          ${dlBadge}
+          <span class="dem-est" style="margin-left:auto">${childCount} tarefa${childCount!==1?'s':''} · ${fmtEst(delivMins)}</span>
+        </div>`;
 
-        if (child.children && child.children.length) {
-          child.children.forEach(task => {
+        if (delivExpanded && deliv.children && deliv.children.length) {
+          html += `<div style="border-left:1px solid var(--b2);margin-left:20px;padding-left:12px">`;
+          deliv.children.forEach(task => {
             if ((demFilter !== 'all' || demSearchQ) && !taskPassesFilter(task) && !taskMatchesSearch(task)) return;
-            const pct = getTaskProgress(task);
-            const dlBadgeT = renderDeadlineBadge(task.deadline, task.deadline_type || task.deadlineType);
-            const statusColor = task.blocked ? 'var(--yellow)' : task.status==='active'?'var(--accent)':task.status==='on_holding'?'var(--yellow)':'var(--t3)';
             const si = statusIcon(task.status, task.blocked);
-            html += `<div class="d-task-row dem-draggable" draggable="true" ${_dragAttrs(task.id,'task',child.id)}
-                      style="border:1px solid transparent;border-radius:4px;cursor:grab;transition:border-color .15s"
+            const statusColor = task.blocked ? 'var(--yellow)' : task.status==='active'?'var(--accent)':task.status==='on_holding'?'var(--yellow)':'var(--t3)';
+            const dlBadgeT = _demDlBadge(task.deadline, task.deadline_type || task.deadlineType);
+            html += `<div class="dem-task dem-draggable" draggable="true" ${_dragAttrs(task.id,'task',deliv.id)}
+                      style="border:1px solid transparent;transition:border-color .15s"
                       ondragstart="_onDemDragStart(event)" ondragover="_onDemDragOver(event)"
                       ondragleave="_onDemDragLeave(event)" ondrop="_onDemDrop(event)" ondragend="_onDemDragEnd(event)"
                       onclick="openTaskModal('${task.id}')">
-              <span class="d-task-icon" style="color:${statusColor}">${si.txt}</span>
-              <div class="d-task-name">${getShortName(task)}</div>
-              <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
-                ${dlBadgeT}
-                <span class="d-task-est">${fmtEst(task.estimated_minutes)}</span>
-                ${renderProgressBar(pct)}
-              </div>
-              ${task.blocked ? '<span class="d-blocked-tag">🔒</span>' : ''}
+              <span style="color:${statusColor};font-size:13px;flex-shrink:0">${si.txt}</span>
+              <span class="dem-task-name">${getShortName(task)}</span>
+              ${dlBadgeT}
+              <span class="dem-est">${fmtEst(task.estimated_minutes)}</span>
+              ${_demProgress(task)}
+              ${task.blocked ? '<span class="dem-blocked">🔒</span>' : ''}
             </div>`;
           });
+          html += `</div>`;
         }
-        html += `</div>`;  // close d-deliv-row
+      });
 
-      } else {
-        if ((demFilter !== 'all' || demSearchQ) && !taskPassesFilter(child) && !taskMatchesSearch(child)) return;
-        const pct = getTaskProgress(child);
-        const dlBadgeC = renderDeadlineBadge(child.deadline, child.deadline_type || child.deadlineType);
-        const statusColor = child.blocked ? 'var(--yellow)' : child.status==='active'?'var(--accent)':child.status==='on_holding'?'var(--yellow)':'var(--t3)';
-        const si = statusIcon(child.status, child.blocked);
-        html += `<div class="d-task-row dem-draggable" draggable="true" ${_dragAttrs(child.id,'task',proj.id)}
-                  style="border:1px solid transparent;border-radius:4px;cursor:grab;transition:border-color .15s"
+      // Direct tasks under project
+      directTasks.forEach(task => {
+        if ((demFilter !== 'all' || demSearchQ) && !taskPassesFilter(task) && !taskMatchesSearch(task)) return;
+        const si = statusIcon(task.status, task.blocked);
+        const statusColor = task.blocked ? 'var(--yellow)' : task.status==='active'?'var(--accent)':task.status==='on_holding'?'var(--yellow)':'var(--t3)';
+        const dlBadgeT = _demDlBadge(task.deadline, task.deadline_type || task.deadlineType);
+        html += `<div class="dem-task dem-draggable" draggable="true" ${_dragAttrs(task.id,'task',proj.id)}
+                  style="border:1px solid transparent;transition:border-color .15s"
                   ondragstart="_onDemDragStart(event)" ondragover="_onDemDragOver(event)"
                   ondragleave="_onDemDragLeave(event)" ondrop="_onDemDrop(event)" ondragend="_onDemDragEnd(event)"
-                  onclick="openTaskModal('${child.id}')">
-          <span class="d-task-icon" style="color:${statusColor}">${si.txt}</span>
-          <div class="d-task-name">${getShortName(child)}</div>
-          <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
-            ${dlBadgeC}
-            <span class="d-task-est">${fmtEst(child.estimated_minutes)}</span>
-            ${renderProgressBar(pct)}
-          </div>
-          ${child.blocked ? '<span class="d-blocked-tag">🔒</span>' : ''}
+                  onclick="openTaskModal('${task.id}')">
+          <span style="color:${statusColor};font-size:13px;flex-shrink:0">${si.txt}</span>
+          <span class="dem-task-name">${getShortName(task)}</span>
+          ${dlBadgeT}
+          <span class="dem-est">${fmtEst(task.estimated_minutes)}</span>
+          ${_demProgress(task)}
+          ${task.blocked ? '<span class="dem-blocked">🔒</span>' : ''}
         </div>`;
-      }
-    });
+      });
 
-    html += `</div></div></div>`;
+      html += `</div>`; // dem-tree-line
+    }
+
+    html += `</div>`; // dem-project
   });
 
-  // Tarefas órfãs — sem header, lista discreta no final
+  // Tarefas órfãs
   const semProjNode = demandasData.find(p => p.task_type === 'none' || p.id === null);
   const avulsas = semProjNode
     ? (semProjNode.children || semProjNode.deliverables || [])
     : demandasData.filter(p => p.task_type === 'task' && !p.parent_id);
 
-  if (avulsas.length) {
-    const avItems = avulsas.filter(t => {
-      if ((demFilter !== 'all' || demSearchQ) && !taskPassesFilter(t) && !taskMatchesSearch(t)) return false;
-      return true;
+  const avItems = avulsas.filter(t => {
+    if ((demFilter !== 'all' || demSearchQ) && !taskPassesFilter(t) && !taskMatchesSearch(t)) return false;
+    return true;
+  });
+  if (avItems.length) {
+    html += `<div style="margin-top:20px;padding-top:14px;border-top:1px solid #222;opacity:.8">`;
+    avItems.forEach(t => {
+      const si = statusIcon(t.status, t.blocked);
+      const dlBadge = _demDlBadge(t.deadline, t.deadline_type || t.deadlineType);
+      html += `<div class="dem-task" onclick="openTaskModal('${t.id}')">
+        <span style="color:var(--t3);font-size:13px;flex-shrink:0">${si.txt}</span>
+        <span class="dem-task-name">${getShortName(t)}</span>
+        ${dlBadge}
+        <span class="dem-est">${fmtEst(t.estimated_minutes)}</span>
+        ${_demProgress(t)}
+      </div>`;
     });
-    if (avItems.length) {
-      html += `<div style="margin-top:24px;padding-top:16px;border-top:1px solid #222;opacity:.8">`;
-      avItems.forEach((t, idx) => {
-        const pct = getTaskProgress(t);
-        const dlBadge = renderDeadlineBadge(t.deadline, t.deadline_type || t.deadlineType);
-        html += `<div class="d-task-row dem-draggable" draggable="true"
-                  data-id="${t.id}" data-level="task" data-parent="orphan"
-                  style="border:1px solid transparent;border-radius:4px;cursor:grab;opacity:.75;transition:border-color .15s"
-                  ondragstart="_onDemDragStart(event)" ondragover="_onDemDragOver(event)"
-                  ondragleave="_onDemDragLeave(event)" ondrop="_onDemDrop(event)" ondragend="_onDemDragEnd(event)"
-                  onclick="openTaskModal('${t.id}')">
-          <span class="d-task-icon" style="color:var(--t3)">○</span>
-          <div class="d-task-name">${getShortName(t)}</div>
-          <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
-            ${dlBadge}
-            <span class="d-task-est">${fmtEst(t.estimated_minutes)}</span>
-            ${renderProgressBar(pct)}
-          </div>
-        </div>`;
-      });
-      html += `</div>`;
-    }
+    html += `</div>`;
   }
 
-  if (!html) {
+  html += '</div>'; // dem-tree
+
+  if (!html || html === '<div class="dem-tree"></div>') {
     el.innerHTML = '<div style="color:var(--t3);padding:20px;font-size:13px">Nenhuma tarefa com esse filtro.</div>';
     return;
   }
@@ -2679,48 +2765,75 @@ async function openProjModal(projId) {
   document.getElementById('pm-title').value = proj.title || '';
   document.getElementById('pm-notes').value = proj.notes || '';
 
-  // Stats
-  let delivCt = 0, taskCt = 0, activeCt = 0, totalMins = 0;
+  // Stats — walk full tree
+  let delivCt = 0, taskCt = 0, activeCt = 0, doneCt = 0, totalMins = 0;
   const dls = [];
   function walk(node) {
-    if (node.task_type === 'deliverable') delivCt++;
-    else if (node.task_type !== 'project') {
+    if (node.task_type === 'deliverable') { delivCt++; }
+    else if (node.task_type === 'task') {
       taskCt++;
       if (node.estimated_minutes) totalMins += node.estimated_minutes;
       if (node.status === 'active' || node.status === 'in_progress') activeCt++;
+      if (node.status === 'done') doneCt++;
       if (node.deadline) dls.push(node.deadline);
     }
     (node.children||[]).forEach(walk);
   }
   (proj.children||[]).forEach(walk);
   dls.sort();
-  const nextDl = dls[0] ? new Date(dls[0]).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}) : '—';
+  const nextDl = dls[0] ? new Date(dls[0]+' ').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}) : '—';
+
+  // Status selector
+  const projStatus = proj.status || 'active';
+  const statusSelect = `<select id="pm-status-sel" onchange="pmSetStatus('${proj.id}',this.value)"
+    style="background:var(--b1);color:var(--t1);border:1px solid var(--b2);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer">
+    <option value="active" ${projStatus==='active'?'selected':''}>● Ativa</option>
+    <option value="on_holding" ${projStatus==='on_holding'?'selected':''}>◐ Aguardando</option>
+    <option value="backlog" ${projStatus==='backlog'?'selected':''}>○ No Radar</option>
+  </select>`;
 
   document.getElementById('pm-summary').innerHTML = [
     `<div class="dmod-stat"><strong>${delivCt}</strong>demandas</div>`,
     `<div class="dmod-stat"><strong>${taskCt}</strong>tarefas</div>`,
     `<div class="dmod-stat"><strong>${activeCt}</strong>ativas</div>`,
-    `<div class="dmod-stat"><strong>${displayEst(totalMins)}</strong>estimado</div>`,
+    `<div class="dmod-stat"><strong>${fmtEst(totalMins)}</strong>estimado</div>`,
     `<div class="dmod-stat"><strong>${nextDl}</strong>próximo prazo</div>`,
+    `<div class="dmod-stat" style="border:none;padding:0">${statusSelect}</div>`,
   ].join('');
 
   // Inner tree
   let treeHtml = '';
-  (proj.children||[]).forEach(deliv => {
-    treeHtml += `<div class="dmod-deliv-line">${getShortName(deliv)}</div>`;
-    (deliv.children||[]).forEach(task => {
-      const si = statusIcon(task.status, task.blocked);
-      treeHtml += `<div class="dmod-task-line" onclick="openTaskModal('${task.id}')">
+  (proj.children||[]).forEach(node => {
+    if (node.task_type === 'deliverable') {
+      treeHtml += `<div class="dmod-deliv-line" style="cursor:pointer" onclick="closeModal('proj-modal-bg');openDelivModal('${node.id}')">◆ ${getShortName(node)}</div>`;
+      (node.children||[]).forEach(task => {
+        const si = statusIcon(task.status, task.blocked);
+        treeHtml += `<div class="dmod-task-line" onclick="openTaskModal('${task.id}')">
+          <span style="color:var(--accent)">${si.txt}</span>
+          <span>${getShortName(task)}</span>
+          ${task.estimated_minutes ? `<span style="margin-left:auto;font-family:monospace;font-size:10px;color:var(--t3)">${fmtEst(task.estimated_minutes)}</span>` : ''}
+        </div>`;
+      });
+    } else if (node.task_type === 'task') {
+      const si = statusIcon(node.status, node.blocked);
+      treeHtml += `<div class="dmod-task-line" onclick="openTaskModal('${node.id}')">
         <span style="color:var(--accent)">${si.txt}</span>
-        <span>${getShortName(task)}</span>
-        ${task.estimated_minutes ? `<span style="margin-left:auto;font-family:monospace;font-size:10px;color:var(--t3)">${fmtEst(task.estimated_minutes)}</span>` : ''}
-        ${task.deadline_human ? `<span style="font-size:10px;color:var(--t3);white-space:nowrap">${task.deadline_human}</span>` : ''}
+        <span>${getShortName(node)}</span>
+        ${node.estimated_minutes ? `<span style="margin-left:auto;font-family:monospace;font-size:10px;color:var(--t3)">${fmtEst(node.estimated_minutes)}</span>` : ''}
       </div>`;
-    });
+    }
   });
   document.getElementById('pm-inner-tree').innerHTML = treeHtml || '<div style="color:var(--t3);font-size:12px;padding:6px 0">Sem entregas</div>';
 
   document.getElementById('proj-modal-bg').classList.remove('hidden');
+}
+
+async function pmSetStatus(projId, status) {
+  await fetch('/dashboard/task/' + projId, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ status })
+  });
+  loadDemandas();
 }
 
 function closeProjModal(e) {
@@ -2729,10 +2842,11 @@ function closeProjModal(e) {
   pmId = null;
 }
 
-function pmNewDeliverable() {
-  const projId = pmId;
-  closeProjModal();
-  openCreateModal('deliverable', null, projId);
+function pmNewDeliverable(projId) {
+  const pid = projId || pmId;
+  document.getElementById('proj-modal-bg').classList.add('hidden');
+  pmId = null;
+  openCreateModal('deliverable', null, pid);
 }
 
 async function pmSave(field, value) {
