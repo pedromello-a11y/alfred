@@ -26,6 +26,11 @@ async def rebuild_week_schedule(
 ) -> list[AgendaBlock]:
     today = today_brt()
 
+    # Nuclear cleanup: deletar TODOS blocos que referenciam non-tasks
+    _non_task_ids = select(Task.id).where(Task.task_type.in_(["project", "deliverable"]))
+    await db.execute(sa_delete(AgendaBlock).where(AgendaBlock.task_id.in_(_non_task_ids)))
+    await db.flush()
+
     # ══════════════════════════════════════════════
     # FASE 1: CONSTRAINTS (gcal + pinned = imutáveis)
     # ══════════════════════════════════════════════
@@ -315,7 +320,8 @@ def _find_best_placement(
     """
     all_slots = []
     for day, slots in availability.items():
-        if day > deadline:
+        # Overdue (deadline < today): permite qualquer dia da semana
+        if day > deadline and deadline >= today:
             continue
         for (s, e) in slots:
             dur = e - s

@@ -716,13 +716,9 @@ async def dashboard_state(db: AsyncSession = Depends(get_db), week_offset: int =
             if _block.task_id not in _valid_ids:
                 await db.delete(_block)
         # Limpar blocos que referenciam deliverables/projects
-        _wrong = await db.execute(
-            select(AgendaBlock)
-            .join(Task, AgendaBlock.task_id == Task.id)
-            .where(Task.task_type.in_(["project", "deliverable"]))
-        )
-        for _b in _wrong.scalars().all():
-            await db.delete(_b)
+        from sqlalchemy import delete as _sa_delete
+        _wrong_type = select(Task.id).where(Task.task_type.in_(["project", "deliverable"]))
+        await db.execute(_sa_delete(AgendaBlock).where(AgendaBlock.task_id.in_(_wrong_type)))
         await db.commit()
     except Exception:
         pass
