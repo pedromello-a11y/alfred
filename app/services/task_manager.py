@@ -1,4 +1,3 @@
-import random
 import re
 import unicodedata
 from datetime import date, datetime, timezone
@@ -8,7 +7,8 @@ from loguru import logger
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import PlayerStat, Settings, Task
+from app.constants import ACTIVE_STATUSES
+from app.models import Settings, Task
 
 if TYPE_CHECKING:
     from app.services.message_handler import InboundItem
@@ -60,7 +60,7 @@ def calculate_priority_score(
 
 
 _PRIORITY_MAP = {"high": 1, "medium": 3, "low": 5}
-_OPEN_STATUSES = ("pending", "in_progress")
+_OPEN_STATUSES = ACTIVE_STATUSES
 _SYSTEM_HINTS = (
     "audio nao funciona",
     "audio do sistema",
@@ -249,21 +249,6 @@ async def get_recently_done(db: AsyncSession, limit: int = 5, include_system: bo
     if not include_system:
         tasks = [t for t in tasks if t.category not in ("backlog", "system") and not is_system_task_title(t.title or "")]
     return _dedupe_tasks_by_canonical_title(tasks)
-
-
-def calculate_points(task: Task) -> int:
-    minutes = task.estimated_minutes or 30
-    if minutes < 30:
-        base = 5
-    elif minutes <= 60:
-        base = 10
-    elif minutes <= 180:
-        base = 20
-    else:
-        base = 35
-    if task.deadline and task.completed_at and task.completed_at < task.deadline:
-        base = int(base * 1.5)
-    return base
 
 
 async def find_task_by_fragment(title_fragment: str, db: AsyncSession, open_only: bool = True) -> Task | None:
@@ -464,40 +449,9 @@ async def mark_done(title_fragment: str, db: AsyncSession) -> tuple[Task | None,
         except Exception as exc:
             logger.warning("Failed to transition Jira issue {}: {}", task.origin_ref, exc)
 
-    base_xp = calculate_points(task)
-    xp_boost = await get_setting("active_loot_xp_boost", "false", db=db)
-    if xp_boost == "true":
-        base_xp *= 2
-        await set_setting("active_loot_xp_boost", "false", db)
-        logger.info("xp_boost loot consumed: base_xp doubled")
-
-    mult = await _update_multiplier(db)
-    if task.is_boss_fight:
-        mult = max(mult, 3.0)
-        logger.info("Boss fight concluído! XP x3: {}", task.title)
-
-    final_xp = int(base_xp * mult)
-    attribute = get_attribute(task)
-    stat = await grant_xp(attribute, final_xp, db)
-
-    day_off_bonus = await get_setting("day_off_bonus_active", "false", db=db)
-    if day_off_bonus == "true":
-        await set_setting("day_off_bonus_active", "false", db)
-
-    mult_str = f" (x{mult:.1f} multiplier)" if mult > 1.0 else ""
-    xp_msg = f"+{final_xp} XP de {attribute}{mult_str} (nível {stat.level})"
-    if task.is_boss_fight:
-        xp_msg = f"⚔️ Boss fight derrotado! {xp_msg}"
-
-    loot = roll_loot()
-    loot_msg = ""
-    if loot:
-        loot_code, loot_text = loot
-        loot_msg = f"\n🎲 Loot drop: {loot_text}"
-        await set_setting(f"active_loot_{loot_code}", "true", db)
-        logger.info("Loot drop: {}", loot_code)
-
-    return task, xp_msg + loot_msg
+    from app.services.gamification_service import award_task_completion
+    final_xp, xp_loot_msg = await award_task_completion(task, db)
+    return task, xp_loot_msg
 
 
 async def delegate_task(title_fragment: str, delegated_to: str, db: AsyncSession) -> Task | None:
@@ -531,74 +485,6 @@ async def drop_task(title_fragment: str, db: AsyncSession) -> Task | None:
         await db.commit()
         logger.info("Task dropped: {}", task.title)
     return task
-
-
-def get_attribute(task: Task) -> str:
-    title = (task.title or "").lower()
-    cat = (task.category or "").lower()
-    if (task.times_planned or 0) >= 3:
-        return "willpower"
-    if any(w in title for w in ("vídeo", "video", "edição", "edicao", "render", "motion", "animação", "animacao")):
-        return "craft"
-    if any(w in title for w in ("curso", "estudar", "pesquisa", "aprender", "ler")):
-        return "knowledge"
-    if cat == "personal":
-        return "life"
-    return "strategy"
-
-
-def calculate_level(total_xp: int) -> int:
-    """Level based on exponential XP progression: level N requires N*100 XP."""
-    level = 1
-    xp_needed = 100
-    remaining = total_xp
-    while remaining >= xp_needed:
-        remaining -= xp_needed
-        level += 1
-        xp_needed = level * 100
-    return level
-
-
-def xp_progress_in_level(total_xp: int, level: int) -> tuple[int, int]:
-    """Returns (xp_current_in_level, xp_needed_for_next)."""
-    spent = sum(i * 100 for i in range(1, level))
-    current_in_level = total_xp - spent
-    needed = level * 100
-    return current_in_level, needed
-
-
-async def grant_xp(attribute: str, xp_amount: int, db: AsyncSession) -> PlayerStat:
-    result = await db.execute(select(PlayerStat).where(PlayerStat.attribute == attribute))
-    stat = result.scalar_one_or_none()
-    if stat is None:
-        stat = PlayerStat(attribute=attribute, xp=0, level=1, prestige=0)
-        db.add(stat)
-        await db.flush()
-
-    prestige_mult = 1.0 + (stat.prestige * 0.1) if stat.prestige else 1.0
-    day_off_bonus = await get_setting("day_off_bonus_active", "false", db=db)
-    day_off_mult = 1.5 if day_off_bonus == "true" else 1.0
-
-    final_xp = int(xp_amount * prestige_mult * day_off_mult)
-    stat.xp += final_xp
-    stat.level = calculate_level(stat.xp)
-    await db.commit()
-    logger.info("XP granted: {} +{} XP (prestige x{:.1f}, day_off x{:.1f}) → total {} (nível {})", attribute, final_xp, prestige_mult, day_off_mult, stat.xp, stat.level)
-    return stat
-
-
-LOOT_TABLE = [
-    ("coffee_break", "☕ Coffee break! Pausa de 10min merecida."),
-    ("xp_boost", "⚡ XP Boost! Próxima tarefa vale 2x."),
-    ("skip_ticket", "🎫 Skip Ticket! Pode adiar 1 tarefa sem culpa."),
-    ("reroll", "🔄 Reroll! Pode trocar sua próxima prioridade."),
-]
-
-
-def roll_loot() -> tuple[str, str] | None:
-    if random.random() < 0.15:
-        return random.choice(LOOT_TABLE)
-    return None
 
 
 async def get_setting(key: str, default: str | None = None, db: AsyncSession | None = None) -> str | None:
@@ -638,35 +524,3 @@ async def increment_proactive_count(db: AsyncSession) -> int:
 
 async def reset_proactive_count(db: AsyncSession) -> None:
     await set_setting(_PROACTIVE_BUDGET_KEY, "0", db)
-
-
-async def _update_multiplier(db: AsyncSession) -> float:
-    from dateutil.parser import parse as parse_dt
-    now = datetime.now(timezone.utc)
-
-    last_str = await get_setting("last_task_completed_at", db=db)
-    if last_str:
-        try:
-            last_dt = parse_dt(last_str)
-            if last_dt.tzinfo is not None:
-                from datetime import timezone
-                now_aware = now.replace(tzinfo=timezone.utc)
-                elapsed = (now_aware - last_dt).total_seconds()
-            else:
-                elapsed = (now - last_dt).total_seconds()
-
-            if elapsed < 600:
-                mult = float(await get_setting("current_multiplier", "1.0", db=db))
-                mult = min(mult + 0.5, 3.0)
-            elif elapsed > 1800:
-                mult = 1.0
-            else:
-                mult = float(await get_setting("current_multiplier", "1.0", db=db))
-        except Exception:
-            mult = 1.0
-    else:
-        mult = 1.0
-
-    await set_setting("current_multiplier", str(mult), db)
-    await set_setting("last_task_completed_at", now.isoformat(), db)
-    return mult

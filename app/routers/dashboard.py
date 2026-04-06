@@ -12,10 +12,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.constants import ACTIVE_STATUSES, FINAL_STATUSES, SCHEDULABLE_TASK_TYPES  # noqa: F401
 from app.database import get_db
 from app.models import AgendaBlock, DumpItem, PlayerStat, Streak, Task
 from app.services import task_manager
-from app.services.block_engine import build_suggested_blocks, find_next_block_for_task, recalculate_suggestions
+from app.services.block_engine import find_next_block_for_task
 from app.services.focus_snapshot import build_focus_snapshot
 from app.services.task_manager import calculate_level, xp_progress_in_level
 from app.services.text_utils import sanitize_json_strings
@@ -77,6 +78,24 @@ async def _prefetch_parents(tasks: list, db: AsyncSession) -> dict:
     return result
 
 
+def _serialize_deadline(deadline) -> str | None:
+    """Sempre retorna ISO 8601 completo (com hora) ou None.
+    Evita que JS parse '2026-04-07' como UTC e mostre 'Invalid Date' em algumas timezones.
+    """
+    if deadline is None:
+        return None
+    try:
+        if hasattr(deadline, "hour"):
+            # já é datetime
+            return deadline.isoformat()
+        else:
+            # é date puro — combinar com 23:59
+            from datetime import time as _time
+            return datetime.combine(deadline, _time(23, 59)).isoformat()
+    except Exception:
+        return None
+
+
 def _humanize_deadline(deadline: datetime | None) -> str:
     if not deadline:
         return "sem prazo"
@@ -133,8 +152,8 @@ def _task_to_queue_item(task: Task, today: date, parent_map: dict | None = None)
         "project": project,
         "taskName": task_name,
         "fullTitle": task.title,
-        "deadline": task.deadline.isoformat() if task.deadline else None,
-        "deadlineRaw": task.deadline.isoformat() if task.deadline else None,
+        "deadline": _serialize_deadline(task.deadline),
+        "deadlineRaw": _serialize_deadline(task.deadline),
         "deadlineHuman": _humanize_deadline(task.deadline),
         "deadlineType": dl_type,
         "status": task.status,
@@ -222,7 +241,7 @@ async def _build_focus_v3(db: AsyncSession) -> tuple[dict, dict | None]:
         "project": project,
         "taskName": task_name,
         "fullTitle": focus_task.title,
-        "deadline": focus_task.deadline.isoformat() if focus_task.deadline else None,
+        "deadline": _serialize_deadline(focus_task.deadline),
         "deadlineHuman": _humanize_deadline(focus_task.deadline),
         "deadlineType": dl_type,
         "estimate": focus_task.estimated_minutes or 120,
@@ -240,7 +259,7 @@ async def _build_focus_v3(db: AsyncSession) -> tuple[dict, dict | None]:
             "taskId": str(next_task_obj.id),
             "project": np,
             "taskName": nt,
-            "deadline": next_task_obj.deadline.isoformat() if next_task_obj.deadline else None,
+            "deadline": _serialize_deadline(next_task_obj.deadline),
             "deadlineHuman": _humanize_deadline(next_task_obj.deadline),
             "startTime": "",
             "deadlineType": getattr(next_task_obj, "deadline_type", None) or "soft",
@@ -306,7 +325,7 @@ async def _build_today_tasks(db: AsyncSession) -> list[dict]:
             "id": str(task.id),
             "project": project,
             "taskName": task_name,
-            "deadline": task.deadline.isoformat() if task.deadline else None,
+            "deadline": _serialize_deadline(task.deadline),
             "deadlineHuman": _humanize_deadline(task.deadline),
             "deadlineType": getattr(task, "deadline_type", None) or "soft",
             "status": task.status or "pending",
@@ -412,20 +431,8 @@ async def _build_agenda_payload(db: AsyncSession, week_offset: int = 0) -> dict:
 
     deadlines = await _build_agenda_deadlines(db, monday, friday)
 
-    # Motor de blocos sugeridos ao vivo (fallback se banco estiver vazio de alfred blocks)
-    if not alfred_blocks:
-        try:
-            suggested, risk_alert = await build_suggested_blocks(db, monday, friday)
-        except Exception:
-            suggested, risk_alert = [], None
-    else:
-        suggested = alfred_blocks
-        risk_alert = None
-        # Calcular risco manualmente
-        try:
-            _, risk_alert = await build_suggested_blocks(db, monday, friday)
-        except Exception:
-            risk_alert = None
+    suggested = alfred_blocks
+    risk_alert = None
 
     return {
         "days": [
@@ -822,7 +829,7 @@ async def get_task_detail(task_id: str, db: AsyncSession = Depends(get_db)) -> d
         "project": project,
         "taskName": task_name,
         "fullTitle": task.title,
-        "deadline": task.deadline.isoformat() if task.deadline else None,
+        "deadline": _serialize_deadline(task.deadline),
         "deadlineHuman": _humanize_deadline(task.deadline),
         "deadlineType": dl_type,
         "estimatedMinutes": task.estimated_minutes or 120,
@@ -1011,7 +1018,7 @@ async def get_projects(db: AsyncSession = Depends(get_db)) -> list:
             "type": task_type,
             "task_type": task_type,
             "status": t.status,
-            "deadline": t.deadline.isoformat() if t.deadline else None,
+            "deadline": _serialize_deadline(t.deadline),
             "deadline_human": _humanize_deadline(t.deadline),
             "deadlineHuman": _humanize_deadline(t.deadline),
             "deadline_type": dl_type,
@@ -1026,6 +1033,17 @@ async def get_projects(db: AsyncSession = Depends(get_db)) -> list:
             "sort_order": getattr(t, "times_planned", 0) or 0,
         }
 
+    def _collect_leaf_tasks(t: Task) -> list[Task]:
+        """Retorna todas as tasks folha (task_type='task') descendentes de t."""
+        leaves = []
+        for kid in children_of.get(str(t.id), []):
+            tt = getattr(kid, "task_type", "task") or "task"
+            if tt == "task":
+                leaves.append(kid)
+            else:
+                leaves.extend(_collect_leaf_tasks(kid))
+        return leaves
+
     def _build_node(t: Task, depth: int = 0) -> dict:
         node = _task_dict(t)
         kids = sorted(
@@ -1038,6 +1056,19 @@ async def get_projects(db: AsyncSession = Depends(get_db)) -> list:
             node["deliverables"] = built_kids
         elif depth == 1:
             node["tasks"] = built_kids
+
+        # Calcular active_count: todas as tasks folha ativas sob este nó
+        leaf_tasks = _collect_leaf_tasks(t)
+        node["active_count"] = sum(1 for lt in leaf_tasks if lt.status in ACTIVE_STATUSES)
+
+        # Status derivado: se tem tasks ativas → "active", se todas done → "done", senão status do próprio nó
+        if node["active_count"] > 0:
+            node["derived_status"] = "active"
+        elif leaf_tasks and all(lt.status == "done" for lt in leaf_tasks):
+            node["derived_status"] = "done"
+        else:
+            node["derived_status"] = t.status or "active"
+
         return node
 
     projects = [t for t in all_tasks if (getattr(t, "task_type", "task") or "task") == "project"]
@@ -1109,7 +1140,7 @@ def _task_to_flat(t: Task, parent_map: dict | None = None) -> dict:
         "parent_id": str(t.parent_id) if t.parent_id else None,
         "task_type": getattr(t, "task_type", "task") or "task",
         "status": t.status,
-        "deadline": t.deadline.isoformat() if t.deadline else None,
+        "deadline": _serialize_deadline(t.deadline),
         "deadlineHuman": _humanize_deadline(t.deadline),
         "estimated_minutes": t.estimated_minutes,
         "on_holding": bool(getattr(t, "blocked", False)),
@@ -1370,7 +1401,7 @@ async def get_personal_items(db: AsyncSession = Depends(get_db)) -> dict:
             "text": t.title or "",
             "category": t.category or "personal_ideias",
             "status": t.status or "pending",
-            "deadline": t.deadline.isoformat() if t.deadline else None,
+            "deadline": _serialize_deadline(t.deadline),
         })
     return {"items": items}
 
@@ -1677,8 +1708,9 @@ def _week_bounds_from_offset(week_offset: int) -> tuple[date, date]:
 
 async def _build_agenda_response(db: AsyncSession, week_offset: int) -> dict:
     """Retorna o payload completo da agenda após recalcular sugestões."""
+    from app.services.scheduler import rebuild_week_schedule
     week_start, week_end = _week_bounds_from_offset(week_offset)
-    suggested = await recalculate_suggestions(db, week_start, week_end)
+    await rebuild_week_schedule(db, week_start, week_end)
     agenda = await _build_agenda_payload(db, week_offset)
     risk = agenda.pop("_riskAlert", None)
     return {"ok": True, "agenda": agenda, "riskAlert": risk}
@@ -1819,16 +1851,26 @@ async def agenda_block_delete(block_id: str, db: AsyncSession = Depends(get_db))
 
     await db.delete(block)
     await db.commit()
-    await recalculate_suggestions(db, week_start, week_end)
+    from app.services.scheduler import rebuild_week_schedule
+    ws = week_start.date() if hasattr(week_start, "date") else week_start
+    we = (week_end - timedelta(days=1)).date() if hasattr(week_end, "date") else week_end
+    await rebuild_week_schedule(db, ws, we)
     return {"status": "ok"}
 
 
 @router.post("/agenda/reorganize")
 async def agenda_reorganize(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    from app.services.scheduler import rebuild_week_schedule
     week_offset = int(body.get("week_offset", 0))
     week_start, week_end = _week_bounds_from_offset(week_offset)
-    suggested = await recalculate_suggestions(db, week_start, week_end)
-    return {"ok": True, "blocksCreated": len(suggested)}
+    # Sync GCal primeiro
+    try:
+        from app.services.gcal_client import sync_to_agenda_blocks
+        await sync_to_agenda_blocks(db)
+    except Exception:
+        pass
+    blocks = await rebuild_week_schedule(db, week_start, week_end)
+    return {"ok": True, "status": "ok", "blocks_created": len(blocks), "week_start": week_start.isoformat(), "week_end": week_end.isoformat()}
 
 
 # ── legacy endpoints (kept for backward compat) ────────────────────────────
@@ -2000,7 +2042,7 @@ async def night_summary(db: AsyncSession = Depends(get_db)) -> dict:
     # Tasks pendentes — dois .where() separados (& bitwise não funciona em SQLAlchemy)
     result2 = await db.execute(
         select(Task)
-        .where(Task.status.in_(["pending", "in_progress", "active"]))
+        .where(Task.status.in_(list(ACTIVE_STATUSES)))
         .where(Task.category.not_like("personal%"))
     )
     pendentes = result2.scalars().all()
@@ -2362,7 +2404,7 @@ Responda APENAS com JSON válido (sem markdown):
                 origin="alfred_input",
             )
             result = {"type": "task_created", "id": str(new_task.id), "title": new_task.title,
-                      "deadline": deadline.isoformat() if deadline else None,
+                      "deadline": _serialize_deadline(deadline),
                       "message": f"Tarefa criada: {new_task.title}"}
 
         elif intent == "complete_task":

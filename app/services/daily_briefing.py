@@ -3,10 +3,10 @@ from datetime import datetime, timedelta, time
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.constants import ACTIVE_STATUSES
 from app.models import Task
 from app.services.time_utils import now_brt, to_brt_naive
 from app.services.gcal_client import get_events_range
-from app.services.block_engine import build_suggested_blocks
 
 
 def _parse_title(title: str) -> tuple[str, str]:
@@ -24,7 +24,7 @@ async def generate_morning_briefing(db: AsyncSession, start_time: datetime = Non
     result = await db.execute(
         select(Task).where(
             and_(
-                Task.status.in_(["pending", "in_progress"]),
+                Task.status.in_(list(ACTIVE_STATUSES)),
                 Task.category != "personal",
             )
         )
@@ -59,12 +59,25 @@ async def generate_morning_briefing(db: AsyncSession, start_time: datetime = Non
     except Exception:
         pass
 
-    # Blocos sugeridos para hoje
+    # Blocos da agenda para hoje (lidos do banco)
     blocos_texto = []
     try:
-        suggested, _ = await build_suggested_blocks(db, hoje, hoje)
-        for b in suggested[:6]:
-            blocos_texto.append(f"• {b.get('start', '')}—{b.get('end', '')} → {b.get('title', '')}")
+        from app.models import AgendaBlock
+        from datetime import datetime as _dt
+        hoje_start = _dt.combine(hoje, time(0, 0))
+        hoje_end = _dt.combine(hoje, time(23, 59))
+        blocos_result = await db.execute(
+            select(AgendaBlock)
+            .where(AgendaBlock.start_at >= hoje_start)
+            .where(AgendaBlock.start_at <= hoje_end)
+            .where(AgendaBlock.status != "cancelled")
+            .where(AgendaBlock.source.in_(["alfred", "system"]))
+            .order_by(AgendaBlock.start_at.asc())
+        )
+        for b in blocos_result.scalars().all()[:6]:
+            start = b.start_at.strftime("%H:%M") if b.start_at else ""
+            end = b.end_at.strftime("%H:%M") if b.end_at else ""
+            blocos_texto.append(f"• {start}—{end} → {b.title or ''}")
     except Exception:
         pass
 

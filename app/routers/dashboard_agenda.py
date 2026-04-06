@@ -1,20 +1,45 @@
-"""Novos endpoints do dashboard — parte 2."""
+"""Dashboard agenda — endpoints de agenda, blocos e schedule."""
 from __future__ import annotations
 
-import json
-from datetime import date, datetime, timedelta, time as dt_time
+import logging
+from datetime import date, datetime, time as dt_time, timedelta
 from uuid import UUID
 
-import anthropic
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.constants import ACTIVE_STATUSES
 from app.database import get_db
 from app.models import AgendaBlock, PersonalItem, ScheduleBlock, Task
-from app.constants import ACTIVE_STATUSES
-from app.routers.dashboard import router, _today_brt, _humanize_deadline, _parse_project_task, _serialize_deadline
+from app.services.dashboard_helpers import (
+    _humanize_deadline,
+    _parse_project_task,
+    _serialize_deadline,
+    _today_brt,
+)
+
+logger = logging.getLogger("alfred")
+
+router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+def _week_bounds_from_offset(week_offset: int) -> tuple[date, date]:
+    from app.services.time_utils import today_brt as _today_brt_fn
+    ref = _today_brt_fn() + timedelta(weeks=week_offset)
+    monday = ref - timedelta(days=ref.weekday())
+    return monday, monday + timedelta(days=4)
+
+
+# Re-import _build_agenda_payload from state module to avoid duplication
+async def _build_agenda_response(db: AsyncSession, week_offset: int) -> dict:
+    from app.services.scheduler import rebuild_week_schedule
+    from app.routers.dashboard_state import _build_agenda_payload
+    week_start, week_end = _week_bounds_from_offset(week_offset)
+    await rebuild_week_schedule(db, week_start, week_end)
+    agenda = await _build_agenda_payload(db, week_offset)
+    risk = agenda.pop("_riskAlert", None)
+    return {"ok": True, "agenda": agenda, "riskAlert": risk}
 
 
 # ── ScheduleBlock helpers ───────────────────────────────────────────────────
@@ -37,6 +62,7 @@ async def get_schedule_blocks(week: str | None = None, db: AsyncSession = Depend
         try:
             week_start = date.fromisoformat(week)
         except Exception:
+            logger.warning("week inválido em get_schedule_blocks: %s", week)
             today = _today_brt()
             week_start = today - timedelta(days=today.weekday())
     else:
@@ -62,6 +88,7 @@ async def create_schedule_block(body: dict, db: AsyncSession = Depends(get_db)) 
         start_t = dt_time.fromisoformat(body["start_time"])
         end_t = dt_time.fromisoformat(body["end_time"])
     except Exception as e:
+        logger.warning("Dados inválidos em create_schedule_block: %s", e)
         return {"error": str(e)}
     b = ScheduleBlock(
         title=title,
@@ -94,18 +121,18 @@ async def update_schedule_block(block_id: str, body: dict, db: AsyncSession = De
     if "date" in body:
         try:
             b.date = date.fromisoformat(body["date"])
-        except Exception:
-            pass
+        except ValueError:
+            logger.warning("date inválido em update_schedule_block: %s", body.get("date"))
     if "start_time" in body:
         try:
             b.start_time = dt_time.fromisoformat(body["start_time"])
-        except Exception:
-            pass
+        except ValueError:
+            logger.warning("start_time inválido em update_schedule_block: %s", body.get("start_time"))
     if "end_time" in body:
         try:
             b.end_time = dt_time.fromisoformat(body["end_time"])
-        except Exception:
-            pass
+        except ValueError:
+            logger.warning("end_time inválido em update_schedule_block: %s", body.get("end_time"))
     await db.commit()
     await db.refresh(b)
     return _sblock_to_dict(b)
@@ -245,17 +272,14 @@ def _factor_emoji(factor: float) -> str:
 
 
 async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
-    import logging
-    log = logging.getLogger("alfred.agenda")
-
-    week_end = week_start + timedelta(days=4)  # seg-sex apenas
+    week_end = week_start + timedelta(days=4)
     today = _today_brt()
 
     tasks_result = await db.execute(
         select(Task)
         .where(Task.status.in_(ACTIVE_STATUSES))
         .where(Task.category != "personal")
-        .where(Task.task_type == "task")  # NUNCA project/deliverable
+        .where(Task.task_type == "task")
         .order_by(Task.deadline.asc().nulls_last(), Task.estimated_minutes.asc().nulls_last())
     )
     active_tasks = tasks_result.scalars().all()
@@ -281,16 +305,11 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
     )
     gcal_blocks = gcal_result.scalars().all()
 
-    DAY_START = dt_time(9, 0)
-    DAY_END = dt_time(18, 0)
     DAY_START_MINS = 9 * 60
     DAY_END_MINS = 18 * 60
-    GAP_MINS = 15  # gap between consecutive task blocks
+    GAP_MINS = 15
 
-    # Pre-compute available hours from today through each deadline for comfort calc
-    # Build per-day free minutes map for the week
     def _day_free_mins(day_date: date) -> int:
-        """Free minutes in DAY_START..DAY_END for a given date (excluding gcal/fixed)."""
         if day_date.weekday() >= 5:
             return 0
         day_fixed = [b for b in schedule_blocks_list if b.date == day_date]
@@ -317,10 +336,8 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
         return free
 
     def _hours_until_deadline(deadline) -> float:
-        """Sum free hours from today through deadline day (inclusive)."""
         if deadline is None:
             return 9999.0
-        # Normalize to date if datetime
         dl_date = deadline.date() if hasattr(deadline, 'date') else deadline
         total = 0
         d = today
@@ -343,7 +360,6 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
             return 1.1
         return 1.0
 
-    # task_remaining tracks how many minutes are left to allocate across the week
     task_remaining: dict[str, int] = {}
     for t in work_queue:
         est = t.estimated_minutes or 60
@@ -352,10 +368,9 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
 
     completions: dict[str, date | None] = {}
     days_output = []
-    # cursor_task_idx: next task to allocate (tasks are consumed across days)
     task_idx = 0
 
-    for day_offset in range(5):  # seg-sex apenas
+    for day_offset in range(5):
         day_date = week_start + timedelta(days=day_offset)
         dow = day_date.weekday()
         is_weekend = dow >= 5
@@ -364,7 +379,6 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
         day_fixed = [b for b in schedule_blocks_list if b.date == day_date]
         day_gcal = [b for b in gcal_blocks if b.start_at.date() == day_date]
 
-        # Build sorted list of blocked ranges (in minutes from midnight)
         blocked: list[tuple[int, int]] = []
         for b in day_fixed:
             s = b.start_time.hour * 60 + b.start_time.minute
@@ -376,7 +390,6 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
             blocked.append((s, e))
         blocked.sort()
 
-        # Total free minutes for this day (for display purposes)
         free_mins_today = _day_free_mins(day_date)
         total_available_mins = free_mins_today
 
@@ -406,10 +419,8 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
         auto_blocks: list[dict] = []
 
         if not is_weekend and task_idx < len(work_queue):
-            # Cursor-based sequential allocation
-            # cursor_mins: current position in day (minutes from midnight)
             cursor_mins = DAY_START_MINS
-            local_task_idx = task_idx  # local copy; advance task_idx after day
+            local_task_idx = task_idx
 
             while local_task_idx < len(work_queue) and cursor_mins < DAY_END_MINS:
                 task = work_queue[local_task_idx]
@@ -422,12 +433,9 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
                     local_task_idx += 1
                     continue
 
-                # Duration to allocate for this task on this day
-                # Cap ao estimated_minutes original (não inflar com mult no bloco)
                 original_est_cap = task.estimated_minutes or 60
                 duration = min(remaining, original_est_cap)
 
-                # Advance cursor past any blocking range that covers current position
                 changed = True
                 while changed:
                     changed = False
@@ -440,7 +448,6 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
                 if cursor_mins >= DAY_END_MINS:
                     break
 
-                # Find next blocker after cursor
                 next_blocker_start = DAY_END_MINS
                 for bs, be in blocked:
                     if bs > cursor_mins:
@@ -449,11 +456,9 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
 
                 space = next_blocker_start - cursor_mins
                 if space <= 0:
-                    # No space before next blocker — skip past it
                     cursor_mins = next_blocker_start
                     continue
 
-                # Allocate min(space, duration) to this task
                 alloc = min(space, duration)
                 if alloc <= 0:
                     local_task_idx += 1
@@ -466,7 +471,7 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
 
                 project, task_name = _parse_project_task(task.title)
 
-                log.info(
+                logger.info(
                     "AGENDA alloc | %s | est=%dmin mult=%.2f alloc=%dmin | %02d:%02d–%02d:%02d | deadline=%s",
                     task_name or task.title,
                     original_est,
@@ -507,11 +512,9 @@ async def _compute_agenda_v2(db: AsyncSession, week_start: date) -> dict:
                     local_task_idx += 1
                     cursor_mins = block_end_mins + GAP_MINS
                 else:
-                    # Task split across days — advance past it, continue with next task
                     local_task_idx += 1
                     cursor_mins = block_end_mins + GAP_MINS
 
-            # Update global task_idx: advance past all tasks that have been started or finished
             task_idx = local_task_idx
 
             estimated_hours = round(allocated_today / 60, 1)
@@ -578,6 +581,7 @@ async def get_agenda_v2(week: str | None = None, db: AsyncSession = Depends(get_
             ws = date.fromisoformat(week)
             week_start = ws - timedelta(days=ws.weekday())
         except Exception:
+            logger.warning("week inválido em get_agenda_v2: %s", week)
             today = _today_brt()
             week_start = today - timedelta(days=today.weekday())
     else:
@@ -586,13 +590,214 @@ async def get_agenda_v2(week: str | None = None, db: AsyncSession = Depends(get_
     return await _compute_agenda_v2(db, week_start)
 
 
-# ── Seed demo ────────────────────────────────────────────────────────────────
+@router.post("/agenda/allocate")
+async def agenda_allocate(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    task_id_str = (body.get("task_id") or "").strip()
+    day_idx = int(body.get("day", 0))
+    start_str = body.get("start", "09:00")
+    duration_min = int(body.get("duration_minutes", 120))
+    week_offset = int(body.get("week_offset", 0))
+    pinned = bool(body.get("pinned", True))
+
+    try:
+        task_uuid = UUID(task_id_str)
+    except Exception:
+        return {"error": "invalid task_id"}
+
+    task_result = await db.execute(select(Task).where(Task.id == task_uuid))
+    task = task_result.scalar_one_or_none()
+    if not task:
+        return {"error": "task not found"}
+
+    week_start, week_end = _week_bounds_from_offset(week_offset)
+    day_date = week_start + timedelta(days=day_idx)
+
+    try:
+        start_dt = datetime.combine(day_date, datetime.strptime(start_str, "%H:%M").time())
+        end_dt = start_dt + timedelta(minutes=duration_min)
+    except Exception:
+        return {"error": "invalid start time"}
+
+    monday_dt = datetime.combine(week_start, datetime.min.time())
+    friday_dt = datetime.combine(week_end, datetime.max.time().replace(microsecond=0))
+    from sqlalchemy import delete as _sa_delete
+    await db.execute(
+        _sa_delete(AgendaBlock).where(
+            AgendaBlock.task_id == task_uuid,
+            AgendaBlock.start_at >= monday_dt,
+            AgendaBlock.start_at <= friday_dt,
+            AgendaBlock.pinned == True,  # noqa: E712
+        )
+    )
+
+    new_block = AgendaBlock(
+        title=task.title or "",
+        start_at=start_dt,
+        end_at=end_dt,
+        block_type="suggested",
+        source="alfred",
+        status="planned",
+        task_id=task_uuid,
+        pinned=pinned,
+    )
+    db.add(new_block)
+    await db.commit()
+
+    return await _build_agenda_response(db, week_offset)
+
+
+@router.post("/agenda/move")
+async def agenda_move(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    block_id_str = (body.get("block_id") or "").strip()
+    new_day = int(body.get("new_day", 0))
+    new_start_str = body.get("new_start", "09:00")
+    week_offset = int(body.get("week_offset", 0))
+
+    try:
+        block_uuid = UUID(block_id_str)
+    except Exception:
+        return {"error": "invalid block_id"}
+
+    block_result = await db.execute(select(AgendaBlock).where(AgendaBlock.id == block_uuid))
+    block = block_result.scalar_one_or_none()
+    if not block:
+        return {"error": "block not found"}
+
+    week_start, _ = _week_bounds_from_offset(week_offset)
+    day_date = week_start + timedelta(days=new_day)
+    duration = int((block.end_at - block.start_at).total_seconds() / 60)
+
+    try:
+        new_start_dt = datetime.combine(day_date, datetime.strptime(new_start_str, "%H:%M").time())
+    except Exception:
+        return {"error": "invalid new_start"}
+
+    block.start_at = new_start_dt
+    block.end_at = new_start_dt + timedelta(minutes=duration)
+    block.pinned = True
+    await db.commit()
+
+    return await _build_agenda_response(db, week_offset)
+
+
+@router.post("/agenda/resize")
+async def agenda_resize(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    block_id_str = (body.get("block_id") or "").strip()
+    new_duration = int(body.get("new_duration_minutes", 60))
+    week_offset = int(body.get("week_offset", 0))
+
+    try:
+        block_uuid = UUID(block_id_str)
+    except Exception:
+        return {"error": "invalid block_id"}
+
+    block_result = await db.execute(select(AgendaBlock).where(AgendaBlock.id == block_uuid))
+    block = block_result.scalar_one_or_none()
+    if not block:
+        return {"error": "block not found"}
+
+    block.end_at = block.start_at + timedelta(minutes=max(15, new_duration))
+    block.pinned = True
+    await db.commit()
+
+    return await _build_agenda_response(db, week_offset)
+
+
+@router.post("/agenda/block/{block_id}/delete")
+async def agenda_block_delete(block_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    try:
+        block_uuid = UUID(block_id)
+    except Exception:
+        return {"status": "error", "message": "invalid block_id"}
+
+    block_result = await db.execute(select(AgendaBlock).where(AgendaBlock.id == block_uuid))
+    block = block_result.scalar_one_or_none()
+    if not block:
+        return {"status": "error", "message": "block not found"}
+
+    if block.source == "gcal":
+        return {"status": "error", "message": "não é possível remover evento do Google Calendar"}
+
+    week_start = block.start_at.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = week_start - timedelta(days=week_start.weekday())
+    week_end = week_start + timedelta(days=7)
+
+    await db.delete(block)
+    await db.commit()
+    from app.services.scheduler import rebuild_week_schedule
+    ws = week_start.date() if hasattr(week_start, "date") else week_start
+    we = (week_end - timedelta(days=1)).date() if hasattr(week_end, "date") else week_end
+    await rebuild_week_schedule(db, ws, we)
+    return {"status": "ok"}
+
+
+@router.post("/agenda/reorganize")
+async def agenda_reorganize(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    from app.services.scheduler import rebuild_week_schedule
+    week_offset = int(body.get("week_offset", 0))
+    week_start, week_end = _week_bounds_from_offset(week_offset)
+    try:
+        from app.services.gcal_client import sync_to_agenda_blocks
+        await sync_to_agenda_blocks(db)
+    except Exception:
+        logger.exception("Erro ao sincronizar GCal em agenda/reorganize")
+    blocks = await rebuild_week_schedule(db, week_start, week_end)
+    return {"ok": True, "status": "ok", "blocks_created": len(blocks), "week_start": week_start.isoformat(), "week_end": week_end.isoformat()}
+
+
+@router.post("/sync-gcal")
+async def sync_gcal(db: AsyncSession = Depends(get_db)) -> dict:
+    junk_result = await db.execute(
+        select(AgendaBlock).where((AgendaBlock.source != "gcal") | (AgendaBlock.source == None))
+    )
+    junk_blocks = junk_result.scalars().all()
+    junk_to_delete = [b for b in junk_blocks if b.title and len(b.title) > 60]
+    for b in junk_to_delete:
+        await db.delete(b)
+    await db.commit()
+    from app.services import gcal_client
+    if not gcal_client._is_configured():
+        return {"status": "error", "message": "gcal not configured", "deleted_junk": len(junk_to_delete)}
+    synced = await gcal_client.sync_to_agenda_blocks(db)
+    return {"status": "ok", "synced": synced, "deleted_junk": len(junk_to_delete)}
+
+
+# ── Day management endpoints ─────────────────────────────────────────────────
+
+@router.post("/day/start")
+async def day_start(db: AsyncSession = Depends(get_db)) -> dict:
+    today = _today_brt()
+    return {"ok": True, "started_at": datetime.now().isoformat(), "date": today.isoformat()}
+
+
+@router.post("/day/end")
+async def day_end(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    today = _today_brt()
+    energy = body.get("energy_level", 3)
+    notes = body.get("notes", "")
+
+    result = await db.execute(
+        select(Task)
+        .where(Task.status == "done")
+        .where(Task.completed_at >= datetime.combine(today, dt_time.min))
+    )
+    done_today = result.scalars().all()
+
+    return {
+        "ok": True,
+        "date": today.isoformat(),
+        "tasks_completed": len(done_today),
+        "energy_level": energy,
+        "notes": notes,
+    }
+
+
+# ── Seed demo / clear ────────────────────────────────────────────────────────
 
 @router.post("/seed-demo")
 async def seed_demo_data(db: AsyncSession = Depends(get_db)) -> dict:
     from sqlalchemy import delete, text as sa_text
     from app.models import DumpItem
-    # Clear all existing data to avoid duplicates
     await db.execute(delete(PersonalItem))
     await db.execute(delete(ScheduleBlock))
     await db.execute(sa_text("UPDATE tasks SET parent_id = NULL"))
@@ -669,6 +874,7 @@ async def seed_demo_data(db: AsyncSession = Depends(get_db)) -> dict:
             p.done_at = datetime.now()
         db.add(p)
 
+    from app.models import DumpItem
     for text_val, cat in [
         ("Kill Bill - assistir esse fim de semana", "filme"),
         ("Senha portal XYZ: abc123", "senha"),
@@ -680,8 +886,6 @@ async def seed_demo_data(db: AsyncSession = Depends(get_db)) -> dict:
     await db.commit()
     return {"ok": True, "message": "Seed data created successfully"}
 
-
-# ── Clear all data ────────────────────────────────────────────────────────────
 
 @router.post("/tasks/clear-all")
 async def clear_all_data(db: AsyncSession = Depends(get_db)) -> dict:
@@ -696,120 +900,19 @@ async def clear_all_data(db: AsyncSession = Depends(get_db)) -> dict:
     return {"ok": True}
 
 
-# ── Dumps CRUD ────────────────────────────────────────────────────────────────
-
-@router.get("/dumps")
-async def get_dumps(db: AsyncSession = Depends(get_db)) -> list:
-    from app.models import DumpItem
-    result = await db.execute(
-        select(DumpItem).where(DumpItem.status != "archived").order_by(DumpItem.created_at.desc())
-    )
-    items = result.scalars().all()
-    return [
-        {
-            "id": str(d.id),
-            "title": d.rewritten_title or (d.raw_text[:100] if d.raw_text else ""),
-            "raw_text": d.raw_text,
-            "category": d.category,
-            "created_at": d.created_at.isoformat() if d.created_at else None,
-        }
-        for d in items
-    ]
-
-
-@router.post("/dumps")
-async def create_dump(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
-    from app.models import DumpItem
-    text = (body.get("text") or "").strip()
-    if not text:
-        return {"error": "text required"}
-    d = DumpItem(raw_text=text, rewritten_title=text, status="categorized", source="dashboard")
-    db.add(d)
-    await db.commit()
-    await db.refresh(d)
-    return {"id": str(d.id), "title": d.rewritten_title}
-
-
-@router.put("/dumps/{dump_id}")
-async def update_dump(dump_id: str, body: dict, db: AsyncSession = Depends(get_db)) -> dict:
-    from app.models import DumpItem
-    try:
-        did = UUID(dump_id)
-    except Exception:
-        return {"error": "invalid id"}
-    result = await db.execute(select(DumpItem).where(DumpItem.id == did))
-    d = result.scalar_one_or_none()
-    if not d:
-        return {"error": "not found"}
-    if "title" in body:
-        d.rewritten_title = body["title"]
-        d.raw_text = body["title"]
-    if "category" in body:
-        d.category = body["category"]
-    await db.commit()
-    return {"ok": True}
-
-
-@router.delete("/dumps/{dump_id}")
-async def delete_dump(dump_id: str, db: AsyncSession = Depends(get_db)) -> dict:
-    from app.models import DumpItem
-    try:
-        did = UUID(dump_id)
-    except Exception:
-        return {"error": "invalid id"}
-    result = await db.execute(select(DumpItem).where(DumpItem.id == did))
-    d = result.scalar_one_or_none()
-    if not d:
-        return {"error": "not found"}
-    await db.delete(d)
-    await db.commit()
-    return {"ok": True}
-
-
-# ── Day management endpoints ─────────────────────────────────────────────────
-
-@router.post("/day/start")
-async def day_start(db: AsyncSession = Depends(get_db)) -> dict:
-    """Mark day as started — returns today's agenda snapshot."""
-    today = _today_brt()
-    # Return the agenda for today with start timestamp
-    return {"ok": True, "started_at": datetime.now().isoformat(), "date": today.isoformat()}
-
-
-@router.post("/day/end")
-async def day_end(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
-    """End of day — log summary."""
-    today = _today_brt()
-    energy = body.get("energy_level", 3)
-    notes = body.get("notes", "")
-
-    # Count tasks completed today
-    result = await db.execute(
-        select(Task)
-        .where(Task.status == "done")
-        .where(Task.completed_at >= datetime.combine(today, dt_time.min))
-    )
-    done_today = result.scalars().all()
-
-    return {
-        "ok": True,
-        "date": today.isoformat(),
-        "tasks_completed": len(done_today),
-        "energy_level": energy,
-        "notes": notes,
-    }
-
-
 # ── AI task parsing ──────────────────────────────────────────────────────────
 
 @router.post("/task/parse-natural")
 async def parse_natural_task(body: dict) -> dict:
-    """Use AI to parse a natural language task description into structured data."""
+    import json
+    import anthropic as _anthropic
+    from app.config import settings as _settings
+
     text = (body.get("text") or "").strip()
     if not text:
         return {"error": "text required"}
 
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    client = _anthropic.Anthropic(api_key=_settings.anthropic_api_key)
     today = _today_brt()
 
     prompt = f"""Hoje é {today.strftime('%d/%m/%Y')} ({['segunda','terça','quarta','quinta','sexta','sábado','domingo'][today.weekday()]}).
@@ -837,12 +940,11 @@ Retorne APENAS JSON válido, sem markdown:
 
     try:
         response = client.messages.create(
-            model=settings.model_fast,
+            model=_settings.model_fast,
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = response.content[0].text.strip()
-        # Strip markdown code blocks if present
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
@@ -850,24 +952,25 @@ Retorne APENAS JSON válido, sem markdown:
         data = json.loads(raw)
         data["original_text"] = text
         return data
+    except _anthropic.APIConnectionError:
+        logger.exception("Erro de conexão com Anthropic em parse_natural_task")
+        return {"type": "TASK", "title": text, "estimated_minutes": 60, "deadline": None,
+                "time": None, "duration_minutes": 60, "clarification_question": None,
+                "confidence": 0.5, "original_text": text}
+    except _anthropic.APIError:
+        logger.exception("Erro de API Anthropic em parse_natural_task")
+        return {"type": "TASK", "title": text, "estimated_minutes": 60, "deadline": None,
+                "time": None, "duration_minutes": 60, "clarification_question": None,
+                "confidence": 0.5, "original_text": text}
     except Exception as e:
-        return {
-            "type": "TASK",
-            "title": text,
-            "estimated_minutes": 60,
-            "deadline": None,
-            "time": None,
-            "duration_minutes": 60,
-            "clarification_question": None,
-            "confidence": 0.5,
-            "original_text": text,
-            "parse_error": str(e),
-        }
+        logger.exception("Erro inesperado em parse_natural_task")
+        return {"type": "TASK", "title": text, "estimated_minutes": 60, "deadline": None,
+                "time": None, "duration_minutes": 60, "clarification_question": None,
+                "confidence": 0.5, "original_text": text, "parse_error": str(e)}
 
 
 @router.post("/task/create-confirmed")
 async def create_confirmed_task(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
-    """Create a task from confirmed AI-parsed data."""
     title = (body.get("title") or "").strip()
     if not title:
         return {"error": "title required"}
@@ -885,14 +988,14 @@ async def create_confirmed_task(body: dict, db: AsyncSession = Depends(get_db)) 
         try:
             dl = date.fromisoformat(body["deadline"])
             task.deadline = datetime.combine(dl, dt_time(18, 0))
-        except Exception:
-            pass
+        except ValueError:
+            logger.warning("deadline inválido em create_confirmed_task: %s", body.get("deadline"))
 
     if body.get("parent_id"):
         try:
             task.parent_id = UUID(body["parent_id"])
-        except Exception:
-            pass
+        except ValueError:
+            logger.warning("parent_id inválido em create_confirmed_task: %s", body.get("parent_id"))
 
     db.add(task)
     await db.commit()
@@ -908,11 +1011,9 @@ async def create_confirmed_task(body: dict, db: AsyncSession = Depends(get_db)) 
     }
 
 
-# ── Projects tree endpoint ────────────────────────────────────────────────────
-
 @router.get("/projects")
 async def get_projects_tree(db: AsyncSession = Depends(get_db)) -> list:
-    """Return all projects with their full hierarchy."""
+    """Return all projects with their full hierarchy (addons version)."""
     result = await db.execute(
         select(Task).where(Task.task_type == "project")
         .where((Task.source != "dump") | (Task.source.is_(None)))
@@ -950,7 +1051,6 @@ async def get_projects_tree(db: AsyncSession = Depends(get_db)) -> list:
 
 @router.put("/task/{task_id}")
 async def update_task_v2(task_id: str, body: dict, db: AsyncSession = Depends(get_db)) -> dict:
-    """Generic task update — accepts any subset of fields."""
     try:
         tid = UUID(task_id)
     except Exception:
@@ -965,21 +1065,17 @@ async def update_task_v2(task_id: str, body: dict, db: AsyncSession = Depends(ge
             setattr(task, field, body[field])
     if "deadline" in body and body["deadline"]:
         try:
-            from datetime import datetime as _dt
-            # Accept ISO datetime or date string
             dl_str = body["deadline"]
             if 'T' in dl_str:
-                task.deadline = _dt.fromisoformat(dl_str.replace('Z', '+00:00'))
+                task.deadline = datetime.fromisoformat(dl_str.replace('Z', '+00:00'))
             else:
-                task.deadline = _dt.combine(date.fromisoformat(dl_str), dt_time(18, 0))
-        except Exception:
-            pass
+                task.deadline = datetime.combine(date.fromisoformat(dl_str), dt_time(18, 0))
+        except ValueError:
+            logger.warning("deadline inválido em update_task_v2: %s", body.get("deadline"))
     elif "deadline" in body and not body["deadline"]:
         task.deadline = None
     if body.get("status") == "done" and not task.completed_at:
         task.completed_at = datetime.now()
-    elif body.get("status") != "done":
-        pass  # keep completed_at if already set
     await db.commit()
     await db.refresh(task)
     return {"id": str(task.id), "title": task.title, "status": task.status}
@@ -1002,7 +1098,6 @@ async def delete_task_v2(task_id: str, db: AsyncSession = Depends(get_db)) -> di
 
 @router.get("/tasks/active")
 async def get_active_tasks(db: AsyncSession = Depends(get_db)) -> list:
-    """Return active/in-progress tasks (leaves only, for focus queue)."""
     result = await db.execute(
         select(Task)
         .where(Task.status.in_(["active", "in_progress"]))

@@ -8,15 +8,20 @@ from uuid import UUID
 from sqlalchemy import select, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.constants import (
+    ACTIVE_STATUSES,
+    SCHEDULABLE_TASK_TYPES,
+    WORK_START_MINUTES as WORK_START,
+    WORK_END_MINUTES as WORK_END,
+    BUFFER_PREFERRED_START as BUFFER_PREF_START,
+    BUFFER_PREFERRED_END as BUFFER_PREF_END,
+    DAY_GROSS_MINUTES,
+    MICRO_BUFFER_MINUTES,
+)
 from app.models import AgendaBlock, Task
 from app.services.time_utils import today_brt
 
 logger = logging.getLogger(__name__)
-
-WORK_START = 8 * 60     # 08:00 em minutos
-WORK_END = 20 * 60      # 20:00 em minutos
-BUFFER_PREF_START = 14 * 60  # 14:00 — horário preferido pra buffer
-BUFFER_PREF_END = 16 * 60    # 16:00
 
 
 async def rebuild_week_schedule(
@@ -82,8 +87,8 @@ async def rebuild_week_schedule(
     # ══════════════════════════════════════════════
     tasks_result = await db.execute(
         select(Task)
-        .where(Task.status.in_(("active", "pending", "in_progress")))
-        .where(Task.task_type.notin_(["project", "deliverable"]))
+        .where(Task.status.in_(ACTIVE_STATUSES))
+        .where(Task.task_type.in_(list(SCHEDULABLE_TASK_TYPES)))
         .where(Task.deadline.isnot(None))
         .order_by(Task.deadline.asc(), Task.estimated_minutes.desc().nulls_last())
     )
@@ -117,8 +122,8 @@ async def rebuild_week_schedule(
     # Tasks sem deadline (para adiantamento)
     no_dl_result = await db.execute(
         select(Task)
-        .where(Task.status.in_(("active", "pending", "in_progress")))
-        .where(Task.task_type.notin_(["project", "deliverable"]))
+        .where(Task.status.in_(ACTIVE_STATUSES))
+        .where(Task.task_type.in_(list(SCHEDULABLE_TASK_TYPES)))
         .where(Task.deadline.is_(None))
         .order_by(Task.created_at.asc())
         .limit(10)

@@ -1,6 +1,16 @@
 """Entry point único e definitivo do Alfred."""
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)s:%(funcName)s:%(lineno)d | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,12 +21,16 @@ from app.database import init_db
 from app.services.alert_scheduler import start_scheduler
 from app.routers.admin import router as admin_router
 from app.routers.auth_google import router as auth_google_router
-from app.routers.dashboard import router as dashboard_router
-import app.routers._dashboard_addons  # noqa: F401 — registers extra routes on dashboard router
+from app.routers.dashboard_state import router as dashboard_state_router
+from app.routers.dashboard_tasks import router as dashboard_tasks_router
+from app.routers.dashboard_agenda import router as dashboard_agenda_router
+from app.routers.dashboard_misc import router as dashboard_misc_router
 from app.routers.health import router as health_router
 from app.routers.internal_whatsapp import router as internal_whatsapp_router
 from app.routers.webhook import router as webhook_router
 from app.routers.whatsapp import router as whatsapp_router
+
+logger = logging.getLogger("alfred")
 
 
 @asynccontextmanager
@@ -30,7 +44,7 @@ async def lifespan(app: FastAPI):
         from app.cron.gcal_sync import run as gcal_sync_run
         await gcal_sync_run()
     except Exception:
-        pass
+        logger.exception("Erro ao sincronizar GCal no startup")
     yield
     if scheduler.running:
         scheduler.shutdown(wait=False)
@@ -40,14 +54,17 @@ app = FastAPI(title="Alfred", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 app.include_router(health_router)
 app.include_router(webhook_router)
 app.include_router(internal_whatsapp_router)
 app.include_router(whatsapp_router)
-app.include_router(dashboard_router)
+app.include_router(dashboard_state_router)
+app.include_router(dashboard_tasks_router)
+app.include_router(dashboard_agenda_router)
+app.include_router(dashboard_misc_router)
 app.include_router(auth_google_router)
 app.include_router(admin_router)
 

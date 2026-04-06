@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.constants import ACTIVE_STATUSES
 from app.models import AgendaBlock, DumpItem, Task
 from app.models_work_day import WorkDay
 from app.services import agenda_manager, brain, dump_manager, interpreter, task_manager
@@ -964,7 +965,7 @@ async def _check_block_command(text: str, db: AsyncSession) -> str | None:
         result = await db.execute(
             select(Task).where(
                 and_(
-                    Task.status.in_(["pending", "in_progress"]),
+                    Task.status.in_(list(ACTIVE_STATUSES)),
                     or_(
                         Task.title.ilike(f"%{task_hint}%"),
                     )

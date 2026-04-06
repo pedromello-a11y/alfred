@@ -196,7 +196,7 @@ html,body{height:100%;background:var(--bg);color:var(--t1);font-family:system-ui
 .grid-time-col-inner{position:relative}
 .time-label{position:absolute;right:6px;font-family:monospace;font-size:9px;color:var(--t3);transform:translateY(-50%)}
 .grid-days{flex:1;display:flex}
-.grid-day-col{flex:1;border-right:1px solid var(--b1);position:relative;min-width:80px}
+.grid-day-col{flex:1;border-right:1px solid var(--b1);position:relative;min-width:80px;overflow:hidden}
 .grid-day-col.today-col{background:#4ade8006}
 .grid-day-col.weekend-col{flex:0 0 70px;min-width:70px;background:#ffffff03}
 .grid-day-header{padding:8px 8px 6px;border-bottom:1px solid var(--b1);font-size:11px;color:var(--t2);font-weight:600;text-align:center;position:sticky;top:0;background:var(--bg);z-index:1}
@@ -1863,7 +1863,9 @@ function goToday() {
 }
 
 function minsFromMidnight(timeStr) {
+  if (!timeStr || !timeStr.includes(':')) return 0;
   const [h, m] = timeStr.split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return 0;
   return h * 60 + m;
 }
 
@@ -2004,10 +2006,15 @@ function renderAgendaBlocks(data) {
 
     // Render gcal/fixed blocks as-is (solid borders, no sizing change)
     gcalFixed.forEach(b => {
+      if (!b.start || !b.end) return;
       const startMins = minsFromMidnight(b.start);
       const endMins = minsFromMidnight(b.end);
-      const top = minsToPx(startMins);
-      const height = Math.max(20, (endMins - startMins) * PX_PER_MIN);
+      if (endMins <= startMins) return;
+      const clampedStartG = Math.max(startMins, GRID_START * 60);
+      const clampedEndG = Math.min(endMins, GRID_END * 60);
+      if (clampedEndG <= clampedStartG) return;
+      const top = minsToPx(clampedStartG);
+      const height = Math.max(20, (clampedEndG - clampedStartG) * PX_PER_MIN);
       if (top < 0) return;
 
       const div = document.createElement('div');
@@ -2042,10 +2049,16 @@ function renderAgendaBlocks(data) {
     const deadlineFlags = [];
 
     autoBs.forEach(b => {
+      if (!b.start || !b.end) return;
       const startMins = minsFromMidnight(b.start);
       const endMins = minsFromMidnight(b.end);
-      const top = minsToPx(startMins);
-      const height = Math.max(20, (endMins - startMins) * PX_PER_MIN);
+      if (endMins <= startMins) return;  // bloco inválido
+      // Clampar ao range do grid
+      const clampedStart = Math.max(startMins, GRID_START * 60);
+      const clampedEnd = Math.min(endMins, GRID_END * 60);
+      if (clampedEnd <= clampedStart) return;
+      const top = minsToPx(clampedStart);
+      const height = Math.max(20, (clampedEnd - clampedStart) * PX_PER_MIN);
       if (top < 0) return;
 
       const col = projectColor(b.project || b.title);
@@ -2053,7 +2066,8 @@ function renderAgendaBlocks(data) {
 
       const isSoft = !b.deadline_type || b.deadline_type === 'soft';
       const isHardBlock = b.deadline_type === 'hard';
-      const isOverdueBlock = b.deadline && new Date(b.deadline) < new Date();
+      const _dlDate = b.deadline ? _safeDate(b.deadline) : null;
+      const isOverdueBlock = _dlDate && _dlDate < new Date();
 
       const div = document.createElement('div');
       div.className = 'grid-block auto-block' + (isSoft ? ' soft-block' : '');
@@ -2411,7 +2425,8 @@ function filterDemandas() {
 // ── Deadline badge (hard vs soft, overdue) ──────────────────────────────
 function renderDeadlineBadge(deadline, deadlineType) {
   if (!deadline) return '<span style="color:#333;font-size:11px">—</span>';
-  const d = new Date(deadline);
+  const d = _safeDate(deadline);
+  if (!d) return '<span style="color:#333;font-size:11px">—</span>';
   const dateStr = d.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'});
   const isHard = deadlineType === 'hard';
   const isOverdue = d < new Date();
@@ -2538,10 +2553,25 @@ function _demIsExpanded(id, defaultExpanded) {
   } catch { return defaultExpanded; }
 }
 
+// ── Safe date parser (aceita ISO datetime ou date) ──────────────────────────
+function _safeDate(value) {
+  if (!value) return null;
+  // Se já tem T (datetime completo), parsear direto
+  const d = new Date(value.includes('T') ? value : value + 'T12:00:00');
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function _safeFmtDate(value, fallback) {
+  const d = _safeDate(value);
+  if (!d) return fallback !== undefined ? fallback : 'sem prazo';
+  return d.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'});
+}
+
 // ── Deadline badge ─────────────────────────────────────────────────────────
 function _demDlBadge(deadline, deadlineType) {
   if (!deadline) return '';
-  const d = new Date(deadline + 'T00:00:00');
+  const d = _safeDate(deadline);
+  if (!d) return '';
   const today = new Date(); today.setHours(0,0,0,0);
   const str = d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
   if (d < today) return `<span class="dem-deadline overdue">⚠ ${str}</span>`;
@@ -2595,7 +2625,7 @@ function renderDemandasTree() {
     function walkStats(node) {
       if (node.task_type === 'task') {
         totalTasks++;
-        if (node.status === 'active' || node.status === 'in_progress') activeCt++;
+        if (['active','pending','in_progress'].includes(node.status)) activeCt++;
         if (node.estimated_minutes) totalMins += node.estimated_minutes;
         if (node.deadline) taskDls.push(node.deadline);
       }
@@ -2604,9 +2634,10 @@ function renderDemandasTree() {
     (proj.children||[]).forEach(walkStats);
     taskDls.sort();
 
-    const projStatus = proj.status || 'active';
+    // Usar derived_status (backend calcula dos filhos) se disponível, senão o status próprio
+    const projStatus = proj.derived_status || proj.status || 'active';
     const projClass = projStatus === 'backlog' ? 'radar' : projStatus === 'on_holding' ? 'holding' : '';
-    const statusLabel = projStatus === 'active' ? '● Ativa' : projStatus === 'on_holding' ? '◐ Aguardando' : '○ No Radar';
+    const statusLabel = projStatus === 'active' ? '● Ativa' : projStatus === 'on_holding' ? '◐ Aguardando' : projStatus === 'done' ? '✅ Concluído' : '○ No Radar';
     const statusCls = projStatus === 'active' ? 'active' : projStatus === 'on_holding' ? 'holding' : 'radar';
     const defaultExpanded = projStatus === 'active';
     const expanded = _demIsExpanded(proj.id, defaultExpanded);
@@ -2805,7 +2836,7 @@ async function openProjModal(projId) {
     else if (node.task_type === 'task') {
       taskCt++;
       if (node.estimated_minutes) totalMins += node.estimated_minutes;
-      if (node.status === 'active' || node.status === 'in_progress') activeCt++;
+      if (['active','pending','in_progress'].includes(node.status)) activeCt++;
       if (node.status === 'done') doneCt++;
       if (node.deadline) dls.push(node.deadline);
     }
@@ -2813,7 +2844,7 @@ async function openProjModal(projId) {
   }
   (proj.children||[]).forEach(walk);
   dls.sort();
-  const nextDl = dls[0] ? new Date(dls[0]+' ').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}) : '—';
+  const nextDl = dls[0] ? _safeFmtDate(dls[0], '—') : '—';
 
   // Status selector
   const projStatus = proj.status || 'active';
@@ -2939,8 +2970,8 @@ async function openDelivModal(delivId) {
   document.getElementById('dm-jira').value = deliv.origin_ref || '';
 
   if (deliv.deadline) {
-    const d = new Date(deliv.deadline);
-    document.getElementById('dm-deadline').value = d.toISOString().split('T')[0];
+    const d = _safeDate(deliv.deadline);
+    document.getElementById('dm-deadline').value = d ? d.toISOString().split('T')[0] : '';
   } else {
     document.getElementById('dm-deadline').value = '';
   }
@@ -3047,8 +3078,8 @@ async function openTaskModal(taskId) {
 
   // Deadline + deadline_type
   if (tmData.deadline) {
-    const d = new Date(tmData.deadline);
-    document.getElementById('tm-deadline').value = d.toISOString().split('T')[0];
+    const d = _safeDate(tmData.deadline);
+    document.getElementById('tm-deadline').value = d ? d.toISOString().split('T')[0] : '';
   } else {
     document.getElementById('tm-deadline').value = '';
   }

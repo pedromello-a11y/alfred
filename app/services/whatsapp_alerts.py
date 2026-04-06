@@ -3,6 +3,7 @@ from datetime import datetime, time
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.constants import ACTIVE_STATUSES
 from app.models import Task
 from app.services.time_utils import now_brt
 from app.services.daily_briefing import generate_deadline_alert
@@ -24,7 +25,7 @@ async def check_and_send_alerts(db: AsyncSession, send_fn) -> None:
     result = await db.execute(
         select(Task).where(
             and_(
-                Task.status.in_(["pending", "in_progress"]),
+                Task.status.in_(list(ACTIVE_STATUSES)),
                 Task.deadline.isnot(None),
                 Task.category != "personal",
             )
@@ -67,7 +68,7 @@ async def check_blocked_reminders(db: AsyncSession, send_fn) -> None:
         select(Task).where(
             and_(
                 Task.blocked == True,
-                Task.status.in_(["pending", "in_progress"]),
+                Task.status.in_(list(ACTIVE_STATUSES)),
             )
         )
     )
