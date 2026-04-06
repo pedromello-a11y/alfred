@@ -2051,31 +2051,52 @@ function renderAgendaBlocks(data) {
       const col = projectColor(b.project || b.title);
       const shortTitle = (b.title || '').split('|').pop().trim();
 
+      const isSoft = !b.deadline_type || b.deadline_type === 'soft';
+      const isHardBlock = b.deadline_type === 'hard';
+      const isOverdueBlock = b.deadline && new Date(b.deadline) < new Date();
+
       const div = document.createElement('div');
-      div.className = 'grid-block auto-block';
+      div.className = 'grid-block auto-block' + (isSoft ? ' soft-block' : '');
       div.style.top = top + 'px';
       div.style.height = height + 'px';
       div.style.background = col.bg;
-      div.style.borderColor = col.bd;
       div.style.borderLeftColor = col.h;
-      div.draggable = true;
+      // soft: borda tracejada; hard/overdue: sólida
+      if (isOverdueBlock) {
+        div.style.borderColor = '#ef444440';
+        div.style.borderLeftColor = '#ef4444';
+      } else if (isHardBlock) {
+        div.style.borderColor = '#f59e0b40';
+        div.style.borderLeftColor = '#f59e0b';
+      } else {
+        div.style.borderColor = col.bd;
+        div.style.borderStyle = 'dashed';
+        div.style.borderLeftStyle = 'solid';
+      }
+      div.draggable = isSoft; // só soft é arrastável para mover deadline
+      div.style.cursor = isSoft ? 'grab' : 'pointer';
       div.dataset.type = 'auto';
       div.dataset.taskId = b.task_id || '';
+      div.dataset.deadlineType = b.deadline_type || 'soft';
 
       const dlBadgeGrid = (() => {
         if (!b.deadline) return '';
-        const isHard = b.deadline_type === 'hard';
-        const isOverdue = b.deadline && new Date(b.deadline) < new Date();
-        if (isOverdue) return `<span style="font-size:9px;color:#ef4444;margin-left:2px">⚠</span>`;
-        if (isHard) return `<span style="font-size:9px;color:#f59e0b;margin-left:2px">📌</span>`;
-        return `<span style="font-size:9px;color:#666;margin-left:2px">~</span>`;
+        if (isOverdueBlock) return `<span style="font-size:9px;color:#ef4444;margin-left:2px">⚠</span>`;
+        if (isHardBlock) return `<span style="font-size:9px;color:#f59e0b;margin-left:2px">📌</span>`;
+        return `<span style="font-size:9px;color:#888;margin-left:2px">~</span>`;
       })();
       div.innerHTML = `<div class="grid-block-title" style="color:${col.h}">${shortTitle}${dlBadgeGrid}</div>
         ${height > 28 ? `<div class="grid-block-time">${b.start}–${b.end}</div>` : ''}`;
 
       div.addEventListener('dragstart', (e) => {
-        draggedTaskSrc = {id: b.task_id, title: b.title, estimated_minutes: b.estimated_minutes || 60};
-        e.dataTransfer.effectAllowed = 'copy';
+        if (!isSoft) { e.preventDefault(); return; }
+        draggedTaskSrc = {
+          id: b.task_id, title: b.title,
+          estimated_minutes: b.estimated_minutes || 60,
+          deadline_type: b.deadline_type || 'soft',
+          is_soft_deadline: true,
+        };
+        e.dataTransfer.effectAllowed = 'move';
       });
       div.addEventListener('dragend', () => {
         draggedTaskSrc = null;
@@ -2203,15 +2224,26 @@ function onDayDrop(e, dayStr) {
     const endMins = startMins + draggedPreset.duration;
     openBlockModalPrefilled(dayStr, minsToTimeStr(startMins), minsToTimeStr(endMins), draggedPreset.title, draggedPreset.block_type);
   } else if (draggedTaskSrc) {
-    // Sidebar task → schedule immediately without popup
-    const dur = draggedTaskSrc.estimated_minutes || 60;
-    const start = minsToTimeStr(snapMins);
-    const end = minsToTimeStr(snapMins + dur);
-    fetch('/dashboard/schedule-blocks', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({title: draggedTaskSrc.title, block_type: 'other', date: dayStr, start_time: start, end_time: end})
-    }).then(() => fetchAndRenderAgenda());
+    if (draggedTaskSrc.is_soft_deadline && draggedTaskSrc.id) {
+      // Soft deadline block dragged to new day → update task deadline
+      fetch('/dashboard/task/' + draggedTaskSrc.id, {
+        method: 'PUT', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ deadline: dayStr })
+      }).then(() => {
+        toast('Deadline movido para ' + new Date(dayStr + 'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}));
+        fetchAndRenderAgenda();
+      });
+    } else {
+      // Sidebar task → schedule immediately without popup
+      const dur = draggedTaskSrc.estimated_minutes || 60;
+      const start = minsToTimeStr(snapMins);
+      const end = minsToTimeStr(snapMins + dur);
+      fetch('/dashboard/schedule-blocks', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({title: draggedTaskSrc.title, block_type: 'other', date: dayStr, start_time: start, end_time: end})
+      }).then(() => fetchAndRenderAgenda());
+    }
   } else if (draggedFixedBlock) {
     // Move fixed block immediately without popup
     const dur = minsFromMidnight(draggedFixedBlock.end) - minsFromMidnight(draggedFixedBlock.start);
